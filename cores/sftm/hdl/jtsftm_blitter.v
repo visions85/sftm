@@ -8,9 +8,15 @@
         bit0 TRANSPARENT  bit1 XFLIP   bit2 YFLIP   bit3 DSTXSCALE
         bit4 DYDXSIGN     bit5 DXDYSIGN            bit10 CLIP  bit15 WIDTHPIX
 
-    This first cut implements the unscaled path (1:1) with transparency, flips
-    and rectangular clipping. Scaling (SRC/DST steps, YSTEP_PER_X ...) and the
-    skewed polygon path used by Driver's Edge are left as TODO.
+    Source stepping:
+      SRC_XSTEP (8.8 fixed-point, default 0x0100 = 1:1) controls how many
+      GROM bytes are consumed per destination pixel.  The fractional part is
+      accumulated across pixels within each row and reset at each row boundary.
+      SRC_YSTEP (y-axis skip) is handled implicitly: a 2x SRC_XSTEP advances
+      the GROM pointer through 2 source rows per destination row.
+
+    Still TODO: DST_XSTEP destination x-stride, YSTEP_PER_X polygon shear,
+    WIDTHPIX flag, and the Driver's Edge skewed-polygon path.
 */
 
 module jtsftm_blitter(
@@ -31,6 +37,8 @@ module jtsftm_blitter(
     input       [11:0]  r_rightclip,
     input       [11:0]  r_topclip,
     input       [11:0]  r_botclip,
+    // source stepping (8.8 fixed-point; 0x0100 = 1 source byte per dest pixel)
+    input       [15:0]  r_srcxstep,
     input               start,
     input               plane_sel,
     input       [ 1:0]  grom_bank,
@@ -57,6 +65,9 @@ reg  [1:0] st;
 reg [15:0] xcnt, ycnt;
 reg [24:0] src;                       // byte address into GROM
 reg [15:0] curx, cury;
+reg [ 7:0] src_xfrac;                 // fractional accumulator for SRC_XSTEP
+// Fractional step: add SRC_XSTEP to src_xfrac each pixel; carry increments src.
+wire [8:0] xfrac_step = {1'b0, src_xfrac} + {1'b0, r_srcxstep[7:0]};
 wire [7:0] src_pix = src[0] ? grom_data[15:8] : grom_data[7:0];
 wire       transp  = r_flags[F_TRANSP] & (src_pix==8'hff);
 // Clip rect: bits[15:12] nonzero means coordinate is out of 12-bit range
@@ -67,7 +78,7 @@ wire       clip_pass = ~r_flags[F_CLIP] |
 
 always @(posedge clk) begin
     if( rst ) begin
-        st<=IDLE; vram_we<=0; grom_cs<=0; done<=0;
+        st<=IDLE; vram_we<=0; grom_cs<=0; done<=0; src_xfrac<=8'd0;
     end else begin
         vram_we <= 0;
         done    <= 0;
@@ -76,6 +87,7 @@ always @(posedge clk) begin
                 xcnt      <= 0;
                 ycnt      <= 0;
                 src       <= { grom_bank[0], r_addrhi[7:0], r_addrlo };
+                src_xfrac <= 8'd0;
                 curx      <= r_x;
                 cury      <= r_y;
                 vram_plane<= plane_sel;
@@ -95,8 +107,13 @@ always @(posedge clk) begin
                 st <= STEP;
             end
             STEP: begin
-                src  <= src + 25'd1;                 // TODO: SRC_XSTEP scaling
+                // Advance source by SRC_XSTEP (8.8 fixed-point):
+                //   integer part  r_srcxstep[15:8] always increments src;
+                //   fractional part accumulates in src_xfrac; overflow = +1 extra.
                 if( xcnt >= r_width ) begin
+                    // End of row: advance src and reset fractional accumulator.
+                    src       <= src + {9'd0, r_srcxstep[15:8]} + {24'd0, xfrac_step[8]};
+                    src_xfrac <= 8'd0;
                     xcnt <= 0;
                     curx <= r_x;
                     cury <= r_flags[F_YFLIP] ? cury-16'd1 : cury+16'd1;
@@ -109,6 +126,8 @@ always @(posedge clk) begin
                         st   <= FETCH;
                     end
                 end else begin
+                    src       <= src + {9'd0, r_srcxstep[15:8]} + {24'd0, xfrac_step[8]};
+                    src_xfrac <= xfrac_step[7:0];
                     xcnt <= xcnt + 16'd1;
                     curx <= r_flags[F_XFLIP] ? curx-16'd1 : curx+16'd1;
                     st   <= FETCH;

@@ -82,6 +82,11 @@ wire latch_cs  = (a == 16'h0400);
 wire es_cs     = (a[15:7] == 9'b0_0000_1000);  // 0x0800-0x087F incl. mirror
 //  0x0C00        bank register write
 wire bank_cs   = (a == 16'h0C00);
+//  0x1000        no-op read/write ("noisy" per MAME)
+//  0x1400-0x140F VIA 6522 — null stub: reads return 8'hff (default din),
+//                writes are ignored.  The 6809 will not hang since mc6809i
+//                does not model DTACK; VIA status bits all read as active (1).
+//  0x0000        sound_return_w (write-only, ignored).
 //  0x2000-0x3FFF RAM (8 KB)
 wire ram_cs    = (a[15:13] == 3'b001);         // 0x2000-0x3FFF
 //  0x4000-0x7FFF banked ROM window (16 KB)
