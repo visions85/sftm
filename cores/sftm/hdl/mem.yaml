@@ -1,0 +1,62 @@
+# JTSFTM memory description for JTFRAME (`jtframe mem sftm`).
+# Generates jtsftm_game_sdram.v and mem_ports.inc.
+#
+# ROM regions (see cfg/mame2mra.toml for the download order):
+#   prog   1.00 MB  4x256KB PROMs, 32-bit interleaved   (68EC020 program)
+#   snd    0.25 MB  sound CPU (6809)
+#   grom  32.00 MB  rm0-0..3 + rm1-0..3 (blitter graphics)
+#   grm3   0.50 MB  sfm_grm3_0..3 (extra graphics plane)
+#   srom   2.50 MB  srom0 (2MB) + srom3 (512KB)  (ES5506 samples)
+#
+# Total ~36 MB -> requires the 128 MB SDRAM module. Banks are split so the big
+# 32 MB grom lives alone and the blitter (grom) and ES5506 (srom) never share a
+# bank, minimising read contention.
+#
+# NOTE: addr_width values are word addresses for the given data_width. Final
+# offsets/boundaries must be confirmed against the generated *_sdram.v and kept
+# consistent with mame2mra.toml.
+
+clocks:
+  clk:                # 48 MHz reference
+    - freq: 25000000  # ~MC68EC020 @ 25 MHz (functional TG68K, tuned to vsync)
+      outputs:
+        - e020
+    - freq: 16000000  # Ensoniq ES5506 master
+      outputs:
+        - es
+    - freq: 2000000   # MC6809 E clock
+      outputs:
+        - snd
+
+sdram:
+  banks:
+    # ---- bank 0: program + sound CPU ------------------------------------
+    - buses:
+        - name: prog          # 68EC020 program, 32-bit
+          addr_width: 18       # 256K longwords = 1 MB
+          data_width: 32
+        - name: snd           # 6809 program, 8-bit
+          addr_width: 18       # up to 256 KB
+          data_width: 8
+    # ---- bank 1: ES5506 sample ROM (16-bit words) -----------------------
+    - buses:
+        - name: srom
+          addr_width: 21       # up to 2 Mword (banked internally by ES5506)
+          data_width: 16
+    # ---- bank 2: main graphics (32 MB, 128 MB module required) ----------
+    - buses:
+        - name: grom          # blitter source data
+          addr_width: 24       # 16 Mword = 32 MB @ 16-bit
+          data_width: 16
+    # ---- bank 3: extra graphics plane -----------------------------------
+    - buses:
+        - name: grm3
+          addr_width: 18       # 512 KB @ 16-bit
+          data_width: 16
+
+  # Battery-backed NVRAM. Saved/restored through the MiSTer NVRAM ioctl
+  # (MRA index 2). See doc/sdram.md "Saving Data to the SD Card".
+  nvram:
+    addr_width: 14             # 16 KB
+    data_width: 8
+    ioctl: { save: true, restore: true, order: 0 }

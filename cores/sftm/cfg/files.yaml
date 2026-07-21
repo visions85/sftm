@@ -1,0 +1,22 @@
+# Source list for `jtframe files sftm`. Produces files.qip (synthesis) and
+# game.f / jtsim_vhdl.f (simulation).
+
+sftm:
+  - get:
+    - "jtsftm_*.v"      # game top, main, video, blitter, sound subsystems
+    - jt5506.v          # Ensoniq ES5506 (OTTO) - new module
+  # TG68K.C (68020-capable) lives in cores/sftm/hdl/tg68k as a git-vendored
+  # copy. It is VHDL; for the Verilator sim flow convert to Verilog first
+  # (ghdl/vhd2vl) and list the converted files here. For Quartus synthesis the
+  # VHDL can be listed directly (goes to jtsim_vhdl.f order matters).
+  - from: tg68k
+    get:
+      - "*.vhd"          # TG68K.vhd, TG68K_Pack.vhd, TG68K_ALU.vhd, TG68KdotC_Kernel.vhd
+
+# JTFRAME-provided modules
+jtframe:
+  - from: cpu
+    get:
+      # MC6809 sound CPU. Confirm exact wrapper/aggregator name in
+      # $JTFRAME/hdl/cpu (doc/cpus.md calls the module `mc6809i`).
+      - mc6809i.v

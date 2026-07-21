@@ -1,0 +1,129 @@
+JTSFTM FPGA clone of Street Fighter: The Movie arcade hardware
+================================================================
+
+Target hardware
+---------------
+
+Source reference: MAME `src/mame/itech/itech32.cpp`,
+`src/mame/itech/itech32_v.cpp`, and `src/devices/sound/es5506.cpp`.
+
+Street Fighter: The Movie (`sftm`) runs on Incredible Technologies' 32-bit
+blitter platform:
+
+- MC68EC020 main CPU, 25 MHz
+- MC6809 sound CPU, 2 MHz
+- Ensoniq ES5506 OTTO, 16 MHz
+- IT42 graphics generator / blitter
+- Two 512-wide VRAM planes
+- 15-bit RGB palette
+- Horizontal raster video around 384x256 visible at ~60 Hz
+
+Why JTFRAME
+-----------
+
+JTFRAME supplies:
+
+- MiSTer target wrapper
+- SDRAM controller and ROM download flow
+- OSD / dips / inputs
+- video and audio plumbing
+- NVRAM save/restore mechanism
+- MC6809 CPU wrapper (`mc6809i`)
+- simulation and build tools
+
+This core keeps game-specific logic in `jtsftm_game`.
+
+128 MB SDRAM requirement
+------------------------
+
+The `sftm` ROM footprint is about 36 MB:
+
+- 1 MB 68EC020 program ROM
+- 256 KB 6809 sound program
+- 32 MB main graphics ROM (`rm0-*`, `rm1-*`)
+- 512 KB `grm3` graphics
+- 2.5 MB ES5506 sample ROM
+
+The standard MiSTer 32 MB SDRAM module exposes 4 banks of ~8 MB in JTFRAME,
+which is not enough for the 32 MB graphics region plus the rest of the set.
+Use the 128 MB module.
+
+Memory/bank plan
+----------------
+
+See `hdl/mem.yaml`.
+
+- bank 0: main program and sound CPU ROM
+- bank 1: ES5506 sample ROM
+- bank 2: 32 MB graphics ROM
+- bank 3: extra `grm3` graphics ROM
+- BRAM: main RAM/NVRAM, VRAM planes, palette, latches
+
+TG68K.C integration
+-------------------
+
+JTFRAME's built-in 68k is fx68k, which is 68000-only. SFTM needs 68020-class
+instructions, so this core uses TG68K.C in 020 mode.
+
+TG68K.C is VHDL. Two paths are possible:
+
+1. Quartus synthesis can include the VHDL directly via `cfg/files.yaml`.
+2. JTFRAME/Verilator simulation needs a Verilog conversion.
+
+Conversion example:
+
+```
+cd cores/sftm/hdl/tg68k
+ghdl -a -fsynopsys TG68K_Pack.vhd TG68K_ALU.vhd TG68KdotC_Kernel.vhd TG68K.vhd
+ghdl synth --out=verilog TG68KdotC_Kernel > TG68KdotC_Kernel_conv.v
+```
+
+The generated Verilog should be committed only after its license header is
+preserved and it has been validated against the VHDL version.
+
+Current implementation status
+-----------------------------
+
+This repository is an implementation scaffold, not a working core.
+
+Implemented:
+
+- JTFRAME-style folder layout
+- `cfg/macros.def`, `cfg/files.yaml`, `hdl/mem.yaml`
+- `jtsftm_game` top-level wiring
+- coarse main CPU memory-map skeleton
+- video register file and CRTC skeleton
+- two VRAM planes and palette RAM
+- basic unscaled GROM-to-VRAM blitter path
+- sound subsystem skeleton
+- ES5506 register/voice/mix skeleton
+
+Not implemented / not validated:
+
+- exact `itech020_map` address decode
+- exact input and DIP bit layout
+- actual main RAM/NVRAM BRAM implementation
+- TG68K.C vendoring and conversion
+- exact MC6809 wrapper port map
+- exact ES5506 host byte-lane behaviour
+- ES5506 filters, envelopes, loop modes, IRQ stacking, compressed mode
+- IT42 scaling, clipping, scroll/origin, interrupt acknowledge semantics
+- MRA generation syntax for the currently installed JTFRAME version
+- hardware build
+
+Validation plan
+---------------
+
+1. Vendor JTFRAME and TG68K.C.
+2. Generate mem ports with `jtframe mem sftm` and fix all interface names.
+3. Convert TG68K.C for Verilator or switch to mixed-language simulation.
+4. Run main CPU opcode tests before booting ROM code.
+5. Log MAME blitter commands and replay them into `jtsftm_blitter`.
+6. Unit-test `jt5506` against MAME `es5506.cpp` sample outputs.
+7. Bring up ROM boot to self-test, then attract mode.
+
+ROMs
+----
+
+No ROMs are included. Users must provide legally obtained MAME-compatible ROM
+sets. The first target set is parent `sftm` (v1.12).

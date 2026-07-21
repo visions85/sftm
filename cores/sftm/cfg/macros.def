@@ -1,0 +1,33 @@
+# JTSFTM - Street Fighter: The Movie (Incredible Technologies itech32)
+# JTFRAME macro configuration. Evaluated with `jtframe cfgstr sftm`.
+
+CORENAME=JTSFTM
+GAMETOP=jtsftm_game
+MAIN_MODULE=jtsftm_main
+VIDEO_MODULE=jtsftm_video
+
+# Measured refresh (itech32 P/N 1083: VSync 59.7612 Hz)
+JTFRAME_RATE=59.76
+
+# 15-bit palette -> 5 bits per colour channel
+JTFRAME_COLORW=5
+
+# Horizontal game (do NOT define JTFRAME_VERTICAL)
+
+# 6 action buttons (LP MP HP LK MK HK)
+JTFRAME_BUTTONS=6
+
+# --- Memory ------------------------------------------------------------------
+# ~36 MB of ROM (see hdl/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
+# module, because 4 x 8 MB = 32 MB on the standard module is not enough.
+JTFRAME_SDRAM_BANKS
+# NOTE: confirm the exact macro used to select the 128 MB SDRAM part for the
+# target in modules/jtframe (SDRAM catalogue in doc/sdram.md). Bank sizing in
+# mem.yaml assumes the 128 MB module.
+
+# NVRAM (battery-backed) is described in hdl/mem.yaml via ioctl save/restore.
+
+[mister]
+# OSD extras for MiSTer
+JTFRAME_OSD_VOL
+JTFRAME_CHEAT

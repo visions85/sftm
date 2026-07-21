@@ -1,0 +1,22 @@
+# JTFRAME / build artefacts
+/release/
+/rom/
+/modules/jtframe/
+*.rbf
+*.rom
+*.sof
+*.pof
+*.qsf
+*.qpf
+db/
+incremental_db/
+output_files/
+simulation/
+*.vcd
+*.fst
+*.wlf
+# ROMs are never committed
+*.zip
+*.7z
+# macOS
+.DS_Store

@@ -1,0 +1,73 @@
+# mame2mra configuration for JTSFTM.
+#
+# This follows JTFRAME's mame2mra.toml convention but is intentionally explicit
+# and conservative. The generated .mra must be validated against the jtframe
+# version being used, because this core needs a non-standard 128 MB SDRAM
+# layout and 32-bit interleaving for the 68EC020 program ROM.
+
+[global]
+author = "JTSFTM contributors"
+platform = "Street Fighter: The Movie"
+category = "Arcade"
+mraauthor = "JTSFTM"
+rbutton = "Service"
+rbf = "JTSFTM"
+
+[parse]
+sourcefile = "itech/itech32.cpp"
+parents = ["sftm"]
+skip.bootlegs = true
+
+[[buttons]]
+names = [
+  { names = ["LP", "MP", "HP", "LK", "MK", "HK"] }
+]
+
+[[dips]]
+name = "Test Mode"
+bits = "0"
+values = [
+  { value = "0", name = "Off" },
+  { value = "1", name = "On" }
+]
+
+# ROM order is chosen to match hdl/mem.yaml buses:
+#   prog -> 32-bit interleaved main program
+#   snd  -> 6809 program
+#   grom -> 32 MB main graphics
+#   grm3 -> 512 KB extra graphics
+#   srom -> ES5506 sample data
+#
+# TODO: translate this to the exact syntax expected by the active jtframe
+# mame2mra parser. Some jtcores revisions use [rom] tables while older ones
+# use region transforms.
+
+[[rom]]
+region = "maincpu"
+name = "prog"
+width = 32
+reverse = false
+
+[[rom]]
+region = "soundcpu"
+name = "snd"
+width = 8
+
+[[rom]]
+region = "grom"
+name = "grom"
+width = 16
+
+[[rom]]
+region = "grm3"
+name = "grm3"
+width = 16
+
+[[rom]]
+region = "ensoniq.0"
+name = "srom"
+width = 16
+
+[[nvram]]
+index = 2
+size = 16384
