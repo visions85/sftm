@@ -247,7 +247,7 @@ always @(posedge clk) begin
     if( rst ) begin vblank_irq<=0; end
     else if(pxl_cen) begin
         vblank_irq <= (vcnt==vregs[VR_VBSTART][9:0]) && hcnt==0;
-        // scanline match int: vcnt==VR_INTLINE (routed via INTEN mask) - TODO
+        // scanline INT bit is set via scanline_hit (see int_state_n above)
     end else vblank_irq <= 1'b0;
 end
 
