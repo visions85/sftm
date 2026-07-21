@@ -72,8 +72,8 @@ module jtsftm_main(
 // 0x180000            P3 input / extra
 // 0x200000            system / service
 // 0x280000            DIP switches
-// 0x300003            colour latch for plane 1
-// 0x380003            colour latch for plane 0
+// 0x300003            colour latch[0] — fg bank (sftm: init_sftm_common overrides base map)
+// 0x380003            colour latch[1] — bg bank
 // 0x400000            watchdog
 // 0x480001            sound data write (to 6809)
 // 0x500000-0x5000FF   IT42 video/blitter registers
@@ -158,8 +158,9 @@ assign rom_cs   = boot_done ? (prog_sel & bus_active) : 1'b1;
 assign rom_addr = boot_done ? cpu_a[19:2]              // 256K long-words
                             : { 13'd0, boot_lw };
 
-// 32-bit program ROM -> 16-bit halves for TG68K
-wire [15:0] rom_half = cpu_a[1] ? rom_data[15:0] : rom_data[31:16]; // TODO endianness
+// 32-bit program ROM → 16-bit halves for TG68K (big-endian 68020).
+// cpu_a[1]=0: upper word (bits[31:16], MSW); cpu_a[1]=1: lower word (bits[15:0], LSW).
+wire [15:0] rom_half = cpu_a[1] ? rom_data[15:0] : rom_data[31:16];
 
 // ---------------------------------------------------------------------------
 // Main RAM: 0x000000-0x007fff = 32 KB (16K x 16). The write port is shared
@@ -233,25 +234,55 @@ always @(*) begin
         prot_cs:  inp_mux = { prot_byte, 8'hff };
         nopr_cs:  inp_mux = 16'h0000;
         inp_cs:   inp_mux = read_inputs(ahi);
-        dip_cs:   inp_mux = {dipsw_b, dipsw_a};
+        sys_cs:   inp_mux = cpu_a[1] ? 16'h0000 : 16'h00FF;  // P4: all unused active-low
+        dip_cs:   inp_mux = cpu_a[1] ? 16'h0000             // bits[15:0] unused
+                                      : { 8'h00,
+                                          dipsw_a[7],    // bit23 service_mode dip  (active-high)
+                                          ~dipsw_a[6],   // bit22 freeze-screen dip (active-low)
+                                          ~dipsw_a[5],   // bit21 flip-screen dip   (active-low)
+                                          ~dipsw_a[4],   // bit20 video-sync dip    (active-low)
+                                          1'b1,          // bit19 special port      (tied inactive)
+                                          1'b1,          // bit18 vblank status     (tied inactive)
+                                          ~service,      // bit17 service coin
+                                          ~dip_test };   // bit16 test-mode switch
         default:  inp_mux = 16'hffff;
     endcase
 end
 assign cpu_din = inp_mux;
 
-// input port read helper (bit layout TODO: match itech32 port maps)
+// Input port reads.
+// itech32 32-bit ports carry data in bits[23:16] (the upper byte of the
+// upper 16-bit half); bits[31:24] are 0 and bits[15:0] are unused/unknown.
+// TG68K 16-bit bus: cpu_a[1]=0 → upper half { 8'h00, io_byte },
+//                   cpu_a[1]=1 → lower half 16'h0000.
+// All active-low inputs are inverted; JTFRAME joystick is active-high.
 function [15:0] read_inputs(input [7:0] sel);
-    case(sel)
-        REG_INP0: read_inputs = ~{ joystick1[11:0], 4'h0 };
-        REG_INP1: read_inputs = ~{ joystick2[11:0], 4'h0 };
-        default:  read_inputs = ~{ 12'h0, service, dip_test, coin };
-    endcase
+    reg [7:0] io;
+    begin
+        case(sel)
+            // P1 (0x080000): UP,DN,LT,RT,B2,B1,START1,COIN1  (all active-low)
+            REG_INP0: io = ~{ joystick1[3], joystick1[2], joystick1[1], joystick1[0],
+                               joystick1[5], joystick1[4], cab_1p[0],   coin[0] };
+            // P2 (0x100000): same layout for player 2
+            REG_INP1: io = ~{ joystick2[3], joystick2[2], joystick2[1], joystick2[0],
+                               joystick2[5], joystick2[4], cab_1p[1],   coin[1] };
+            // P3 (0x180000): extra LP/MP/HP/LK/MK/HK buttons BTN3-6 both players
+            // bit layout: B6p2,B6p1,B5p2,B5p1,B4p2,B4p1,B3p2,B3p1
+            REG_INP2: io = ~{ joystick2[9], joystick1[9], joystick2[8], joystick1[8],
+                               joystick2[7], joystick1[7], joystick2[6], joystick1[6] };
+            default:  io = 8'hFF;
+        endcase
+        read_inputs = cpu_a[1] ? 16'h0000 : { 8'h00, io };
+    end
 endfunction
 
 // ---------------------------------------------------------------------------
 // Register writes: sound latch, colour latches, plane enable and GROM bank.
-// itech020 byte writes hit low byte at 0x300003/0x380003/0x480001 and high
-// byte at 0x700002.
+// Byte writes:
+//   0x480001 → sound latch (low byte)
+//   0x300003 → color_latch0 (sftm: init_sftm_common puts latch[0] here)
+//   0x380003 → color_latch1 (sftm: init_sftm_common puts latch[1] here)
+//   0x700002 → plane_en / grom_bank (high byte)
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     snd_latch_we <= 1'b0;
@@ -266,11 +297,13 @@ always @(posedge clk) begin
             snd_latch    <= cpu_do16[7:0];
             snd_latch_we <= 1'b1;
         end
-        if( ahi==REG_COL0 && low_byte_we ) begin
-            color_latch0 <= cpu_do16[6:0];
-        end
+        // sftm init_sftm_common swaps the latch assignments vs base itech020_map:
+        // 0x300003 (REG_COL1) → latch[0], 0x380003 (REG_COL0) → latch[1]
         if( ahi==REG_COL1 && low_byte_we ) begin
-            color_latch1 <= cpu_do16[6:0];
+            color_latch0 <= cpu_do16[6:0];  // fg palette bank
+        end
+        if( ahi==REG_COL0 && low_byte_we ) begin
+            color_latch1 <= cpu_do16[6:0];  // bg palette bank
         end
         if( ahi==REG_PLANE && high_byte_we ) begin
             plane_en  <= { ~cpu_do16[10], ~cpu_do16[9] }; // data bits 2:1
