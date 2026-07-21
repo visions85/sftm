@@ -1,11 +1,22 @@
 `timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
-    Sound subsystem for itech32 P/N 1083:
+    Sound subsystem for itech32 P/N 1066 REV 2 sound board:
       - MC6809 @ 2 MHz
-      - ES5506 (OTTO) @ 16 MHz, 32 voices
-      - 8 KB-ish RAM (exact size per board revision; TODO confirm)
+      - ES5506 OTTO @ 16 MHz, 32 voices
+      - 8 KB RAM (0x2000-0x3FFF)
       - main-to-sound command latch
+
+    Address map from MAME itech32.cpp sound_map (Rev 1 board layout):
+      0x0000        sound_return_w (write-only)
+      0x0400        soundlatch read
+      0x0800-0x083F ES5506 registers (mirror at 0x0880-0x08BF)
+      0x0C00        sound bank register (write-only)
+      0x1000        no-op (noisy)
+      0x1400-0x140F VIA 6522 (TODO)
+      0x2000-0x3FFF RAM (8 KB)
+      0x4000-0x7FFF banked ROM (16 KB window, up to 256 banks)
+      0x8000-0xFFFF fixed ROM
 
     The MC6809 wrapper name/port map must be adjusted to the exact JTFRAME
     `mc6809i` module in the target jtcores revision.
@@ -46,21 +57,68 @@ module jtsftm_snd(
 wire [15:0] a;
 wire [ 7:0] din, dout;
 wire        rw;
-wire        irq_n = ~snd_latch_we;   // TODO: latch/clear command IRQ correctly
 
-assign rom_cs   = a[15];             // 0x8000-0xffff
-assign rom_addr = {2'b00, a[15:0]};
+// ---------------------------------------------------------------------------
+// Sound latch IRQ: assert when main CPU writes a command, clear on 6809 read.
+// MAME: GENERIC_LATCH_8 with data_pending_callback -> M6809_IRQ_LINE.
+// ---------------------------------------------------------------------------
+reg irq_pending;
+always @(posedge clk) begin
+    if (rst)
+        irq_pending <= 1'b0;
+    else if (snd_latch_we)
+        irq_pending <= 1'b1;         // main CPU wrote command
+    else if (latch_cs && rw && cen)  // 6809 read clears pending flag
+        irq_pending <= 1'b0;
+end
+wire irq_n = ~irq_pending;           // active-low to mc6809i
 
-// small RAM
+// ---------------------------------------------------------------------------
+// Address decode (MAME sound_map)
+// ---------------------------------------------------------------------------
+//  0x0400        soundlatch read
+wire latch_cs  = (a == 16'h0400);
+//  0x0800-0x083F ES5506 (mirror at 0x0880; 0x80 apart so bit6 is don't-care)
+wire es_cs     = (a[15:7] == 9'b0_0000_1000);  // 0x0800-0x087F incl. mirror
+//  0x0C00        bank register write
+wire bank_cs   = (a == 16'h0C00);
+//  0x2000-0x3FFF RAM (8 KB)
+wire ram_cs    = (a[15:13] == 3'b001);         // 0x2000-0x3FFF
+//  0x4000-0x7FFF banked ROM window (16 KB)
+wire brom_cs   = (a[15:14] == 2'b01);          // 0x4000-0x7FFF
+//  0x8000-0xFFFF fixed ROM (32 KB)
+assign rom_cs  = a[15];                         // 0x8000-0xFFFF
+
+// ---------------------------------------------------------------------------
+// Bank register (written at 0x0C00 by 6809)
+// MAME configures 256 banks of 16 KB starting at soundcpu ROM offset 0x10000.
+// snd_addr for banked ROM = 0x10000 + bank*0x4000 + a[13:0]
+// ---------------------------------------------------------------------------
+reg [7:0] rom_bank;
+always @(posedge clk) begin
+    if (rst)
+        rom_bank <= 8'd0;
+    else if (cen && bank_cs && !rw)
+        rom_bank <= dout;
+end
+
+// ROM address mux:
+//   fixed   (0x8000-0xFFFF): ROM byte-addr = 0x8000 + a[14:0]  -> snd_addr[14:0] = a[14:0], bit15=1
+//   banked  (0x4000-0x7FFF): ROM byte-addr = 0x10000 + bank*0x4000 + a[13:0]
+// Both fit in 18-bit snd_addr (max 256 KB).
+assign rom_addr = brom_cs ? { 2'b01, rom_bank[1:0], a[13:0] }   // banked (TODO: 18-bit bank)
+                           : { 3'b001, a[14:0] };                // fixed 0x8000-0xFFFF
+
+// ---------------------------------------------------------------------------
+// RAM (8 KB)
+// ---------------------------------------------------------------------------
 reg [7:0] ram[0:8191];
-wire ram_cs = a[15:13]==3'b000;
-wire es_cs  = a[15:8] == 8'h20;      // TODO: exact ES5506 location from itech32.cpp
-wire latch_cs = a[15:8] == 8'h30;    // TODO: exact sound-latch read location
+always @(posedge clk) if (cen && ram_cs && !rw) ram[a[12:0]] <= dout;
+
 wire [7:0] es_dout;
 
-always @(posedge clk) if(cen && ram_cs && !rw) ram[a[12:0]] <= dout;
-
 assign din = rom_cs   ? rom_data :
+             brom_cs  ? rom_data :    // banked window uses same SDRAM port
              ram_cs   ? ram[a[12:0]] :
              es_cs    ? es_dout :
              latch_cs ? snd_latch :
