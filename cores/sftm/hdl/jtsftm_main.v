@@ -52,6 +52,7 @@ module jtsftm_main(
 
     // Interrupts from the video block
     input               blit_irq,
+    input               scan_irq,
     input               vblank_irq,
 
     // Sound command latch to the 6809 subsystem
@@ -335,8 +336,11 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Interrupt priority: itech32 uses autovector IRQs for blitter & vblank/scan.
-// TODO: confirm IPL levels and acknowledge/clear scheme from itech32.cpp.
+// Interrupt priority (confirmed from MAME itech32.cpp update_interrupts):
+//   vblank   → IPL 1 (active-low 3'b110); ack = write to 0x080000
+//   blitter  → IPL 2 (active-low 3'b101); ack = VIDEO_INTACK write
+//   scanline → IPL 3 (active-low 3'b100); ack = VIDEO_INTACK write
+// Higher IPL overrides lower in the priority encoder below.
 // ---------------------------------------------------------------------------
 reg vint_latch;
 
@@ -345,6 +349,7 @@ always @(posedge clk) begin
         vint_latch <= 1'b0;
     end else begin
         if( vblank_irq ) vint_latch <= 1'b1;
+        // Write to 0x080000 = itech020_int1_ack_w → clears vblank state
         if( cpu_write && ahi==REG_INP0 ) vint_latch <= 1'b0;
     end
 end
@@ -353,7 +358,8 @@ always @(posedge clk) begin
     else begin
         cpu_ipl <= 3'b111;
         if( vint_latch ) cpu_ipl <= 3'b110; // level 1 vblank
-        if( blit_irq   ) cpu_ipl <= 3'b101; // level 2 (placeholder)
+        if( blit_irq   ) cpu_ipl <= 3'b101; // level 2 blitter
+        if( scan_irq   ) cpu_ipl <= 3'b100; // level 3 scanline (highest priority)
     end
 end
 

@@ -26,6 +26,11 @@ module jtsftm_blitter(
     input       [15:0]  r_y,
     input       [15:0]  r_addrlo,
     input       [15:0]  r_addrhi,
+    // clip rect (pixel coordinates, 12-bit; registered from the video reg file)
+    input       [11:0]  r_leftclip,
+    input       [11:0]  r_rightclip,
+    input       [11:0]  r_topclip,
+    input       [11:0]  r_botclip,
     input               start,
     input               plane_sel,
     input       [ 1:0]  grom_bank,
@@ -44,7 +49,7 @@ module jtsftm_blitter(
     output reg          done
 );
 
-localparam F_TRANSP = 0, F_XFLIP = 1, F_YFLIP = 2;
+localparam F_TRANSP = 0, F_XFLIP = 1, F_YFLIP = 2, F_CLIP = 10;
 
 localparam [1:0] IDLE=2'd0, FETCH=2'd1, WRITE=2'd2, STEP=2'd3;
 reg  [1:0] st;
@@ -54,6 +59,11 @@ reg [24:0] src;                       // byte address into GROM
 reg [15:0] curx, cury;
 wire [7:0] src_pix = src[0] ? grom_data[15:8] : grom_data[7:0];
 wire       transp  = r_flags[F_TRANSP] & (src_pix==8'hff);
+// Clip rect: bits[15:12] nonzero means coordinate is out of 12-bit range
+// (wrapped negative or > 0xfff), so always clip those pixels.
+wire       clip_pass = ~r_flags[F_CLIP] |
+    (curx[15:12]==4'd0 && curx[11:0]>=r_leftclip && curx[11:0]<r_rightclip &&
+     cury[15:12]==4'd0 && cury[11:0]>=r_topclip  && cury[11:0]<r_botclip);
 
 always @(posedge clk) begin
     if( rst ) begin
@@ -77,9 +87,7 @@ always @(posedge clk) begin
                 if( grom_ok ) st <= WRITE;
             end
             WRITE: begin
-                if( !transp ) begin
-                    // TODO: apply clip rect + display origin; flips adjust
-                    // the destination coordinate rather than the source walk.
+                if( !transp && clip_pass ) begin
                     vram_addr <= { cury[7:0], curx[8:0] };
                     vram_data <= src_pix;
                     vram_we   <= 1;

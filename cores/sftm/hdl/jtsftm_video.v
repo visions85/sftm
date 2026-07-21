@@ -47,6 +47,7 @@ module jtsftm_video(
 
     // Interrupts to the CPU
     output reg          blit_irq,
+    output reg          scan_irq,
     output reg          vblank_irq,
 
     // Video output
@@ -327,6 +328,11 @@ jtsftm_blitter u_blitter(
     .r_y        ( vregs[VR_XFERY]    ),
     .r_addrlo   ( vregs[VR_ADDRLO]   ),
     .r_addrhi   ( vregs[VR_ADDRHI]   ),
+    // clip rect (registered pixel coordinates)
+    .r_leftclip ( vregs[VR_LEFTCLIP][11:0]  ),
+    .r_rightclip( vregs[VR_RIGHTCLIP][11:0] ),
+    .r_topclip  ( vregs[VR_TOPCLIP][11:0]   ),
+    .r_botclip  ( vregs[VR_BOTCLIP][11:0]   ),
     .start      ( blit_start          ),
     .plane_sel  ( plane_en[1] & ~plane_en[0] ),
     .grom_bank  ( grom_bank          ),
@@ -344,8 +350,11 @@ jtsftm_blitter u_blitter(
 );
 
 always @(posedge clk) begin
-    if( rst ) blit_irq <= 1'b0;
-    else      blit_irq <= |(int_state_n & vregs[VR_INTEN] & VIDEOINT_BLITTER);
+    if( rst ) begin blit_irq <= 1'b0; scan_irq <= 1'b0; end
+    else begin
+        blit_irq <= |(int_state_n & vregs[VR_INTEN] & VIDEOINT_BLITTER);
+        scan_irq <= |(int_state_n & vregs[VR_INTEN] & VIDEOINT_SCANLINE);
+    end
 end
 
 // grm3 not used in first pass
