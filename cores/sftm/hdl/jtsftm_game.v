@@ -16,7 +16,7 @@
 
 module jtsftm_game(
     `include "jtframe_game_ports.inc"   // $JTFRAME/hdl/inc/jtframe_game_ports.inc
-    // SDRAM buses (prog/snd/srom/grom/grm3) + nvram are appended here by
+    // SDRAM buses (prog/snd/srom/grom/grm3) are appended here by
     // the mem.yaml generator:
     /* jtframe mem_ports */
 );
@@ -36,9 +36,12 @@ wire [23:1] cpu_addr;
 wire [15:0] cpu_dout;
 wire [15:0] vram_dout, pal_dout, vreg_dout;
 wire        cpu_rnw;
+wire        cpu_uds_n, cpu_lds_n;
 wire        vram_cs, pal_cs, vreg_cs;   // decoded selects to the video block
 wire [ 1:0] plane_en;                   // foreground/background enable latch
-wire [ 8:0] color_latch;                // palette bank / colour high bits
+wire [ 1:0] grom_bank;                  // high GROM address bank latch
+wire [ 6:0] color_latch0;               // foreground palette bank
+wire [ 6:0] color_latch1;               // background palette bank
 
 // interrupts
 wire        blit_irq, vblank_irq;
@@ -75,6 +78,8 @@ jtsftm_main u_main(
     .cpu_addr   ( cpu_addr      ),
     .cpu_dout   ( cpu_dout      ),
     .cpu_rnw    ( cpu_rnw       ),
+    .cpu_uds_n  ( cpu_uds_n     ),
+    .cpu_lds_n  ( cpu_lds_n     ),
     .vram_cs    ( vram_cs       ),
     .vreg_cs    ( vreg_cs       ),
     .pal_cs     ( pal_cs        ),
@@ -82,18 +87,16 @@ jtsftm_main u_main(
     .vreg_dout  ( vreg_dout     ),
     .pal_dout   ( pal_dout      ),
     .plane_en   ( plane_en      ),
-    .color_latch( color_latch   ),
+    .grom_bank  ( grom_bank     ),
+    .color_latch0(color_latch0  ),
+    .color_latch1(color_latch1  ),
     // interrupts
     .blit_irq   ( blit_irq      ),
     .vblank_irq ( vblank_irq    ),
     // sound latch
     .snd_latch  ( snd_latch     ),
     .snd_latch_we(snd_latch_we  ),
-    // NVRAM (battery RAM) -> SDRAM-backed / BRAM, exposed by mem.yaml nvram
-    .nvram_din  ( nvram_din     ),
-    .nvram_dout ( nvram_dout    ),
-    .nvram_addr ( nvram_addr    ),
-    .nvram_we   ( nvram_we      ),
+    // NVRAM is on-chip BRAM inside jtsftm_main (persistence deferred)
     .debug_bus  ( debug_bus     )
 );
 
@@ -109,6 +112,8 @@ jtsftm_video u_video(
     .cpu_addr   ( cpu_addr      ),
     .cpu_dout   ( cpu_dout      ),
     .cpu_rnw    ( cpu_rnw       ),
+    .cpu_uds_n  ( cpu_uds_n     ),
+    .cpu_lds_n  ( cpu_lds_n     ),
     .vram_cs    ( vram_cs       ),
     .vreg_cs    ( vreg_cs       ),
     .pal_cs     ( pal_cs        ),
@@ -116,7 +121,9 @@ jtsftm_video u_video(
     .vreg_dout  ( vreg_dout     ),
     .pal_dout   ( pal_dout      ),
     .plane_en   ( plane_en      ),
-    .color_latch( color_latch   ),
+    .grom_bank  ( grom_bank     ),
+    .color_latch0(color_latch0  ),
+    .color_latch1(color_latch1  ),
     // graphics ROM (blitter source) in SDRAM banks 2/3
     .grom_addr  ( grom_addr     ),
     .grom_data  ( grom_data     ),

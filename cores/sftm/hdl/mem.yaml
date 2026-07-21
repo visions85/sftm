@@ -54,9 +54,14 @@ sdram:
           addr_width: 18       # 512 KB @ 16-bit
           data_width: 16
 
-  # Battery-backed NVRAM. Saved/restored through the MiSTer NVRAM ioctl
-  # (MRA index 2). See doc/sdram.md "Saving Data to the SD Card".
-  nvram:
-    addr_width: 14             # 16 KB
-    data_width: 8
-    ioctl: { save: true, restore: true, order: 0 }
+  # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board) is
+  # currently kept in on-chip BRAM inside jtsftm_main (u_nvram) so the CPU can
+  # boot and run self-test. Persistence is deferred: add a top-level bram entry
+  #   bram:
+  #     - name: nvram
+  #       addr_width: 14        # < 64 KB: MiSTer cannot dump NVRAM >= 64 KB
+  #       data_width: 16
+  #       rw: true
+  #       ioctl: { save: true, order: 0 }
+  # (see modules/jtframe/doc/sdram.md) once JTFRAME is vendored, then wire the
+  # generated nvram_* ports back into jtsftm_main.

@@ -36,6 +36,8 @@ module jtsftm_main(
     output      [23:1]  cpu_addr,
     output      [15:0]  cpu_dout,
     output              cpu_rnw,
+    output              cpu_uds_n,
+    output              cpu_lds_n,
     output reg          vram_cs,
     output reg          vreg_cs,
     output reg          pal_cs,
@@ -43,7 +45,9 @@ module jtsftm_main(
     input       [15:0]  vreg_dout,
     input       [15:0]  pal_dout,
     output reg  [ 1:0]  plane_en,
-    output reg  [ 8:0]  color_latch,
+    output reg  [ 1:0]  grom_bank,
+    output reg  [ 6:0]  color_latch0,
+    output reg  [ 6:0]  color_latch1,
 
     // Interrupts from the video block
     input               blit_irq,
@@ -53,32 +57,30 @@ module jtsftm_main(
     output reg  [ 7:0]  snd_latch,
     output reg          snd_latch_we,
 
-    // NVRAM (battery RAM), backed via mem.yaml nvram interface
-    input       [ 7:0]  nvram_din,
-    output      [ 7:0]  nvram_dout,
-    output      [13:0]  nvram_addr,
-    output              nvram_we,
-
+    // NVRAM is kept in on-chip BRAM (u_nvram); JTFRAME battery persistence
+    // is deferred (see hdl/mem.yaml).
     input       [ 7:0]  debug_bus
 );
 
-// ---------------------------------------------------------------------------
 // Memory map (TODO: confirm every constant against itech020_map in
 // itech32.cpp). Values are the high address bits used for coarse decode.
 // ---------------------------------------------------------------------------
-// 0x000000-0x00FFFF   main RAM (also NVRAM window)   [confirm size/mirror]
+// 0x000000-0x007FFF   main RAM
 // 0x080000            P1 input / int1 ack
 // 0x100000            P2 input
 // 0x180000            P3 input / extra
 // 0x200000            system / service
 // 0x280000            DIP switches
-// 0x300000            sound data write (to 6809)
-// 0x380000            plane enable / grom bank latch
-// 0x400000-0x4000FF   video (blitter) registers
-// 0x480000-0x49FFFF   palette RAM
-// 0x500000-0x5000FF   VRAM window (blitter draws; CPU can peek)
-// 0x600000            watchdog / misc
-// 0x800000-0xBFFFFF   program ROM (mirrored)
+// 0x300003            colour latch for plane 1
+// 0x380003            colour latch for plane 0
+// 0x400000            watchdog
+// 0x480001            sound data write (to 6809)
+// 0x500000-0x5000FF   IT42 video/blitter registers
+// 0x580000-0x59FFFF   palette RAM
+// 0x600000-0x61FFFF   NVRAM
+// 0x680002            protection result
+// 0x700002            plane enable / GROM bank latch
+// 0x800000-0xBFFFFF   program ROM
 // ---------------------------------------------------------------------------
 
 localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
@@ -86,12 +88,15 @@ localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
                  REG_INP2 = 8'h18,
                  REG_SYS  = 8'h20,
                  REG_DIP  = 8'h28,
-                 REG_SND  = 8'h30,
-                 REG_PLANE= 8'h38,
-                 REG_VIDEO= 8'h40,
-                 REG_PAL  = 8'h48,
-                 REG_VRAM = 8'h50,
-                 REG_MISC = 8'h60;
+                 REG_COL1 = 8'h30,
+                 REG_COL0 = 8'h38,
+                 REG_WDOG = 8'h40,
+                 REG_SND  = 8'h48,
+                 REG_VIDEO= 8'h50,
+                 REG_PAL  = 8'h58,
+                 REG_NVRAM= 8'h60,
+                 REG_PROT = 8'h68,
+                 REG_PLANE= 8'h70;
 
 // ---------------------------------------------------------------------------
 // TG68K.C kernel signals
@@ -99,54 +104,99 @@ localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
 wire [31:0] cpu_a;
 wire [15:0] cpu_din, cpu_do16;
 wire [ 1:0] busstate;
-wire        cpu_uds_n, cpu_lds_n, cpu_wr_n;
-wire        cpu_as = busstate!=2'b01;   // address strobe when accessing bus
+wire        cpu_wr_n;
+wire        bus_active = busstate==2'b00 || busstate==2'b10;
+wire        cpu_write  = cen & bus_active & ~cpu_wr_n & (~cpu_uds_n | ~cpu_lds_n);
+wire        low_byte_we  = ~cpu_lds_n;
+wire        high_byte_we = ~cpu_uds_n;
 reg  [ 2:0] cpu_ipl;
 reg         dtack;                       // ready to the kernel (via clkena)
+
+// Reset-time boot copy: the 020 fetches its reset SSP/PC from 0x000000, which
+// is RAM here. MAME's init_program_rom copies the first 0x80 bytes of program
+// ROM into main RAM; we do the same before releasing the CPU from reset.
+reg  [ 4:0] boot_lw;                     // 0..31 long-word index (32*4 = 0x80)
+reg         boot_half;                   // 0 = high word, 1 = low word
+reg         boot_done;                   // copy finished, CPU may run
 
 assign cpu_addr = cpu_a[23:1];
 assign cpu_dout = cpu_do16;
 assign cpu_rnw  = cpu_wr_n;
 
-// clock enable is gated by "bus ready": on ROM accesses wait for rom_ok
+// clock enable is gated by "bus ready": on ROM accesses wait for rom_ok, and
+// the CPU stays held until the boot vector copy has finished.
 wire   bus_busy = rom_cs & ~rom_ok;
-wire   clkena   = cen & ~bus_busy;
+wire   clkena   = cen & ~bus_busy & boot_done;
 
 // ---------------------------------------------------------------------------
 // Coarse address decode
 // ---------------------------------------------------------------------------
 wire [7:0] ahi = cpu_a[23:16];
-reg        ram_cs, inp_cs, dip_cs, sys_cs, misc_cs;
+reg        ram_cs, inp_cs, dip_cs, sys_cs, misc_cs, nvram_cs;
 reg        prog_sel;
 
 always @(*) begin
-    ram_cs   = cpu_a[23:20]==4'h0;          // 0x000000-0x0FFFFF (RAM/NVRAM)
-    prog_sel = cpu_a[23]==1'b1;             // 0x800000+ program ROM
+    ram_cs   = cpu_a[23:15]==9'h000;        // 0x000000-0x007fff main RAM
+    prog_sel = cpu_a[23:22]==2'b10;         // 0x800000-0xbfffff program ROM
     inp_cs   = ahi==REG_INP0 || ahi==REG_INP1 || ahi==REG_INP2;
     sys_cs   = ahi==REG_SYS;
     dip_cs   = ahi==REG_DIP;
-    vreg_cs  = ahi==REG_VIDEO;
-    pal_cs   = ahi==REG_PAL;
-    vram_cs  = ahi==REG_VRAM;
-    misc_cs  = ahi==REG_MISC;
+    vreg_cs  = bus_active && cpu_a[23:8]==16'h5000;
+    pal_cs   = bus_active && cpu_a[23:17]==7'h2c; // 0x580000-0x59ffff
+    vram_cs  = 1'b0;                         // VRAM is accessed via VIDEO_TRANSFER
+    nvram_cs = cpu_a[23:17]==7'h30;          // 0x600000-0x61ffff NVRAM
+    misc_cs  = ahi==REG_WDOG || ahi==REG_PROT || ahi==REG_PLANE;
 end
 
-assign rom_cs   = prog_sel & (busstate==2'b00 || busstate==2'b10);
-assign rom_addr = cpu_a[19:2];              // 256K long-words
+// The ROM port is driven by the boot-copy FSM until boot_done, then the CPU.
+assign rom_cs   = boot_done ? (prog_sel & bus_active) : 1'b1;
+assign rom_addr = boot_done ? cpu_a[19:2]              // 256K long-words
+                            : { 13'd0, boot_lw };
 
 // 32-bit program ROM -> 16-bit halves for TG68K
 wire [15:0] rom_half = cpu_a[1] ? rom_data[15:0] : rom_data[31:16]; // TODO endianness
 
 // ---------------------------------------------------------------------------
-// Main RAM (BRAM). Battery-backed portion is mirrored to the nvram interface.
+// Main RAM: 0x000000-0x007fff = 32 KB (16K x 16). The write port is shared
+// with the reset-time boot copy (the CPU is held in reset until boot_done).
 // ---------------------------------------------------------------------------
 wire [15:0] ram_dout;
-// TODO: instantiate jtframe_ram / dual-port BRAM sized to the real RAM/NVRAM.
-// jtframe_ram #(.aw(...),.dw(16)) u_ram(...);
-assign ram_dout   = 16'h0;   // placeholder
-assign nvram_dout = 8'h0;    // placeholder
-assign nvram_addr = 14'h0;
-assign nvram_we   = 1'b0;
+wire [15:0] boot_word = boot_half ? rom_data[15:0] : rom_data[31:16];
+wire        boot_we   = ~boot_done & rom_ok;        // write both lanes
+
+wire [13:0] ram_addr  = boot_done ? cpu_a[14:1] : { 8'd0, boot_lw, boot_half };
+wire [15:0] ram_din   = boot_done ? cpu_dout    : boot_word;
+wire        ram_we_lo = boot_done ? (cpu_write & ram_cs & low_byte_we ) : boot_we;
+wire        ram_we_hi = boot_done ? (cpu_write & ram_cs & high_byte_we) : boot_we;
+
+jtsftm_ram #(.AW(14)) u_ram(
+    .clk    ( clk       ),
+    .addr   ( ram_addr  ),
+    .din    ( ram_din   ),
+    .we_lo  ( ram_we_lo ),
+    .we_hi  ( ram_we_hi ),
+    .dout   ( ram_dout  )
+);
+
+// ---------------------------------------------------------------------------
+// NVRAM: 0x600000-0x61ffff is a 128 KB battery-backed region on the real
+// board. Only 32 KB is backed here (MiSTer's NVRAM dump must stay < 64 KB and
+// the game uses only a small part); the upper region aliases down.
+// TODO: size to the actual used range and add JTFRAME persistence via a
+// bram:{ ioctl:{ save:true } } entry once JTFRAME is vendored.
+// ---------------------------------------------------------------------------
+wire [15:0] nvram_dout;
+wire        nvram_we_lo = cpu_write & nvram_cs & low_byte_we;
+wire        nvram_we_hi = cpu_write & nvram_cs & high_byte_we;
+
+jtsftm_ram #(.AW(14)) u_nvram(
+    .clk    ( clk         ),
+    .addr   ( cpu_a[14:1] ),
+    .din    ( cpu_dout    ),
+    .we_lo  ( nvram_we_lo ),
+    .we_hi  ( nvram_we_hi ),
+    .dout   ( nvram_dout  )
+);
 
 // ---------------------------------------------------------------------------
 // CPU data-in mux
@@ -156,6 +206,7 @@ always @(*) begin
     case(1'b1)
         prog_sel: inp_mux = rom_half;
         ram_cs:   inp_mux = ram_dout;
+        nvram_cs: inp_mux = nvram_dout;
         vram_cs:  inp_mux = vram_dout;
         vreg_cs:  inp_mux = vreg_dout;
         pal_cs:   inp_mux = pal_dout;
@@ -176,22 +227,54 @@ function [15:0] read_inputs(input [7:0] sel);
 endfunction
 
 // ---------------------------------------------------------------------------
-// Register writes: sound latch, plane/colour latch
+// Register writes: sound latch, colour latches, plane enable and GROM bank.
+// itech020 byte writes hit low byte at 0x300003/0x380003/0x480001 and high
+// byte at 0x700002.
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     snd_latch_we <= 1'b0;
     if( rst ) begin
         plane_en    <= 2'b11;
-        color_latch <= 9'd0;
+        grom_bank   <= 2'b00;
+        color_latch0<= 7'd0;
+        color_latch1<= 7'd0;
         snd_latch   <= 8'd0;
-    end else if( cen && ~cpu_rnw ) begin
-        if( ahi==REG_SND ) begin
+    end else if( cpu_write ) begin
+        if( ahi==REG_SND && low_byte_we ) begin
             snd_latch    <= cpu_do16[7:0];
             snd_latch_we <= 1'b1;
         end
-        if( ahi==REG_PLANE ) begin
-            plane_en    <= ~cpu_do16[2:1];      // active-low enable latch
-            color_latch <= cpu_do16[8:0];
+        if( ahi==REG_COL0 && low_byte_we ) begin
+            color_latch0 <= cpu_do16[6:0];
+        end
+        if( ahi==REG_COL1 && low_byte_we ) begin
+            color_latch1 <= cpu_do16[6:0];
+        end
+        if( ahi==REG_PLANE && high_byte_we ) begin
+            plane_en  <= { ~cpu_do16[10], ~cpu_do16[9] }; // data bits 2:1
+            grom_bank <= cpu_do16[15:14];                 // data bits 7:6
+        end
+    end
+end
+
+// ---------------------------------------------------------------------------
+// Boot vector copy FSM: walk 32 long-words (0x80 bytes) of program ROM into
+// main RAM. rom_cs is forced high while !boot_done (see decode), so rom_ok
+// pulses when the requested long-word is available. Both byte lanes are
+// written; boot_half selects the high/low 16-bit half of each long-word.
+// ---------------------------------------------------------------------------
+always @(posedge clk) begin
+    if( rst ) begin
+        boot_lw   <= 5'd0;
+        boot_half <= 1'b0;
+        boot_done <= 1'b0;
+    end else if( !boot_done && rom_ok ) begin
+        if( !boot_half ) begin
+            boot_half <= 1'b1;                       // high word written now
+        end else begin
+            boot_half <= 1'b0;                       // low word written now
+            if( boot_lw == 5'd31 ) boot_done <= 1'b1;
+            else                   boot_lw    <= boot_lw + 5'd1;
         end
     end
 end
@@ -200,11 +283,21 @@ end
 // Interrupt priority: itech32 uses autovector IRQs for blitter & vblank/scan.
 // TODO: confirm IPL levels and acknowledge/clear scheme from itech32.cpp.
 // ---------------------------------------------------------------------------
+reg vint_latch;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        vint_latch <= 1'b0;
+    end else begin
+        if( vblank_irq ) vint_latch <= 1'b1;
+        if( cpu_write && ahi==REG_INP0 ) vint_latch <= 1'b0;
+    end
+end
 always @(posedge clk) begin
     if( rst ) cpu_ipl <= 3'b111;         // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
-        if( vblank_irq ) cpu_ipl <= 3'b110; // level 1 (placeholder)
+        if( vint_latch ) cpu_ipl <= 3'b110; // level 1 vblank
         if( blit_irq   ) cpu_ipl <= 3'b101; // level 2 (placeholder)
     end
 end
@@ -223,7 +316,7 @@ TG68KdotC_Kernel #(
 ) u_cpu (
     .CPU           ( 2'b11        ),   // 68020 mode
     .clk           ( clk          ),
-    .nReset        ( ~rst         ),
+    .nReset        ( ~rst & boot_done ),
     .clkena_in     ( clkena       ),
     .data_in       ( cpu_din      ),
     .IPL           ( cpu_ipl      ),

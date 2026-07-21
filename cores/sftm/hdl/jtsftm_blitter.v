@@ -27,6 +27,7 @@ module jtsftm_blitter(
     input       [15:0]  r_addrhi,
     input               start,
     input               plane_sel,
+    input       [ 1:0]  grom_bank,
 
     // GROM read (16-bit, 2 pixels/word)
     output reg  [23:0]  grom_addr,
@@ -63,7 +64,7 @@ always @(posedge clk) begin
             IDLE: if( start ) begin
                 xcnt      <= 0;
                 ycnt      <= 0;
-                src       <= { r_addrhi, r_addrlo, 1'b0 }; // TODO exact packing
+                src       <= { grom_bank[0], r_addrhi[7:0], r_addrlo };
                 curx      <= r_x;
                 cury      <= r_y;
                 vram_plane<= plane_sel;

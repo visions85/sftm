@@ -25,7 +25,8 @@ JTFRAME_SDRAM_BANKS
 # target in modules/jtframe (SDRAM catalogue in doc/sdram.md). Bank sizing in
 # mem.yaml assumes the 128 MB module.
 
-# NVRAM (battery-backed) is described in hdl/mem.yaml via ioctl save/restore.
+# NVRAM (0x600000-0x61ffff) is on-chip BRAM inside jtsftm_main for now; SD-card
+# persistence (JTFRAME ioctl save/restore) is deferred - see hdl/mem.yaml.
 
 [mister]
 # OSD extras for MiSTer

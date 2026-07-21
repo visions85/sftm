@@ -9,11 +9,14 @@ module jtsftm_vram #(parameter AW=17)(
     input      [AW-1:0]  waddr,
     input      [ 7:0]    wdata,
     input      [AW-1:0]  raddr,
-    output reg [ 7:0]    rdata
+    output reg [ 7:0]    rdata,
+    input      [AW-1:0]  io_addr,
+    output reg [ 7:0]    io_data
 );
     reg [7:0] mem[0:(1<<AW)-1];
     always @(posedge clk) begin
         if( we ) mem[waddr] <= wdata;
         rdata <= mem[raddr];
+        io_data <= mem[io_addr];
     end
 endmodule
