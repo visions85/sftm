@@ -37,19 +37,55 @@ module tb_jt5506;
     integer sample_cnt=0;
     always @(posedge clk) if(sample) sample_cnt = sample_cnt + 1;
 
+    // Write one byte through the host interface (one clock pulse).
+    task host_write(input [5:0] a, input [7:0] d);
+    begin
+        @(negedge clk);
+        host_addr <= a; host_din <= d; host_we <= 1'b1;
+        @(posedge clk);
+        @(negedge clk);
+        host_we <= 1'b0;
+    end
+    endtask
+
     initial begin
         repeat(4) @(posedge clk);
         rst = 0;
-        // write a frequency to voice 0 (page 0, FC reg)
-        @(posedge clk); host_addr<=6'h08; host_din<=8'h20; host_we<=1;
-        @(posedge clk); host_we<=0;
-        // let it run
+        repeat(2) @(posedge clk);
+
+        // --- Voice 0 initialisation (page 0) ---
+        // Select page 0 (voices 0-31 CR/FC/LVOL/RVOL).
+        host_write(6'h3c, 8'h00);   // PAGE = 0
+        // CR (addr[5:3]=0): clear both STOP bits so voice 0 runs.
+        host_write(6'h00, 8'h00);   // control[0][ 7:0] = 0x00
+        host_write(6'h02, 8'h00);   // control[0][15:8] = 0x00
+        // FC (addr[5:3]=1): set a non-zero playback frequency.
+        host_write(6'h08, 8'h20);   // fc[0][ 7:0] = 0x20
+        // LVOL (addr[5:3]=2).
+        host_write(6'h10, 8'h40);   // lvol[0][ 7:0] = 0x40
+        // RVOL (addr[5:3]=4).
+        host_write(6'h20, 8'h40);   // rvol[0][ 7:0] = 0x40
+
+        // --- Voice 0 loop region (page 32, voices 0-31 START/END/ACCUM) ---
+        // endp must be > 0; otherwise accum[31:11] >= endp[20:0] triggers
+        // immediately and the voice stops on its first sample.
+        host_write(6'h3c, 8'h20);   // PAGE = 32 (voice 0 extended regs)
+        // END (addr[5:3]=2): write endp[0][23:16] = 0xFF → endp[0][20:0] ≈ 0x0F_00_00
+        host_write(6'h12, 8'hff);   // endp[0][23:16] = 0xFF
+        host_write(6'h10, 8'hff);   // endp[0][15:8]  = 0xFF
+
+        // let it run long enough for the mixer to emit at least one sample
         repeat(5000) @(posedge clk);
+
         if( sample_cnt==0 ) begin
             $display("FAIL: no samples produced");
             $finish;
         end
-        $display("PASS: %0d samples produced (left=%h right=%h)", sample_cnt, left, right);
+        if( left==16'h0000 && right==16'h0000 ) begin
+            $display("FAIL: audio silent after %0d samples", sample_cnt);
+            $finish;
+        end
+        $display("PASS: %0d samples, left=%h right=%h", sample_cnt, left, right);
         $finish;
     end
 endmodule

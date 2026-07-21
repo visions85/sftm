@@ -1,0 +1,226 @@
+/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+
+    Self-checking bench for jtsftm_blitter. Exercises:
+      1. Normal 2x2 blit — pixel values and VRAM addresses verified.
+      2. Transparency (F_TRANSP) — 0xFF pixels must not produce a VRAM write.
+      3. X-flip (F_XFLIP)       — destination X counts downward.
+      4. Y-flip (F_YFLIP)       — destination Y counts downward.
+
+    GROM model: word address W returns { 2W+1, 2W } so byte address N = N[7:0].
+    All pixel values used in the normal/flip tests are < 0xFF (non-transparent).
+
+    Run:
+      iverilog -g2012 -Wall -o /tmp/tb_jtsftm_blitter.vvp \
+          cores/sftm/ver/game/tb_jtsftm_blitter.v cores/sftm/hdl/jtsftm_blitter.v && \
+      vvp /tmp/tb_jtsftm_blitter.vvp
+*/
+`timescale 1ns/1ps
+
+module tb_jtsftm_blitter;
+
+    // DUT ports
+    reg         clk=0, rst=1;
+    reg  [15:0] r_command=0, r_flags=0, r_width=0, r_height=0;
+    reg  [15:0] r_x=0, r_y=0, r_addrlo=0, r_addrhi=0;
+    reg         start=0, plane_sel=0;
+    reg  [ 1:0] grom_bank=0;
+
+    wire [23:0] grom_addr;
+    wire        grom_cs;
+    wire        vram_we;
+    wire [16:0] vram_addr;
+    wire [ 7:0] vram_data;
+    wire        vram_plane;
+    wire        done;
+
+    // -----------------------------------------------------------------------
+    // GROM model: byte address N = N[7:0].  Two bytes per 16-bit word:
+    //   word W  →  data = { (2W+1)[7:0], (2W)[7:0] }
+    // src_pix for byte N = (N & 1) ? data[15:8] : data[7:0]
+    //                    = (N & 1) ? 2W+1        : 2W
+    //                    = N[7:0]   in all cases.
+    // -----------------------------------------------------------------------
+    reg  [15:0] grom_data;
+    always @(*)
+        grom_data = { (grom_addr[7:0] << 1) + 8'h01,
+                      (grom_addr[7:0] << 1) };
+
+    // grom_ok: combinatorial — respond in the same cycle grom_cs is asserted.
+    // The FETCH state checks grom_ok on the clock after asserting grom_cs,
+    // so using grom_cs directly gives exactly 1 FETCH cycle per pixel.
+    jtsftm_blitter uut(
+        .rst(rst), .clk(clk),
+        .r_command(r_command), .r_flags(r_flags),
+        .r_width(r_width), .r_height(r_height),
+        .r_x(r_x), .r_y(r_y), .r_addrlo(r_addrlo), .r_addrhi(r_addrhi),
+        .start(start), .plane_sel(plane_sel), .grom_bank(grom_bank),
+        .grom_addr(grom_addr), .grom_data(grom_data),
+        .grom_cs(grom_cs), .grom_ok(grom_cs),
+        .vram_we(vram_we), .vram_addr(vram_addr), .vram_data(vram_data),
+        .vram_plane(vram_plane), .done(done)
+    );
+
+    // -----------------------------------------------------------------------
+    // VRAM shadow — capture every write so we can check pixel values.
+    // Initialise to 0xFF (transparent fill) so un-written entries are obvious.
+    // -----------------------------------------------------------------------
+    reg [7:0] vram [0:131071];   // 2^17 entries
+    integer   write_cnt=0, errors=0;
+    integer   k;
+
+    initial begin
+        for (k=0; k<131072; k=k+1) vram[k] = 8'hff;
+    end
+
+    always @(posedge clk) begin
+        if (vram_we) begin
+            vram[vram_addr] <= vram_data;
+            write_cnt       =  write_cnt + 1;
+        end
+    end
+
+    always #5 clk = ~clk;
+
+    // -----------------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------------
+    task do_blit;
+        input [15:0] px, py, pw, ph;
+        input [15:0] alo, ahi, flags;
+        input        psel;
+        integer      timeout;
+    begin
+        r_x      = px;  r_y     = py;
+        r_width  = pw;  r_height= ph;
+        r_addrlo = alo; r_addrhi= ahi;
+        r_flags  = flags;
+        plane_sel= psel;
+        @(negedge clk); start = 1'b1;
+        @(posedge clk);
+        @(negedge clk); start = 1'b0;
+        timeout = 100000;
+        while (!done && timeout > 0) begin
+            @(posedge clk);
+            timeout = timeout - 1;
+        end
+        if (timeout == 0) begin
+            $display("FAIL: blit timed out");
+            errors = errors + 1;
+        end
+        repeat(2) @(posedge clk);   // settle
+    end
+    endtask
+
+    task check_pix;
+        input [16:0] addr;
+        input [ 7:0] exp;
+        input [255:0] name;
+    begin
+        if (vram[addr] !== exp) begin
+            $display("FAIL: %0s  addr=%05h  got=%02h  exp=%02h",
+                     name, addr, vram[addr], exp);
+            errors = errors + 1;
+        end
+    end
+    endtask
+
+    // -----------------------------------------------------------------------
+    // Test sequence
+    // -----------------------------------------------------------------------
+    initial begin
+        repeat(4) @(posedge clk);
+        rst = 0;
+        repeat(2) @(posedge clk);
+
+        // === Test 1: 2x2 normal blit at (5,6), GROM byte addr 0 ===
+        // r_width=1, r_height=1 → (r_width+1) x (r_height+1) = 2x2 pixels
+        // Byte 0 → pixel 0x00 @ vram{6,5}  = 17'h0C05
+        // Byte 1 → pixel 0x01 @ vram{6,6}  = 17'h0C06
+        // Byte 2 → pixel 0x02 @ vram{7,5}  = 17'h0E05
+        // Byte 3 → pixel 0x03 @ vram{7,6}  = 17'h0E06
+        write_cnt = 0;
+        do_blit(16'h0005, 16'h0006, 16'h0001, 16'h0001,
+                16'h0000, 16'h0000, 16'h0000, 1'b0);
+        if (write_cnt !== 4) begin
+            $display("FAIL: test1 write_cnt=%0d (expected 4)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h0C05, 8'h00, "t1 pix(5,6)");
+        check_pix(17'h0C06, 8'h01, "t1 pix(6,6)");
+        check_pix(17'h0E05, 8'h02, "t1 pix(5,7)");
+        check_pix(17'h0E06, 8'h03, "t1 pix(6,7)");
+
+        // === Test 2: transparency (F_TRANSP=bit0) ===
+        // GROM word 0 = {0x01, 0x00}: byte0=0x00 (opaque), byte1=0x01 (opaque).
+        // Override: use a 1-wide blit starting at GROM byte addr where byte0=0xFF.
+        // The GROM model: byte N = N[7:0].  Byte 0xFF = 0xFF → transparent.
+        // Set r_addrlo so src byte 0 = byte address 0xFF.
+        // src init: src = {grom_bank[0], r_addrhi[7:0], r_addrlo} = {0,0,0xFF}
+        // Byte 0xFF (word addr 0x7F): grom_data={0xFF,0xFE}, src[0]=1 → 0xFF (transparent)
+        // Byte 0xFE (word addr 0x7F): grom_data={0xFF,0xFE}, src[0]=0 → 0xFE (opaque)
+        // Two-pixel blit at y=10: src starts at byte 0xFE (even byte of word 0x7F)
+        //   pixel0 src[0]=0 → 0xFE → opaque, write at (5,10)  = vram{10,5}=17'h1405
+        //   pixel1 src[0]=1 → 0xFF → transparent, skip
+        write_cnt = 0;
+        do_blit(16'h0005, 16'h000A, 16'h0001, 16'h0000,
+                16'h00FE, 16'h0000, 16'h0001, 1'b0);  // flags[0]=F_TRANSP
+        if (write_cnt !== 1) begin
+            $display("FAIL: test2 write_cnt=%0d (expected 1, transparent skipped)",
+                     write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h1405, 8'hFE, "t2 opaque pix");
+        // Transparent pixel at (6,10) must remain 0xFF (unchanged)
+        check_pix(17'h1406, 8'hFF, "t2 transparent pix untouched");
+
+        // === Test 3: X-flip (F_XFLIP=bit1) ===
+        // 2x1 blit at (10,12), GROM addr 0, flags=2
+        // curx starts at 10, decrements each pixel:
+        //   pixel0 = byte 0x00 @ (10,12) = vram{12,10} = 17'h180A
+        //   pixel1 = byte 0x01 @ ( 9,12) = vram{12, 9} = 17'h1809
+        write_cnt = 0;
+        do_blit(16'h000A, 16'h000C, 16'h0001, 16'h0000,
+                16'h0000, 16'h0000, 16'h0002, 1'b0);  // flags[1]=F_XFLIP
+        if (write_cnt !== 2) begin
+            $display("FAIL: test3 write_cnt=%0d (expected 2)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h180A, 8'h00, "t3 xflip pix0 (10,12)");
+        check_pix(17'h1809, 8'h01, "t3 xflip pix1 ( 9,12)");
+
+        // === Test 4: Y-flip (F_YFLIP=bit2) ===
+        // 1x2 blit at (5,20), GROM addr 0, flags=4
+        // cury starts at 20, decrements each row:
+        //   pixel0 = byte 0x00 @ (5,20) = vram{20,5} = 17'h2805
+        //   pixel1 = byte 0x01 @ (5,19) = vram{19,5} = 17'h2605
+        write_cnt = 0;
+        do_blit(16'h0005, 16'h0014, 16'h0000, 16'h0001,
+                16'h0000, 16'h0000, 16'h0004, 1'b0);  // flags[2]=F_YFLIP
+        if (write_cnt !== 2) begin
+            $display("FAIL: test4 write_cnt=%0d (expected 2)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h2805, 8'h00, "t4 yflip pix0 (5,20)");
+        check_pix(17'h2605, 8'h01, "t4 yflip pix1 (5,19)");
+
+        // === Test 5: plane_sel propagated to vram_plane ===
+        // A 1x1 blit on plane 1: check vram_plane stayed 1 throughout
+        // (captured at write time; just verify via the done side-effect).
+        // We check implicitly: if plane_sel=1 made it through IDLE→start, done fires.
+        do_blit(16'h0030, 16'h0030, 16'h0000, 16'h0000,
+                16'h0000, 16'h0000, 16'h0000, 1'b1);
+        // vram_plane should have been 1 for that write
+        // (confirmed by no errors in the done-wait; vram_plane is an output wire)
+        if (vram_plane !== 1'b1) begin
+            $display("FAIL: test5 vram_plane=%b after plane_sel=1", vram_plane);
+            errors = errors + 1;
+        end
+
+        if (errors == 0)
+            $display("PASS: jtsftm_blitter all checks");
+        else
+            $display("FAIL: jtsftm_blitter %0d checks failed", errors);
+        $finish;
+    end
+
+endmodule
