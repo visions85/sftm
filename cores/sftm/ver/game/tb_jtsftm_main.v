@@ -47,7 +47,7 @@ module tb_jtsftm_main;
     wire [ 6:0]  color_latch0, color_latch1;
 
     // Interrupts (deasserted)
-    reg          blit_irq=0, vblank_irq=0;
+    reg          blit_irq=0, scan_irq=0, vblank_irq=0;
 
     // Sound latch outputs
     wire [ 7:0]  snd_latch;
@@ -73,7 +73,7 @@ module tb_jtsftm_main;
         .vram_dout(vram_dout), .vreg_dout(vreg_dout), .pal_dout(pal_dout),
         .plane_en(plane_en), .grom_bank(grom_bank),
         .color_latch0(color_latch0), .color_latch1(color_latch1),
-        .blit_irq(blit_irq), .vblank_irq(vblank_irq),
+        .blit_irq(blit_irq), .scan_irq(scan_irq), .vblank_irq(vblank_irq),
         .snd_latch(snd_latch), .snd_latch_we(snd_latch_we),
         .debug_bus(debug_bus)
     );

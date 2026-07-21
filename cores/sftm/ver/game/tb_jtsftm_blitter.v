@@ -5,6 +5,10 @@
       2. Transparency (F_TRANSP) — 0xFF pixels must not produce a VRAM write.
       3. X-flip (F_XFLIP)       — destination X counts downward.
       4. Y-flip (F_YFLIP)       — destination Y counts downward.
+      5. plane_sel propagation.
+      6. Clip rect (F_CLIP=bit10):
+           6a. F_CLIP set: 4x4 blit clipped to 2x2 window → 4 VRAM writes.
+           6b. F_CLIP clear: same blit with same clip regs → all 16 writes.
 
     GROM model: word address W returns { 2W+1, 2W } so byte address N = N[7:0].
     All pixel values used in the normal/flip tests are < 0xFF (non-transparent).
@@ -22,6 +26,9 @@ module tb_jtsftm_blitter;
     reg         clk=0, rst=1;
     reg  [15:0] r_command=0, r_flags=0, r_width=0, r_height=0;
     reg  [15:0] r_x=0, r_y=0, r_addrlo=0, r_addrhi=0;
+    // Clip rect regs (12-bit pixel coordinates). Default: full range, no clip.
+    reg  [11:0] r_leftclip=12'd0, r_rightclip=12'hfff,
+                r_topclip =12'd0, r_botclip  =12'hfff;
     reg         start=0, plane_sel=0;
     reg  [ 1:0] grom_bank=0;
 
@@ -53,6 +60,8 @@ module tb_jtsftm_blitter;
         .r_command(r_command), .r_flags(r_flags),
         .r_width(r_width), .r_height(r_height),
         .r_x(r_x), .r_y(r_y), .r_addrlo(r_addrlo), .r_addrhi(r_addrhi),
+        .r_leftclip(r_leftclip), .r_rightclip(r_rightclip),
+        .r_topclip(r_topclip),   .r_botclip(r_botclip),
         .start(start), .plane_sel(plane_sel), .grom_bank(grom_bank),
         .grom_addr(grom_addr), .grom_data(grom_data),
         .grom_cs(grom_cs), .grom_ok(grom_cs),
@@ -215,6 +224,54 @@ module tb_jtsftm_blitter;
             $display("FAIL: test5 vram_plane=%b after plane_sel=1", vram_plane);
             errors = errors + 1;
         end
+
+        // === Test 6a: F_CLIP enabled — 4x4 blit clipped to 2x2 window ===
+        // Blit 4x4 pixels at (8,8), GROM addr 0, F_CLIP=1 (bit10).
+        // Clip window: left=10, right=12, top=10, bot=12  (→ x∈[10,11], y∈[10,11]).
+        //
+        // Pixel layout (GROM byte → destination):
+        //   row y=8:  bytes 0-3  → (8,8)-(11,8)   all outside top clip
+        //   row y=9:  bytes 4-7  → (8,9)-(11,9)   all outside top clip
+        //   row y=10: bytes 8-11 → (8,10)-(11,10)  (8,10) and (9,10) outside left clip
+        //                          byte10→(10,10) ✓  byte11→(11,10) ✓
+        //   row y=11: bytes12-15 → (8,11)-(11,11)  same left clip
+        //                          byte14→(10,11) ✓  byte15→(11,11) ✓
+        //
+        // GROM model: byte N = N[7:0].
+        //   byte 10 = 8'h0A  @ vram{10,10} = 17'h140A
+        //   byte 11 = 8'h0B  @ vram{10,11} = 17'h140B
+        //   byte 14 = 8'h0E  @ vram{11,10} = 17'h160A
+        //   byte 15 = 8'h0F  @ vram{11,11} = 17'h160B
+        r_leftclip = 12'd10;  r_rightclip = 12'd12;
+        r_topclip  = 12'd10;  r_botclip   = 12'd12;
+        write_cnt = 0;
+        do_blit(16'h0008, 16'h0008, 16'h0003, 16'h0003,
+                16'h0000, 16'h0000, 16'h0400, 1'b0);  // F_CLIP=bit10
+        if (write_cnt !== 4) begin
+            $display("FAIL: t6a write_cnt=%0d (expected 4 clipped writes)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h140A, 8'h0A, "t6a clipped (10,10)");
+        check_pix(17'h140B, 8'h0B, "t6a clipped (11,10)");
+        check_pix(17'h160A, 8'h0E, "t6a clipped (10,11)");
+        check_pix(17'h160B, 8'h0F, "t6a clipped (11,11)");
+        // Pixels outside clip must be untouched (still 0xFF from init)
+        check_pix(17'h1008, 8'hFF, "t6a outside top (8,8)");
+        check_pix(17'h1408, 8'hFF, "t6a outside left (8,10)");
+
+        // === Test 6b: F_CLIP clear — same clip regs, all 16 pixels written ===
+        // Blit 4x4 at (50,50) (fresh VRAM area), flags=0 (no F_CLIP).
+        // clip regs still set to 10-12; they must be ignored.
+        write_cnt = 0;
+        do_blit(16'h0032, 16'h0032, 16'h0003, 16'h0003,
+                16'h0000, 16'h0000, 16'h0000, 1'b0);  // no F_CLIP
+        if (write_cnt !== 16) begin
+            $display("FAIL: t6b write_cnt=%0d (expected 16, clip disabled)", write_cnt);
+            errors = errors + 1;
+        end
+        // Reset clip to full range for safety
+        r_leftclip = 12'd0;   r_rightclip = 12'hfff;
+        r_topclip  = 12'd0;   r_botclip   = 12'hfff;
 
         if (errors == 0)
             $display("PASS: jtsftm_blitter all checks");

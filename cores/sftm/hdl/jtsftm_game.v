@@ -45,7 +45,7 @@ wire [ 6:0] color_latch0;               // foreground palette bank
 wire [ 6:0] color_latch1;               // background palette bank
 
 // interrupts
-wire        blit_irq, vblank_irq;
+wire        blit_irq, scan_irq, vblank_irq;
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -93,6 +93,7 @@ jtsftm_main u_main(
     .color_latch1(color_latch1  ),
     // interrupts
     .blit_irq   ( blit_irq      ),
+    .scan_irq   ( scan_irq      ),
     .vblank_irq ( vblank_irq    ),
     // sound latch
     .snd_latch  ( snd_latch     ),
@@ -136,6 +137,7 @@ jtsftm_video u_video(
     .grm3_ok    ( grm3_ok       ),
     // interrupts back to CPU
     .blit_irq   ( blit_irq      ),
+    .scan_irq   ( scan_irq      ),
     .vblank_irq ( vblank_irq    ),
     // video out
     .HS         ( HS            ),
