@@ -152,9 +152,13 @@ reg [4:0]  vidx;
 reg signed [31:0] mix_l, mix_r;
 wire voice_running = control[vidx][CTRL_STOP1:CTRL_STOP0] == 2'b00;
 wire [1:0] bank = {control[vidx][CTRL_BS1], control[vidx][CTRL_BS0]};
+// Bank offset: MAME ES5506 has 4 independent 21-bit ROM banks (bank0..3).
+// For SFTM: bank0 = srom0 (2 MB = 1 Mword, SDRAM offset 0),
+//           bank3 = srom3 (512 KB = 256 Kword, SDRAM offset 0x100000).
+// Banks 1 and 2 are unused by SFTM; they alias to bank 0.
 // Combinatorial: address is valid in the same cen cycle srom_cs is asserted.
-// TODO: add bank offset from control[vidx][CTRL_BS1:CTRL_BS0].
-assign srom_addr = accum[vidx][31:11];
+wire [20:0] bank_base = (bank == 2'b11) ? 21'h100000 : 21'h000000;
+assign srom_addr = accum[vidx][31:11] + bank_base;
 
 always @(posedge clk) begin
     sample  <= 1'b0;

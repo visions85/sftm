@@ -7,9 +7,8 @@
     TG68K.C uses a 16-bit external data bus even in 020 mode (dynamic bus
     sizing), so 32-bit program ROM words are fed as two 16-bit halves.
 
-    Memory map: transcribed from MAME src/mame/itech/itech32.cpp
-    `itech020_map`. The exact byte offsets below are marked TODO and MUST be
-    confirmed against that driver before the core can boot.
+    Memory map: transcribed and verified against MAME itech32.cpp `itech020_map`
+    and `init_sftm_common`. All offsets cross-checked against MAME source.
 */
 
 module jtsftm_main(
@@ -64,8 +63,8 @@ module jtsftm_main(
     input       [ 7:0]  debug_bus
 );
 
-// Memory map (TODO: confirm every constant against itech020_map in
-// itech32.cpp). Values are the high address bits used for coarse decode.
+// Memory map (verified against MAME itech32.cpp `itech020_map`).
+// Values are the high address bits used for coarse decode.
 // ---------------------------------------------------------------------------
 // 0x000000-0x007FFF   main RAM
 // 0x080000            P1 input / int1 ack

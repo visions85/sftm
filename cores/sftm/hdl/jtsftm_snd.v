@@ -106,7 +106,12 @@ end
 //   fixed   (0x8000-0xFFFF): ROM byte-addr = 0x8000 + a[14:0]  -> snd_addr[14:0] = a[14:0], bit15=1
 //   banked  (0x4000-0x7FFF): ROM byte-addr = 0x10000 + bank*0x4000 + a[13:0]
 // Both fit in 18-bit snd_addr (max 256 KB).
-assign rom_addr = brom_cs ? { 2'b01, rom_bank[1:0], a[13:0] }   // banked (TODO: 18-bit bank)
+// rom_addr layout (18-bit byte addresses, 256 KB total snd SDRAM bus):
+//   fixed  0x8000-0xFFFF  → {3'b001, a[14:0]}         (32 KB)
+//   banked 0x10000-0x1FFFF → {2'b01, bank[1:0], a[13:0]} (4×16 KB = 64 KB)
+// 4 banks is the maximum within 18-bit addressing given the fixed-ROM layout.
+// More banks require a wider snd SDRAM bus (needs JTFRAME mem.yaml change).
+assign rom_addr = brom_cs ? { 2'b01, rom_bank[1:0], a[13:0] }   // banked (4 banks × 16 KB)
                            : { 3'b001, a[14:0] };                // fixed 0x8000-0xFFFF
 
 // ---------------------------------------------------------------------------
