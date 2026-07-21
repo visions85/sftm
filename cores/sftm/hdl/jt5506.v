@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     Ensoniq ES5506 "OTTO" sample synthesizer.
@@ -37,7 +38,7 @@ module jt5506(
     output reg          irq,
 
     // sample ROM (16-bit word addressed)
-    output reg  [20:0]  srom_addr,
+    output      [20:0]  srom_addr,  // combinatorial: accum[vidx][31:11]
     input       [15:0]  srom_data,
     output reg          srom_cs,
     input               srom_ok,
@@ -151,7 +152,9 @@ reg [4:0]  vidx;
 reg signed [31:0] mix_l, mix_r;
 wire voice_running = control[vidx][CTRL_STOP1:CTRL_STOP0] == 2'b00;
 wire [1:0] bank = {control[vidx][CTRL_BS1], control[vidx][CTRL_BS0]};
-wire [20:0] addr = accum[vidx][31:11];
+// Combinatorial: address is valid in the same cen cycle srom_cs is asserted.
+// TODO: add bank offset from control[vidx][CTRL_BS1:CTRL_BS0].
+assign srom_addr = accum[vidx][31:11];
 
 always @(posedge clk) begin
     sample  <= 1'b0;
@@ -160,7 +163,6 @@ always @(posedge clk) begin
     if( rst ) begin
         vidx <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
     end else if( cen ) begin
-        srom_addr <= addr; // TODO: include bank offset per ES5506 four banks
         srom_cs   <= voice_running;
         if( voice_running && srom_ok ) begin
             // TODO: interpolation uses current+next samples and frac bits.

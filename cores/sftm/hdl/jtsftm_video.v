@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     Video subsystem for Street Fighter: The Movie (itech32 IT42 blitter).

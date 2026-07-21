@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     Palette RAM helper. The original hardware has 15-bit colour (5:5:5) and

@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     Generic synchronous work-RAM with a 16-bit word bus and independent high /

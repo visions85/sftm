@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     One VRAM plane: 8-bit indexed pixels, one write port (blitter/CPU) and one

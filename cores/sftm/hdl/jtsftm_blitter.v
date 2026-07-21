@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     IT42 blitter for itech32. Copies a width x height block of 8-bit pixels
