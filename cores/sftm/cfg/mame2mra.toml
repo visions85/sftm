@@ -6,68 +6,57 @@
 # layout and 32-bit interleaving for the 68EC020 program ROM.
 
 [global]
-author = "JTSFTM contributors"
+author   = ["JTSFTM contributors"]
 platform = "Street Fighter: The Movie"
-category = "Arcade"
-mraauthor = "JTSFTM"
-rbutton = "Service"
-rbf = "JTSFTM"
 
+# Parse settings: which MAME source file and parent set to process
 [parse]
-sourcefile = "itech/itech32.cpp"
-parents = ["sftm"]
-skip.bootlegs = true
+sourcefile = ["itech/itech32.cpp"]
 
-[[buttons]]
-names = [
-  { names = ["LP", "MP", "HP", "LK", "MK", "HK"] }
-]
+[parse.skip]
+bootlegs = true
 
-[[dips]]
+[[parse.parents]]
+name = "sftm"
+
+# Buttons: 6 action buttons (LP MP HP LK MK HK)
+[buttons]
+[[buttons.names]]
+names = "LP,MP,HP,LK,MK,HK"
+
+# DIP switches
+[[dipsw.extra]]
 name = "Test Mode"
 bits = "0"
-values = [
-  { value = "0", name = "Off" },
-  { value = "1", name = "On" }
-]
 
-# ROM order is chosen to match hdl/mem.yaml buses:
-#   prog -> 32-bit interleaved main program
-#   snd  -> 6809 program
-#   grom -> 32 MB main graphics
-#   grm3 -> 512 KB extra graphics
-#   srom -> ES5506 sample data
+# ROM download order MUST match SDRAM bank order (BA0 first, then BA1…BA3)
+# so that JTFRAME_BA*_START in macros.def correctly partitions the stream:
+#   BA0: prog (1 MB, 32-bit interleaved) + snd (256 KB)
+#   BA1: srom (2.5 MB — srom0 2 MB + srom3 512 KB, ES5506 samples)
+#   BA2: grom (32 MB main graphics, needs 128 MB SDRAM module)
+#   BA3: grm3 (512 KB extra graphics)
 #
-# TODO: translate this to the exact syntax expected by the active jtframe
-# mame2mra parser. Some jtcores revisions use [rom] tables while older ones
-# use region transforms.
-
-[[rom]]
-region = "maincpu"
-name = "prog"
+# TODO: validate exact [[rom.regions]] syntax and region names against the
+# active jtframe version's mra parser before generating a real .mra.
+[[rom.regions]]
+name = "maincpu"
 width = 32
 reverse = false
 
-[[rom]]
-region = "soundcpu"
-name = "snd"
+[[rom.regions]]
+name = "soundcpu"
 width = 8
 
-[[rom]]
-region = "grom"
+[[rom.regions]]
+name = "ensoniq.0"
+width = 16
+
+[[rom.regions]]
 name = "grom"
 width = 16
 
-[[rom]]
-region = "grm3"
+[[rom.regions]]
 name = "grm3"
 width = 16
 
-[[rom]]
-region = "ensoniq.0"
-name = "srom"
-width = 16
-
-[[nvram]]
-index = 2
-size = 16384
+[rom.nvram]

@@ -1,7 +1,14 @@
 # JTFRAME / build artefacts
 /release/
 /rom/
+/jtbin/
 /modules/jtframe/
+# jtframe mem generated outputs (do not commit)
+cores/*/mist/
+cores/*/mister/
+cores/*/sidi/
+cores/*/sidi128/
+cores/*/pocket/
 *.rbf
 *.rom
 *.sof

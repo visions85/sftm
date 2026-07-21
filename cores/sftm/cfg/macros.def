@@ -18,15 +18,23 @@ JTFRAME_COLORW=5
 JTFRAME_BUTTONS=6
 
 # --- Memory ------------------------------------------------------------------
-# ~36 MB of ROM (see hdl/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
+# ~36 MB of ROM (see cfg/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
 # module, because 4 x 8 MB = 32 MB on the standard module is not enough.
 JTFRAME_SDRAM_BANKS
-# NOTE: confirm the exact macro used to select the 128 MB SDRAM part for the
-# target in modules/jtframe (SDRAM catalogue in doc/sdram.md). Bank sizing in
-# mem.yaml assumes the 128 MB module.
-
+# 128 MB SDRAM module (4 x 32 MB banks). Confirm macro name against the
+# installed JTFRAME version's doc/sdram.md; JTFRAME_SDRAM128 is the typical
+# MiSTer 128 MB macro. Bank 2 needs a 32 MB bank for the 32 MB grom region.
+JTFRAME_SDRAM128
+#
+# SDRAM bank byte-offset boundaries in the ROM download stream.
+# Download order: BA0 (prog+snd), BA1 (srom), BA2 (grom), BA3 (grm3).
+# prog=1MB(0x100000) snd=256KB(0x40000) srom=2.5MB(0x280000) grom=32MB(0x2000000)
+JTFRAME_BA1_START=0x140000
+JTFRAME_BA2_START=0x3C0000
+JTFRAME_BA3_START=0x23C0000
+#
 # NVRAM (0x600000-0x61ffff) is on-chip BRAM inside jtsftm_main for now; SD-card
-# persistence (JTFRAME ioctl save/restore) is deferred - see hdl/mem.yaml.
+# persistence (JTFRAME ioctl save/restore) is deferred - see cfg/mem.yaml.
 
 [mister]
 # OSD extras for MiSTer

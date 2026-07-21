@@ -1,7 +1,8 @@
 # JTSFTM memory description for JTFRAME (`jtframe mem sftm`).
-# Generates jtsftm_game_sdram.v and mem_ports.inc.
+# Lives in cfg/ (jtframe reads $JTROOT/cores/<core>/cfg/mem.yaml).
+# Generates jtsftm_game_sdram.v (in cores/sftm/mister/) and mem_ports.inc.
 #
-# ROM regions (see cfg/mame2mra.toml for the download order):
+# ROM regions — download order must match SDRAM bank order (see cfg/mame2mra.toml):
 #   prog   1.00 MB  4x256KB PROMs, 32-bit interleaved   (68EC020 program)
 #   snd    0.25 MB  sound CPU (6809)
 #   grom  32.00 MB  rm0-0..3 + rm1-0..3 (blitter graphics)
