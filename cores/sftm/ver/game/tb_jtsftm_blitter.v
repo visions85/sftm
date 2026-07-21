@@ -29,6 +29,8 @@ module tb_jtsftm_blitter;
     // Clip rect regs (12-bit pixel coordinates). Default: full range, no clip.
     reg  [11:0] r_leftclip=12'd0, r_rightclip=12'hfff,
                 r_topclip =12'd0, r_botclip  =12'hfff;
+    // Source x-step (8.8 fixed-point; 0x0100 = 1 source byte per dest pixel).
+    reg  [15:0] r_srcxstep=16'h0100;
     reg         start=0, plane_sel=0;
     reg  [ 1:0] grom_bank=0;
 
@@ -62,6 +64,7 @@ module tb_jtsftm_blitter;
         .r_x(r_x), .r_y(r_y), .r_addrlo(r_addrlo), .r_addrhi(r_addrhi),
         .r_leftclip(r_leftclip), .r_rightclip(r_rightclip),
         .r_topclip(r_topclip),   .r_botclip(r_botclip),
+        .r_srcxstep(r_srcxstep),
         .start(start), .plane_sel(plane_sel), .grom_bank(grom_bank),
         .grom_addr(grom_addr), .grom_data(grom_data),
         .grom_cs(grom_cs), .grom_ok(grom_cs),
@@ -272,6 +275,26 @@ module tb_jtsftm_blitter;
         // Reset clip to full range for safety
         r_leftclip = 12'd0;   r_rightclip = 12'hfff;
         r_topclip  = 12'd0;   r_botclip   = 12'hfff;
+
+        // === Test 7: SRC_XSTEP=0x200 (2:1 x-scaling) ===
+        // 3-pixel blit at (20,30), GROM addr 0, r_srcxstep=0x200.
+        // src advances by 2 per dest pixel (skip every other source byte).
+        // GROM model: byte N = N[7:0].  With step=2, bytes used: 0, 2, 4.
+        //   src=0 (even) → word 0 data[7:0] = 0x00 @ vram{30,20} = 17'h3C14
+        //   src=2 (even) → word 1 data[7:0] = 0x02 @ vram{30,21} = 17'h3C15
+        //   src=4 (even) → word 2 data[7:0] = 0x04 @ vram{30,22} = 17'h3C16
+        r_srcxstep = 16'h0200;
+        write_cnt = 0;
+        do_blit(16'h0014, 16'h001E, 16'h0002, 16'h0000,
+                16'h0000, 16'h0000, 16'h0000, 1'b0);  // r_width=2 → 3 dest pixels
+        if (write_cnt !== 3) begin
+            $display("FAIL: t7 write_cnt=%0d (expected 3)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h3C14, 8'h00, "t7 srcxstep=2 pix0 (20,30)");
+        check_pix(17'h3C15, 8'h02, "t7 srcxstep=2 pix1 (21,30)");
+        check_pix(17'h3C16, 8'h04, "t7 srcxstep=2 pix2 (22,30)");
+        r_srcxstep = 16'h0100;  // restore 1:1
 
         if (errors == 0)
             $display("PASS: jtsftm_blitter all checks");

@@ -140,6 +140,12 @@ end
 always @(posedge clk) begin
     if( rst ) begin
         for( i=0; i<128; i=i+1 ) vregs[i] <= 16'd0;
+        // Set source/dest step registers to 1:1 scale (0x0100 = 1.0 in 8.8 fp).
+        // Game writes correct values before blitting; reset values prevent
+        // src-stall (src_xfrac never overflows if srcxstep=0).
+        vregs[VR_SRCXSTEP] <= 16'h0100;
+        vregs[VR_SRCYSTEP] <= 16'h0100;
+        vregs[VR_DSTYSTEP] <= 16'h0100;
         int_state   <= 16'd0;
         xfer_xcount <= 16'd0;
         xfer_ycount <= 16'd0;
@@ -333,6 +339,8 @@ jtsftm_blitter u_blitter(
     .r_rightclip( vregs[VR_RIGHTCLIP][11:0] ),
     .r_topclip  ( vregs[VR_TOPCLIP][11:0]   ),
     .r_botclip  ( vregs[VR_BOTCLIP][11:0]   ),
+    // source stepping
+    .r_srcxstep ( vregs[VR_SRCXSTEP]        ),
     .start      ( blit_start          ),
     .plane_sel  ( plane_en[1] & ~plane_en[0] ),
     .grom_bank  ( grom_bank          ),
