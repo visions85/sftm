@@ -3,8 +3,9 @@
 set -euo pipefail
 
 JTFRAME_DIR="/workspace/modules/jtframe"
-JTFRAME_BIN="${JTFRAME_DIR}/bin/jtframe"
-JTFRAME_SENTINEL="${JTFRAME_DIR}/hdl/include/jtframe.vh"
+# bin/jtframe is a shell wrapper; the actual compiled binary lives in src/jtframe/
+JTFRAME_COMPILED="${JTFRAME_DIR}/src/jtframe/jtframe"
+JTFRAME_SENTINEL="${JTFRAME_DIR}/src/jtframe/main.go"
 
 # ---------------------------------------------------------------------------
 # 1. Vendor jtframe module (sparse clone — only runs on first start)
@@ -24,18 +25,20 @@ if [ ! -f "${JTFRAME_SENTINEL}" ]; then
     mkdir -p "${JTFRAME_DIR}"
     cp -r "$TMP/modules/jtframe/." "${JTFRAME_DIR}/"
     rm -rf "$TMP"
+    cd /workspace  # avoid getcwd error after rmdir
     echo "[sftm] jtframe module vendored to ${JTFRAME_DIR}"
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Build jtframe Go binary (only if missing or jtframe was just updated)
+# 2. Pre-compile jtframe binary (bin/jtframe is a wrapper that auto-compiles
+#    to src/jtframe/jtframe on first call; we do it here so interactive use
+#    is instant rather than waiting ~1 min on first jtframe command)
 # ---------------------------------------------------------------------------
-if [ ! -f "${JTFRAME_BIN}" ]; then
-    echo "[sftm] Building jtframe binary..."
-    mkdir -p "${JTFRAME_DIR}/bin"
+if [ ! -f "${JTFRAME_COMPILED}" ]; then
+    echo "[sftm] Pre-compiling jtframe binary (~1 min, first run only)..."
     cd "${JTFRAME_DIR}/src/jtframe"
-    go build -o "${JTFRAME_BIN}" .
-    echo "[sftm] jtframe binary ready: ${JTFRAME_BIN}"
+    go build .
+    echo "[sftm] jtframe binary ready: ${JTFRAME_COMPILED}"
 fi
 
 # ---------------------------------------------------------------------------

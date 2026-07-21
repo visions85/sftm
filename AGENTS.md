@@ -42,24 +42,39 @@ vvp /tmp/tb_jtsftm_main.vvp
 
 For modules that depend on vendored CPUs (`jtsftm_main`, `jtsftm_snd`, `jtsftm_video`, `jtsftm_game`), include `cores/sftm/ver/game/stubs.v` in the iverilog invocation to satisfy the `TG68KdotC_Kernel` and `mc6809i` black boxes.
 
-### Full build (Linux only — requires Quartus, JTFRAME toolchain)
+### Docker Linux environment (JTFRAME toolchain, ghdl)
+
+A pre-configured Docker image handles `jtframe` commands and `ghdl` on any OS.
 
 ```sh
-# Drop this core into a jtcores checkout and build for MiSTer
-cp -r cores/sftm <path-to-jtcores>/cores/sftm
-cd <path-to-jtcores>
-source setprj.sh
-jtframe mra sftm        # generate MRA and ROM download descriptor
-jtcore sftm -mister     # synthesise and build .rbf
+# First run: builds image, sparse-clones jtframe module, compiles jtframe binary
+./docker/run.sh
+
+# One-liner commands
+./docker/run.sh jtframe mem sftm              # regenerate SDRAM arbiter + mem_ports.inc
+./docker/run.sh jtframe mem sftm -target mister  # output to cores/sftm/mister/ instead of mist/
+./docker/run.sh jtframe mra sftm              # generate .mra ROM descriptor
+
+# Force image rebuild (after Dockerfile changes)
+./docker/run.sh --rebuild
 ```
 
-Alternatively, add JTFRAME as a submodule at `modules/jtframe` and use this directory as `$JTROOT`.
+The sftm repo is mounted at `/workspace` (= `$JTROOT`). The jtframe module lives in a
+persistent Docker volume `jtframe-module` at `/workspace/modules/jtframe`.
+Generated output (`cores/sftm/mist/` or `mister/`) is written back to the host repo.
 
-### JTFRAME helper commands (once JTFRAME is vendored)
+### Full build (requires Quartus, Linux)
 
 ```sh
-jtframe mem sftm        # regenerate jtsftm_game_sdram.v + mem_ports.inc from hdl/mem.yaml
-jtframe cfgstr sftm     # evaluate cfg/macros.def
+./docker/run.sh jtframe mra sftm        # generate .mra and ROM download descriptor
+./docker/run.sh jtcore sftm -mister     # synthesise and build .rbf (needs Quartus)
+```
+
+### JTFRAME helper commands
+
+```sh
+./docker/run.sh jtframe mem sftm        # regenerate jtsftm_game_sdram.v + mem_ports.inc from cfg/mem.yaml
+./docker/run.sh jtframe cfgstr sftm     # evaluate cfg/macros.def
 ```
 
 ### TG68K.C conversion for Verilator simulation
@@ -93,7 +108,7 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 
 **CPU bus**: `jtsftm_main` drives `cpu_addr[23:1]`, `cpu_dout[15:0]`, `cpu_rnw`, `cpu_uds_n/cpu_lds_n` plus chip-select lines (`vram_cs`, `vreg_cs`, `pal_cs`) decoded from the address. `jtsftm_video` receives these and muxes responses back to the main module.
 
-**SDRAM**: Four banks defined in `hdl/mem.yaml`. `jtframe mem sftm` generates the SDRAM arbiter and port stubs. Bank 0 = 68020 program + 6809 ROM; bank 1 = ES5506 sample ROM; bank 2 = 32 MB main graphics (GROM); bank 3 = extra graphics (grm3). The 32 MB GROM region requires the 128 MB SDRAM module.
+**SDRAM**: Four banks defined in `cfg/mem.yaml`. `jtframe mem sftm` generates the SDRAM arbiter (`cores/sftm/mist/jtsftm_game_sdram.v`) and port stubs (`mem_ports.inc`). Bank 0 = 68020 program + 6809 ROM; bank 1 = ES5506 sample ROM; bank 2 = 32 MB main graphics (GROM); bank 3 = extra graphics (grm3). The 32 MB GROM region requires the 128 MB SDRAM module.
 
 **Blitter (IT42)**: `jtsftm_video` writes blitter parameters into `vregs[]`, then asserts `blit_start`. `jtsftm_blitter` walks GROM sequentially, writes 8-bit pixels to VRAM (with transparency, x/y flip). Scaling and clip rect are TODO.
 
@@ -107,8 +122,9 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 |------|---------|
 | `cfg/macros.def` | JTFRAME macro flags (core name, video timings, button count, SDRAM config) |
 | `cfg/files.yaml` | Source file list; tells JTFRAME what Verilog/VHDL to include for synthesis and simulation |
-| `cfg/mame2mra.toml` | ROM download region ordering (must match `hdl/mem.yaml` bus order) |
-| `hdl/mem.yaml` | SDRAM bank/bus layout; input to `jtframe mem sftm` which generates the SDRAM glue |
+| `cfg/mame2mra.toml` | ROM download region ordering — must be in bank order (BA0→BA1→BA2→BA3) |
+| `cfg/mem.yaml` | SDRAM bank/bus layout; input to `jtframe mem sftm` which generates the SDRAM glue |
+| `docker/` | Linux build environment (jtframe toolchain, ghdl) — use `./docker/run.sh` |
 
 ### Simulation stubs
 
@@ -122,8 +138,8 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 
 ## Validation plan (from `doc/sftm.txt`)
 
-1. Vendor JTFRAME and TG68K.C
-2. Run `jtframe mem sftm` and fix all SDRAM interface names
+1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe is accessible via `docker/run.sh`; TG68K.C still needed for full simulation
+2. ~~Run `jtframe mem sftm`~~ — DONE: generated `cores/sftm/mist/jtsftm_game_sdram.v` and `mem_ports.inc`
 3. Convert TG68K.C for Verilator (ghdl/vhd2vl) or use mixed-language simulation
 4. Run 68020 opcode tests before booting ROM code
 5. Log MAME blitter commands and replay into `jtsftm_blitter`

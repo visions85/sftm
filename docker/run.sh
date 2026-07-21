@@ -35,8 +35,15 @@ docker volume inspect "$VOLUME" &>/dev/null \
 
 # ---- Run ----
 exec docker run --rm -it \
-    -v "${REPO_DIR}/cores/sftm:/workspace/cores/sftm" \
+    -v "${REPO_DIR}:/workspace" \
     -v "${VOLUME}:/workspace/modules/jtframe" \
     -e JTROOT=/workspace \
+    -e JTFRAME=/workspace/modules/jtframe \
+    -e CORES=/workspace/cores \
+    -e MODULES=/workspace/modules \
+    -e JTBIN=/workspace/jtbin \
+    -e ROM=/workspace/rom \
+    -e MRA=/workspace/jtbin/mra \
+    -e TARGET=mister \
     "$IMAGE" \
     "${@:-/bin/bash}"
