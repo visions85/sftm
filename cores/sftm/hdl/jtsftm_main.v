@@ -76,9 +76,10 @@ module jtsftm_main(
 // 0x400000            watchdog
 // 0x480001            sound data write (to 6809)
 // 0x500000-0x5000FF   IT42 video/blitter registers
+// 0x578000-0x57FFFF   reads as 0 (touched by protection)
 // 0x580000-0x59FFFF   palette RAM
 // 0x600000-0x61FFFF   NVRAM
-// 0x680002            protection result
+// 0x680002            protection result (main RAM byte @ 0x7A6A)
 // 0x700002            plane enable / GROM bank latch
 // 0x800000-0xBFFFFF   program ROM
 // ---------------------------------------------------------------------------
@@ -133,6 +134,7 @@ wire   clkena   = cen & ~bus_busy & boot_done;
 // ---------------------------------------------------------------------------
 wire [7:0] ahi = cpu_a[23:16];
 reg        ram_cs, inp_cs, dip_cs, sys_cs, misc_cs, nvram_cs;
+reg        prot_cs, nopr_cs;
 reg        prog_sel;
 
 always @(*) begin
@@ -146,6 +148,8 @@ always @(*) begin
     vram_cs  = 1'b0;                         // VRAM is accessed via VIDEO_TRANSFER
     nvram_cs = cpu_a[23:17]==7'h30;          // 0x600000-0x61ffff NVRAM
     misc_cs  = ahi==REG_WDOG || ahi==REG_PROT || ahi==REG_PLANE;
+    prot_cs  = cpu_a[23:1]==23'h34_0001;     // 0x680002 protection result byte
+    nopr_cs  = cpu_a[23:15]==9'h0af;         // 0x578000-0x57ffff reads as 0
 end
 
 // The ROM port is driven by the boot-copy FSM until boot_done, then the CPU.
@@ -199,6 +203,21 @@ jtsftm_ram #(.AW(14)) u_nvram(
 );
 
 // ---------------------------------------------------------------------------
+// Protection: 0x680002 returns a main-RAM byte (MAME itech020_prot_result_r).
+// jtsftm_prot snoops CPU writes to that address (0x7a6a) and latches the byte.
+// ---------------------------------------------------------------------------
+wire [7:0] prot_byte;
+
+jtsftm_prot u_prot(
+    .clk    ( clk         ),
+    .rst    ( rst         ),
+    .wr_addr( cpu_a[14:1] ),
+    .we_hi  ( cpu_write & ram_cs & high_byte_we ),
+    .din    ( cpu_dout    ),
+    .result ( prot_byte   )
+);
+
+// ---------------------------------------------------------------------------
 // CPU data-in mux
 // ---------------------------------------------------------------------------
 reg [15:0] inp_mux;
@@ -210,6 +229,8 @@ always @(*) begin
         vram_cs:  inp_mux = vram_dout;
         vreg_cs:  inp_mux = vreg_dout;
         pal_cs:   inp_mux = pal_dout;
+        prot_cs:  inp_mux = { prot_byte, 8'hff };
+        nopr_cs:  inp_mux = 16'h0000;
         inp_cs:   inp_mux = read_inputs(ahi);
         dip_cs:   inp_mux = {dipsw_b, dipsw_a};
         default:  inp_mux = 16'hffff;
