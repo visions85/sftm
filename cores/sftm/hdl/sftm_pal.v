@@ -19,13 +19,9 @@ module sftm_pal(
     // Initialise entry 0 to bright cyan so the screen is non-black on the very
     // first frame.  VRAM defaults to 0x00 everywhere, so every pixel (fg=0,
     // bg=0) looks up palette[0].  The game will overwrite this during its own
-    // palette init.  All other entries default to 0 (black) as Quartus BRAM
-    // initialises unspecified entries to zero.
-    integer j;
-    initial begin
-        for( j=0; j<32768; j=j+1 ) mem[j] = 15'h0000;
-        mem[0] = 15'h03FF;   // R=0 G=31 B=31  (bright cyan)
-    end
+    // palette init.  All other entries default to 0 (black) per Quartus BRAM
+    // init-to-zero policy for unspecified locations.
+    initial mem[0] = 15'h03FF;   // R=0 G=31 B=31  (bright cyan)
 
     always @(posedge clk) begin
         if( cpu_we ) mem[cpu_addr] <= cpu_dout[14:0];
