@@ -20,7 +20,8 @@ FROM --platform=linux/amd64 ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ---- Base toolchain (mirrors main Dockerfile, but amd64) ----
+# ---- All packages in one layer (toolchain + Quartus 21.1 runtime) ----
+# Quartus 21.1 links Qt5, glib, X11/GL. Ubuntu 24.04 uses the t64 ABI for glib.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iverilog \
     ghdl-llvm \
@@ -35,6 +36,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     build-essential \
     zlib1g-dev \
+    libxft2 \
+    libxext6 \
+    libxrender1 \
+    libxtst6 \
+    libxi6 \
+    libncurses6 \
+    libpng16-16 \
+    libglib2.0-0t64 \
+    libsm6 \
+    libice6 \
+    libx11-6 \
+    libxcb1 \
+    libxkbcommon0 \
+    libfreetype6 \
+    libfontconfig1 \
+    libudev1 \
+    libgl1 \
+    libegl1 \
+    libglx0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Go 1.23 (for jtframe binary)
@@ -54,32 +74,6 @@ ENV ROM=/workspace/rom
 ENV MRA=/workspace/jtbin/mra
 ENV TARGET=mister
 ENV PATH="/workspace/modules/jtframe/bin:${PATH}"
-
-# ---- Quartus 21.1.1 prerequisites ----
-# 21.1 links against Qt5, glib, and several X11/GL libs.
-# Ubuntu 24.04 ships glib as libglib2.0-0t64 (time64 ABI).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libxft2 \
-        libxext6 \
-        libxrender1 \
-        libxtst6 \
-        libxi6 \
-        libncurses6 \
-        libpng16-16 \
-        libglib2.0-0t64 \
-        libsm6 \
-        libice6 \
-        libx11-6 \
-        libxcb1 \
-        libxkbcommon0 \
-        libfreetype6 \
-        libfontconfig1 \
-        libudev1 \
-        libgl1 \
-        libegl1 \
-        libglx0 \
-        zlib1g \
-    && rm -rf /var/lib/apt/lists/*
 
 # ---- Quartus Prime Lite 21.1.1 ----
 # Files must be in docker/quartus-installers/ — see README.md there.
