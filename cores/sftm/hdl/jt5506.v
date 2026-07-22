@@ -14,11 +14,19 @@
       - 21.11 accumulator -> sample ROM address
       - basic 16-bit sample fetch and volume/pan mix
 
+    Implemented:
+      - 4-pole IIR filter: K1/K2 coefficients per voice; apply_lowpass /
+        apply_highpass matching MAME es5506.cpp apply_filters() exactly;
+        LP mode selected by control[9:8] = {LP4, LP3}.
+
     TODO:
-      - exact byte-lane latch semantics from es5506.cpp
-      - 4-pole filter and K1/K2 ramps
+      - exact byte-lane latch semantics from es5506.cpp (K2 at byte 0x1C,
+        K1 at byte 0x24 in MAME's 32-bit-aligned scheme — our simplified
+        layout puts K2 at addr[5:3]=3, K1 at addr[5:3]=5; good enough until
+        we run MAME register traces)
+      - K1/K2 ramps (envelope-driven cutoff sweep)
       - envelope counters and volume ramps
-      - all loop modes, reverse/bidirectional loops and IRQ vector stacking
+      - IRQ vector stacking
       - compressed/u-law sample mode
       - six serial channels; SFTM routes to stereo only
       - 20-bit clamp/saturation exactly like real ES5506
@@ -65,6 +73,16 @@ reg [24:0] endp    [0:31];
 reg [31:0] accum   [0:31];
 reg [15:0] lvol    [0:31];
 reg [15:0] rvol    [0:31];
+// Filter coefficients (16-bit unsigned; K>>4 gives 12-bit cutoff factor)
+reg [15:0] k1      [0:31];
+reg [15:0] k2      [0:31];
+// 4-pole IIR filter state (32-bit signed; 6 delay-line registers per voice)
+reg signed [31:0] o1n1 [0:31];  // pole-1 output n-1
+reg signed [31:0] o2n1 [0:31];  // pole-2 output n-1
+reg signed [31:0] o2n2 [0:31];  // pole-2 output n-2
+reg signed [31:0] o3n1 [0:31];  // pole-3 output n-1
+reg signed [31:0] o3n2 [0:31];  // pole-3 output n-2
+reg signed [31:0] o4n1 [0:31];  // pole-4 output n-1
 
 reg [ 5:0] page;
 reg [ 4:0] active;       // active voices-1, default 31
@@ -87,6 +105,14 @@ always @(posedge clk) begin
             accum[i]   <= 32'd0;
             lvol[i]    <= 16'd0;
             rvol[i]    <= 16'd0;
+            k1[i]      <= 16'd0;
+            k2[i]      <= 16'd0;
+            o1n1[i]    <= 32'd0;
+            o2n1[i]    <= 32'd0;
+            o2n2[i]    <= 32'd0;
+            o3n1[i]    <= 32'd0;
+            o3n2[i]    <= 32'd0;
+            o4n1[i]    <= 32'd0;
         end
     end else begin
         if( host_we ) write_reg(page, host_addr, host_din);
@@ -118,7 +144,9 @@ begin
             3'h0: control[pg][ (addr[1] ? 15:7) -: 8 ] <= data; // CR
             3'h1: fc[pg][ (addr[1] ? 15:7) -: 8 ]      <= data; // FC low 16
             3'h2: lvol[pg][ (addr[1] ? 15:7) -: 8 ]    <= data; // LVOL
+            3'h3: k2[pg][ (addr[1] ? 15:7) -: 8 ]      <= data; // K2 filter coeff
             3'h4: rvol[pg][ (addr[1] ? 15:7) -: 8 ]    <= data; // RVOL
+            3'h5: k1[pg][ (addr[1] ? 15:7) -: 8 ]      <= data; // K1 filter coeff
             default: ;
         endcase
     end else if( pg>=32 && pg<64 ) begin
@@ -140,7 +168,9 @@ begin
             3'h0: read_reg = addr[1] ? control[pg][15:8] : control[pg][7:0];
             3'h1: read_reg = addr[1] ? fc[pg][15:8]      : fc[pg][7:0];
             3'h2: read_reg = addr[1] ? lvol[pg][15:8]    : lvol[pg][7:0];
+            3'h3: read_reg = addr[1] ? k2[pg][15:8]      : k2[pg][7:0];
             3'h4: read_reg = addr[1] ? rvol[pg][15:8]    : rvol[pg][7:0];
+            3'h5: read_reg = addr[1] ? k1[pg][15:8]      : k1[pg][7:0];
             default: ;
         endcase
     end
@@ -148,11 +178,92 @@ end
 endfunction
 
 // ---------------------------------------------------------------------------
-// Voice scheduler and mixer. One voice per cen. A complete output sample is
-// emitted after active+1 voices have been accumulated.
+// Voice index register — declared here so filter wires below can reference it.
 // ---------------------------------------------------------------------------
 reg [4:0]  vidx;
 reg signed [31:0] mix_l, mix_r;
+
+// ---------------------------------------------------------------------------
+// 4-pole IIR filter (MAME es5506.cpp apply_filters).
+//
+// apply_lowpass(state_prev, k, input):
+//   result = (k>>4) * (state_prev - input) / 4096 + input
+// apply_highpass(cur_input, k, state_prev, prev_prev):
+//   result = cur_input - prev_prev + (k>>4) * state_prev / 8192 + state_prev / 2
+//
+// All arithmetic is signed.  Multiplies are done as 64-bit (widened from the
+// 12-bit coefficient × 32-bit state) to avoid Verilog truncation.
+// ---------------------------------------------------------------------------
+
+// K coefficients, right-shifted by 4 (= FILTER_SHIFT), zero-extended to 64 b.
+// This produces the 12-bit integer multiplier used in the formulas above.
+wire signed [63:0] fk1_64 = {48'd0, k1[vidx][15:4]};
+wire signed [63:0] fk2_64 = {48'd0, k2[vidx][15:4]};
+
+// LP mode from control register bits 9:8 = {LP4, LP3}.
+//   2'b00: pole3=HP K2, pole4=HP K2
+//   2'b01: pole3=LP K1, pole4=HP K2
+//   2'b10: pole3=LP K2, pole4=LP K2
+//   2'b11: pole3=LP K1, pole4=LP K2
+wire [1:0] lp_mode = {control[vidx][CTRL_LP4], control[vidx][CTRL_LP3]};
+
+// Sign-extended 16-bit sample → 32-bit.
+wire signed [31:0] fin = {{16{srom_data[15]}}, srom_data};
+
+// --- Pole 1: always LP using K1 ---
+// result = fk1*(o1n1 - fin)/4096 + fin
+wire signed [63:0] p1_diff_64 = {{32{o1n1[vidx][31]}}, o1n1[vidx]}
+                                - {{32{fin[31]}}, fin};
+wire signed [63:0] p1_prod    = fk1_64 * p1_diff_64;
+wire signed [31:0] p1         = $signed(p1_prod[43:12]) + fin;
+
+// --- Pole 2: always LP using K1 ---
+wire signed [63:0] p2_diff_64 = {{32{o2n1[vidx][31]}}, o2n1[vidx]}
+                                - {{32{p1[31]}}, p1};
+wire signed [63:0] p2_prod    = fk1_64 * p2_diff_64;
+wire signed [31:0] p2         = $signed(p2_prod[43:12]) + p1;
+
+// --- Pole 3: LP K1 variant (lp_mode=2'b01 or 2'b11) ---
+wire signed [63:0] p3_lpk1_diff = {{32{o3n1[vidx][31]}}, o3n1[vidx]}
+                                  - {{32{p2[31]}}, p2};
+wire signed [63:0] p3_lpk1_prod = fk1_64 * p3_lpk1_diff;
+wire signed [31:0] p3_lpk1      = $signed(p3_lpk1_prod[43:12]) + p2;
+
+// --- Pole 3: LP K2 variant (lp_mode=2'b10) ---
+wire signed [63:0] p3_lpk2_diff = {{32{o3n1[vidx][31]}}, o3n1[vidx]}
+                                  - {{32{p2[31]}}, p2};
+wire signed [63:0] p3_lpk2_prod = fk2_64 * p3_lpk2_diff;
+wire signed [31:0] p3_lpk2      = $signed(p3_lpk2_prod[43:12]) + p2;
+
+// --- Pole 3: HP K2 variant (lp_mode=2'b00) ---
+// apply_hp(p2, k2, o3n1, prev=o2n1)
+wire signed [63:0] p3_hpk2_prod = fk2_64 * {{32{o3n1[vidx][31]}}, o3n1[vidx]};
+wire signed [31:0] p3_hpk2      = p2 - o2n1[vidx]
+                                  + $signed(p3_hpk2_prod[44:13])
+                                  + (o3n1[vidx] >>> 1);
+
+wire signed [31:0] p3 = lp_mode[1] ? (lp_mode[0] ? p3_lpk1 : p3_lpk2)
+                                    : (lp_mode[0] ? p3_lpk1 : p3_hpk2);
+
+// --- Pole 4: LP K2 variant (lp_mode=2'b10 or 2'b11) ---
+wire signed [63:0] p4_lpk2_diff = {{32{o4n1[vidx][31]}}, o4n1[vidx]}
+                                  - {{32{p3[31]}}, p3};
+wire signed [63:0] p4_lpk2_prod = fk2_64 * p4_lpk2_diff;
+wire signed [31:0] p4_lpk2      = $signed(p4_lpk2_prod[43:12]) + p3;
+
+// --- Pole 4: HP K2 variant (lp_mode=2'b00 or 2'b01) ---
+// apply_hp(p3, k2, o4n1, prev=o3n1 [becomes new o3n2 after pole-3 update])
+wire signed [63:0] p4_hpk2_prod = fk2_64 * {{32{o4n1[vidx][31]}}, o4n1[vidx]};
+wire signed [31:0] p4_hpk2      = p3 - o3n1[vidx]
+                                  + $signed(p4_hpk2_prod[44:13])
+                                  + (o4n1[vidx] >>> 1);
+
+wire signed [31:0] p4 = lp_mode[1] ? p4_lpk2 : p4_hpk2;
+
+// ---------------------------------------------------------------------------
+// Voice scheduler and mixer. One voice per cen. A complete output sample is
+// emitted after active+1 voices have been accumulated.
+// ---------------------------------------------------------------------------
 wire voice_running = control[vidx][CTRL_STOP1:CTRL_STOP0] == 2'b00;
 wire [1:0] bank = {control[vidx][CTRL_BS1], control[vidx][CTRL_BS0]};
 // Bank offset: MAME ES5506 has 4 independent 21-bit ROM banks (bank0..3).
@@ -202,9 +313,18 @@ always @(posedge clk) begin
     end else if( cen ) begin
         srom_cs <= voice_running;
         if( voice_running && srom_ok ) begin
+            // Mix using 4-pole filtered output p4.
             // TODO: interpolation uses current+next samples and frac bits.
-            mix_l <= mix_l + (($signed(srom_data) * $signed({1'b0,lvol[vidx][14:0]})) >>> 14);
-            mix_r <= mix_r + (($signed(srom_data) * $signed({1'b0,rvol[vidx][14:0]})) >>> 14);
+            mix_l <= mix_l + ((p4 * $signed({1'b0,lvol[vidx][14:0]})) >>> 14);
+            mix_r <= mix_r + ((p4 * $signed({1'b0,rvol[vidx][14:0]})) >>> 14);
+
+            // Update filter state (update_pole / update_2_pole from MAME).
+            o1n1[vidx] <= p1;
+            o2n2[vidx] <= o2n1[vidx];   // shift n-1 → n-2
+            o2n1[vidx] <= p2;
+            o3n2[vidx] <= o3n1[vidx];   // shift n-1 → n-2
+            o3n1[vidx] <= p3;
+            o4n1[vidx] <= p4;
 
             // Advance accumulator and handle loop/stop.
             if( at_boundary ) begin
