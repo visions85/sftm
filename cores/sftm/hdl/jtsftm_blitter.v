@@ -19,6 +19,13 @@
       negates the step.  A fractional accumulator (dst_xfrac) carries the
       sub-pixel remainder across pixels within a row.
 
+    Destination row stepping (DST_YSTEP, 8.8 fp, default 0x0100 = 1:1):
+      Always active.  Controls how far the destination Y cursor advances after
+      each row.  Values > 0x0100 skip rows (vertical stretch of destination);
+      values < 0x0100 compress rows.  YFLIP negates the step direction.
+      A fractional accumulator (dst_yfrac) carries the sub-row remainder
+      across rows within a blit.
+
     WIDTHPIX (flag bit 15):
       In MAME draw_raw, row length is counted in source pixels consumed
       (r_width source bytes).  In draw_raw_widthpix, it is counted in
@@ -28,8 +35,7 @@
       be checked by future logic, but currently produces the same result as
       the default path.
 
-    Still TODO: DST_YSTEP, YSTEP_PER_X polygon shear,
-    and the Driver's Edge skewed-polygon path.
+    Still TODO: YSTEP_PER_X polygon shear and the Driver's Edge skewed-polygon path.
 */
 
 module jtsftm_blitter(
@@ -54,6 +60,8 @@ module jtsftm_blitter(
     input       [15:0]  r_srcxstep,
     // destination x-stepping (8.8 fp; used only when DSTXSCALE flag is set)
     input       [15:0]  r_dstxstep,
+    // destination y-stepping (8.8 fp; always active; 0x0100 = 1 row per row)
+    input       [15:0]  r_dstystep,
     input               start,
     input               plane_sel,
     input       [ 1:0]  grom_bank,
@@ -82,14 +90,19 @@ reg [24:0] src;                       // byte address into GROM
 reg [15:0] curx, cury;
 reg [ 7:0] src_xfrac;                 // fractional accumulator for SRC_XSTEP
 reg [ 7:0] dst_xfrac;                 // fractional accumulator for DST_XSTEP
+reg [ 7:0] dst_yfrac;                 // fractional accumulator for DST_YSTEP
 // SRC_XSTEP: add to src_xfrac each pixel; carry increments src.
 wire [8:0] xfrac_step     = {1'b0, src_xfrac} + {1'b0, r_srcxstep[7:0]};
 // DST_XSTEP: add to dst_xfrac each pixel; carry added to integer step.
 wire [8:0] dst_xfrac_step = {1'b0, dst_xfrac} + {1'b0, r_dstxstep[7:0]};
+// DST_YSTEP: add to dst_yfrac each row; carry added to integer y step.
+wire [8:0] dst_yfrac_step = {1'b0, dst_yfrac} + {1'b0, r_dstystep[7:0]};
 // Integer destination-x advance for this pixel (includes carry from fraction).
 wire [15:0] dst_x_int = r_flags[F_DSTXSCALE]
     ? ({8'd0, r_dstxstep[15:8]} + {15'd0, dst_xfrac_step[8]})
     : 16'd1;
+// Integer destination-y advance for this row (always uses DST_YSTEP).
+wire [15:0] dst_y_int = {8'd0, r_dstystep[15:8]} + {15'd0, dst_yfrac_step[8]};
 wire [7:0] src_pix = src[0] ? grom_data[15:8] : grom_data[7:0];
 wire       transp  = r_flags[F_TRANSP] & (src_pix==8'hff);
 // Clip rect: bits[15:12] nonzero means coordinate is out of 12-bit range
@@ -100,7 +113,7 @@ wire       clip_pass = ~r_flags[F_CLIP] |
 
 always @(posedge clk) begin
     if( rst ) begin
-        st<=IDLE; vram_we<=0; grom_cs<=0; done<=0; src_xfrac<=8'd0; dst_xfrac<=8'd0;
+        st<=IDLE; vram_we<=0; grom_cs<=0; done<=0; src_xfrac<=8'd0; dst_xfrac<=8'd0; dst_yfrac<=8'd0;
     end else begin
         vram_we <= 0;
         done    <= 0;
@@ -111,6 +124,7 @@ always @(posedge clk) begin
                 src       <= { grom_bank[0], r_addrhi[7:0], r_addrlo };
                 src_xfrac <= 8'd0;
                 dst_xfrac <= 8'd0;
+                dst_yfrac <= 8'd0;
                 curx      <= r_x;
                 cury      <= r_y;
                 vram_plane<= plane_sel;
@@ -134,13 +148,15 @@ always @(posedge clk) begin
                 //   integer part  r_srcxstep[15:8] always increments src;
                 //   fractional part accumulates in src_xfrac; overflow = +1 extra.
                 if( xcnt >= r_width ) begin
-                    // End of row: advance src, reset fractional accumulators.
+                    // End of row: advance src, reset per-row fractional accumulators.
                     src       <= src + {9'd0, r_srcxstep[15:8]} + {24'd0, xfrac_step[8]};
                     src_xfrac <= 8'd0;
                     dst_xfrac <= 8'd0;
+                    dst_yfrac <= dst_yfrac_step[7:0];
                     xcnt <= 0;
                     curx <= r_x;
-                    cury <= r_flags[F_YFLIP] ? cury-16'd1 : cury+16'd1;
+                    // Advance Y by DST_YSTEP (8.8 fp); YFLIP negates direction.
+                    cury <= r_flags[F_YFLIP] ? cury - dst_y_int : cury + dst_y_int;
                     if( ycnt >= r_height ) begin
                         grom_cs <= 0;
                         done    <= 1;
