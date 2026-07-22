@@ -63,13 +63,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /lib/x86_64-linux-gnu/libncurses.so.6 /lib/x86_64-linux-gnu/libncurses.so.5 \
     && ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6  /lib/x86_64-linux-gnu/libtinfo.so.5
 
-# Build libpng 1.2 from source (Quartus 17.1 links against libpng12.so.0)
-RUN cd /tmp && \
-    wget -q https://sourceforge.net/projects/libpng/files/libpng12/1.2.59/libpng-1.2.59.tar.gz && \
-    tar -xzf libpng-1.2.59.tar.gz && \
+# Build libpng 1.2 from source (Quartus 17.1 links against libpng12.so.0).
+# wget fails on SourceForge's multi-hop mirror redirect (exit code 4); use curl -L.
+RUN curl -fsSL --retry 3 \
+        "https://sourceforge.net/projects/libpng/files/libpng12/1.2.59/libpng-1.2.59.tar.gz/download" \
+        -o /tmp/libpng-1.2.59.tar.gz && \
+    cd /tmp && tar -xzf libpng-1.2.59.tar.gz && \
     cd libpng-1.2.59 && \
     ./configure --prefix=/usr/local && \
-    make -j$(nproc) && make install && ldconfig && \
+    make -j"$(nproc)" && make install && ldconfig && \
     cd /tmp && rm -rf libpng-1.2.59 libpng-1.2.59.tar.gz
 
 # ---- Quartus Prime Lite 17.1 ----
