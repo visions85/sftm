@@ -326,9 +326,15 @@ sftm_pal u_pal(
     .rd_rgb ( pal_rgb   )
 );
 
-assign red   = gfx_en[0] ? pal_rgb[14:10] : 5'd0;
-assign green = gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0;
-assign blue  = gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0;
+// Debug test pattern: when gfx_en[3]=0 (OSD layer-4 disabled), output
+// a colour raster so we can confirm the video pipeline works independent
+// of CPU/palette/VRAM. gfx_en[3]=1 (default) shows normal game output.
+wire [4:0] dbg_r = hcnt[6:2];
+wire [4:0] dbg_g = vcnt[5:1];
+wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
+assign red   = gfx_en[3] ? (gfx_en[0] ? pal_rgb[14:10] : 5'd0) : dbg_r;
+assign green = gfx_en[3] ? (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0) : dbg_g;
+assign blue  = gfx_en[3] ? (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0) : dbg_b;
 
 // ---------------------------------------------------------------------------
 // IT42 blitter
