@@ -33,17 +33,30 @@ module TG68KdotC_Kernel #(
            nWr=1, nUDS=1, nLDS=1, nResetOut=1, skipFetch=0;
 endmodule
 
-module mc6809i(
+module mc6809i
+#( parameter ILLEGAL_INSTRUCTIONS="GHOST" )
+(
     input         clk,
-    input         cen,
-    input         rst,
-    output        rw,
-    output [15:0] addr,
-    input  [ 7:0] datai,
-    output [ 7:0] datao,
-    input         irq,
-    input         firq,
-    input         nmi
+    input         cen_E,
+    input         cen_Q,
+    input         nRESET,
+    output        RnW,
+    output [15:0] ADDR,
+    input  [ 7:0] D,
+    output [ 7:0] DOut,
+    input         nIRQ,
+    input         nFIRQ,
+    input         nNMI,
+    input         nHALT,
+    input         nDMABREQ,
+    output        BS,
+    output        BA,
+    output        AVMA,
+    output        BUSY,
+    output        LIC,
+    output reg    OP,
+    output [111:0] RegData
 );
-    assign rw=1, addr=16'hffff, datao=8'h00;
+    assign RnW=1, ADDR=16'hffff, DOut=8'h00;
+    assign BS=0, BA=0, AVMA=0, BUSY=0, LIC=0, OP=0, RegData=0;
 endmodule

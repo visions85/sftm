@@ -52,11 +52,16 @@ module sftm_snd(
 );
 
 // ---------------------------------------------------------------------------
-// 6809 bus (placeholder wrapper; exact mc6809i port map can vary by revision)
+// 6809 bus signals (mc6809i from JTFRAME, Greg Miller implementation).
 // ---------------------------------------------------------------------------
-wire [15:0] a;
-wire [ 7:0] din, dout;
-wire        rw;
+wire [15:0] a;      // ADDR output of mc6809i
+wire [ 7:0] din;    // data in to cpu  (driven combinatorially below)
+wire [ 7:0] dout;   // DOut from cpu
+wire        rw;     // RnW: 1=read, 0=write
+// The mc6809i uses two clock enables: cen_E (E clock) and cen_Q (Q clock,
+// 90 degrees after E).  Generate cen_Q by delaying cen by one clk cycle.
+reg         cen_q;
+always @(posedge clk) cen_q <= cen;
 
 // ---------------------------------------------------------------------------
 // Sound latch IRQ: assert when main CPU writes a command, clear on 6809 read.
@@ -134,18 +139,28 @@ assign din = rom_cs   ? rom_data :
              latch_cs ? snd_latch :
                         8'hff;
 
-// TODO: replace with exact mc6809i instantiation once JTFRAME is vendored.
 mc6809i u_cpu(
-    .clk    ( clk     ),
-    .cen    ( cen     ),
-    .rst    ( rst     ),
-    .rw     ( rw      ),
-    .addr   ( a       ),
-    .datai  ( din     ),
-    .datao  ( dout    ),
-    .irq    ( irq_n   ),
-    .firq   ( 1'b1    ),
-    .nmi    ( 1'b1    )
+    .clk        ( clk       ),
+    .cen_E      ( cen       ),   // E clock (2 MHz)
+    .cen_Q      ( cen_q     ),   // Q clock (E delayed 1 cycle)
+    .nRESET     ( ~rst      ),   // active-low reset
+    .RnW        ( rw        ),   // 1=read, 0=write
+    .ADDR       ( a         ),   // 16-bit address
+    .D          ( din       ),   // data in from bus
+    .DOut       ( dout      ),   // data out to bus
+    .nIRQ       ( irq_n     ),   // active-low IRQ (soundlatch)
+    .nFIRQ      ( 1'b1      ),   // not used
+    .nNMI       ( 1'b1      ),   // not used
+    .nHALT      ( 1'b1      ),   // not halted
+    .nDMABREQ   ( 1'b1      ),   // no DMA
+    // optional outputs (unused)
+    .BS         (           ),
+    .BA         (           ),
+    .AVMA       (           ),
+    .BUSY       (           ),
+    .LIC        (           ),
+    .OP         (           ),
+    .RegData    (           )
 );
 
 sftm5506 u_otto(
