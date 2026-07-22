@@ -60,11 +60,11 @@ sftm_main u_main(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .cen        ( e020_cen      ),
-    // program ROM (32-bit) in SDRAM bank 0
-    .rom_addr   ( prog_addr     ),
-    .rom_data   ( prog_data     ),
-    .rom_cs     ( prog_cs       ),
-    .rom_ok     ( prog_ok       ),
+    // program ROM (32-bit) in SDRAM bank 0 ("main" bus in mem.yaml)
+    .rom_addr   ( main_addr     ),
+    .rom_data   ( main_data     ),
+    .rom_cs     ( main_cs       ),
+    .rom_ok     ( main_ok       ),
     // cabinet
     .joystick1  ( joystick1     ),
     .joystick2  ( joystick2     ),
