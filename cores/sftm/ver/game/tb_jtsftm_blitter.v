@@ -29,8 +29,9 @@ module tb_jtsftm_blitter;
     // Clip rect regs (12-bit pixel coordinates). Default: full range, no clip.
     reg  [11:0] r_leftclip=12'd0, r_rightclip=12'hfff,
                 r_topclip =12'd0, r_botclip  =12'hfff;
-    // Source x-step (8.8 fixed-point; 0x0100 = 1 source byte per dest pixel).
+    // Source / destination x-step (8.8 fixed-point; 0x0100 = 1:1).
     reg  [15:0] r_srcxstep=16'h0100;
+    reg  [15:0] r_dstxstep=16'h0100;
     reg         start=0, plane_sel=0;
     reg  [ 1:0] grom_bank=0;
 
@@ -64,7 +65,7 @@ module tb_jtsftm_blitter;
         .r_x(r_x), .r_y(r_y), .r_addrlo(r_addrlo), .r_addrhi(r_addrhi),
         .r_leftclip(r_leftclip), .r_rightclip(r_rightclip),
         .r_topclip(r_topclip),   .r_botclip(r_botclip),
-        .r_srcxstep(r_srcxstep),
+        .r_srcxstep(r_srcxstep), .r_dstxstep(r_dstxstep),
         .start(start), .plane_sel(plane_sel), .grom_bank(grom_bank),
         .grom_addr(grom_addr), .grom_data(grom_data),
         .grom_cs(grom_cs), .grom_ok(grom_cs),
@@ -145,6 +146,7 @@ module tb_jtsftm_blitter;
         repeat(2) @(posedge clk);
 
         // === Test 1: 2x2 normal blit at (5,6), GROM byte addr 0 ===
+        // r_dstxstep default 0x0100 throughout tests 1-7.
         // r_width=1, r_height=1 → (r_width+1) x (r_height+1) = 2x2 pixels
         // Byte 0 → pixel 0x00 @ vram{6,5}  = 17'h0C05
         // Byte 1 → pixel 0x01 @ vram{6,6}  = 17'h0C06
@@ -295,6 +297,49 @@ module tb_jtsftm_blitter;
         check_pix(17'h3C15, 8'h02, "t7 srcxstep=2 pix1 (21,30)");
         check_pix(17'h3C16, 8'h04, "t7 srcxstep=2 pix2 (22,30)");
         r_srcxstep = 16'h0100;  // restore 1:1
+
+        // === Test 8: DST_XSTEP=0x200 — 2:1 destination stretch, F_DSTXSCALE ===
+        // 3-pixel blit at (0,60), GROM addr 0, r_srcxstep=0x100, r_dstxstep=0x200.
+        // dest X advances by 2 each pixel:
+        //   pixel0 byte0=0x00  @ vram{60, 0} = 17'h7800
+        //   pixel1 byte1=0x01  @ vram{60, 2} = 17'h7802
+        //   pixel2 byte2=0x02  @ vram{60, 4} = 17'h7804
+        // (vram_addr = {cury[7:0], curx[8:0]}; cury=60=0x3c, curx bits [7:0] * 2)
+        r_dstxstep = 16'h0200;
+        write_cnt = 0;
+        do_blit(16'h0000, 16'h003c, 16'h0002, 16'h0000,
+                16'h0000, 16'h0000, 16'h0008, 1'b0);  // F_DSTXSCALE=bit3
+        if (write_cnt !== 3) begin
+            $display("FAIL: t8 write_cnt=%0d (expected 3)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h7800, 8'h00, "t8 dstxstep=2 pix0 (0,60)");
+        check_pix(17'h7802, 8'h01, "t8 dstxstep=2 pix1 (2,60)");
+        check_pix(17'h7804, 8'h02, "t8 dstxstep=2 pix2 (4,60)");
+        r_dstxstep = 16'h0100;  // restore 1:1
+
+        // === Test 9: Fractional DST_XSTEP=0x180 (1.5 dest pixels per source) ===
+        // 3-pixel blit at (0,65), GROM addr 0, r_srcxstep=0x100, r_dstxstep=0x180.
+        // dst_xfrac accumulation (frac byte of 0x180 is 0x80):
+        //   pixel0: dst_xfrac=0+0x80=0x80 (no carry); dst_x_int=1; curx: 0→1
+        //   pixel1: dst_xfrac=0x80+0x80=0x100→carry; dst_x_int=1+1=2; curx: 1→3
+        //   pixel2: (end-of-row check fires at xcnt==r_width, so xcnt=2 terminates)
+        //           but pixel2 is written at curx=3 before STEP runs → written ✓
+        // Destination positions: 0, 1, 3.
+        //   vram{65,0}=17'h8200, {65,1}=17'h8201, {65,3}=17'h8203
+        //   (cury=65=0x41, so {0x41,9'h000}=17'h8200, etc.)
+        r_dstxstep = 16'h0180;
+        write_cnt = 0;
+        do_blit(16'h0000, 16'h0041, 16'h0002, 16'h0000,
+                16'h0000, 16'h0000, 16'h0008, 1'b0);  // F_DSTXSCALE=bit3
+        if (write_cnt !== 3) begin
+            $display("FAIL: t9 write_cnt=%0d (expected 3)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'h8200, 8'h00, "t9 dstxstep=1.5 pix0 (0,65)");
+        check_pix(17'h8201, 8'h01, "t9 dstxstep=1.5 pix1 (1,65)");
+        check_pix(17'h8203, 8'h02, "t9 dstxstep=1.5 pix2 (3,65)");
+        r_dstxstep = 16'h0100;  // restore 1:1
 
         if (errors == 0)
             $display("PASS: jtsftm_blitter all checks");
