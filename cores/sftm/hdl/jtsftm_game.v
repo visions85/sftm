@@ -15,11 +15,10 @@
         pxl_cen    ~8 MHz    pixel clock (HTOTAL 508 * VTOTAL 262 * 59.76Hz)
 */
 
-module sftm_game(
-    `include "jtframe_game_ports.inc"   // $JTFRAME/hdl/inc/jtframe_game_ports.inc
-    // SDRAM buses (prog/snd/srom/grom/grm3) are appended here by
-    // the mem.yaml generator:
-    /* jtframe mem_ports */
+module jtsftm_game(
+    // jtframe_game_ports.inc includes jtframe_common_ports.inc + mem_ports.inc
+    // (mem_ports.inc is chosen when JTFRAME_MEMGEN is set by jtframe mem/files)
+    `include "jtframe_game_ports.inc"
 );
 
 /* verilator lint_off WIDTH */

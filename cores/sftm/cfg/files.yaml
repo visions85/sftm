@@ -3,8 +3,9 @@
 
 sftm:
   - get:
-    - "sftm_*.v"      # game top, main, video, blitter, sound subsystems
-    - sftm5506.v          # Ensoniq ES5506 (OTTO) - new module
+    - jtsftm_game.v       # JTFRAME game top (jt-prefix required by jtframe mem)
+    - "sftm_*.v"          # main, video, blitter, vram, pal, snd, ram, prot
+    - sftm5506.v          # Ensoniq ES5506 (OTTO)
   # TG68K.C (68020-capable) lives in cores/sftm/hdl/tg68k as a git-vendored
   # copy. It is VHDL; for the Verilator sim flow convert to Verilog first
   # (ghdl/vhd2vl) and list the converted files here. For Quartus synthesis the

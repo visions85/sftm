@@ -2,9 +2,9 @@
 # JTFRAME macro configuration. Evaluated with `jtframe cfgstr sftm`.
 
 CORENAME=SFTM
-GAMETOP=sftm_game
-MAIN_MODULE=sftm_main
-VIDEO_MODULE=sftm_video
+# jtframe mem generates jtsftm_game_sdram.v (jt+core+_game_sdram).
+# GAMETOP must match that name so jtframe files syn adds the right file to files.qip.
+GAMETOP=jtsftm_game_sdram
 
 # Measured refresh (itech32 P/N 1083: VSync 59.7612 Hz)
 JTFRAME_RATE=59.76

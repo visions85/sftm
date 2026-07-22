@@ -1,0 +1,66 @@
+# Extends sftm-build with Quartus Prime Lite 17.1 for MiSTer synthesis.
+#
+# Quartus 17.1 is the version historically used for MiSTer FPGA development.
+# It targets the Cyclone V (5CSEBA6U23I7) on the DE10-Nano.
+#
+# Build (one time, ~30 min first run due to downloads):
+#   docker build -t sftm-quartus -f docker/Dockerfile.quartus docker/
+#
+# Re-synthesise:
+#   ./docker/run-synth.sh
+#
+# Installers are downloaded from Intel's CDN during the build and cached
+# in Docker layers — subsequent rebuilds skip the download automatically.
+
+FROM sftm-build
+
+# ---- Quartus 17.1 prerequisites ----
+# libpng12 is required by Quartus 17.1 but is no longer in Ubuntu 24.04 repos;
+# build it from source. i386 libs are needed for some Quartus internals.
+RUN dpkg --add-architecture i386 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential zlib1g-dev \
+        libxft2 libxft2:i386 \
+        libxext6 libxext6:i386 \
+        libncurses5:i386 \
+        libc6:i386 libstdc++6:i386 \
+        lib32z1 lib32stdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build libpng 1.2 from source (Quartus 17.1 links against libpng12.so.0)
+RUN cd /tmp && \
+    wget -q https://sourceforge.net/projects/libpng/files/libpng12/1.2.59/libpng-1.2.59.tar.gz && \
+    tar -xzf libpng-1.2.59.tar.gz && \
+    cd libpng-1.2.59 && \
+    ./configure --prefix=/usr/local && \
+    make -j$(nproc) && make install && ldconfig && \
+    cd /tmp && rm -rf libpng-1.2.59 libpng-1.2.59.tar.gz
+
+# ---- Quartus Prime Lite 17.1 ----
+ARG QUARTUS_VER=17.1.0.590
+ARG QUARTUS_BUILD=304
+ARG QUARTUS_BASE=https://download.altera.com/akdlm/software/acdsinst/17.1std.2/${QUARTUS_BUILD}/ib_installers
+
+# Download + install Quartus (disable ModelSim/Help to avoid installer hang)
+RUN wget -q --no-check-certificate \
+        "${QUARTUS_BASE}/QuartusLiteSetup-${QUARTUS_VER}-linux.run" \
+        -O /tmp/QuartusLiteSetup.run && \
+    chmod +x /tmp/QuartusLiteSetup.run && \
+    /tmp/QuartusLiteSetup.run \
+        --mode unattended \
+        --unattendedmodeui none \
+        --installdir /opt/intelFPGA_lite/17.1 \
+        --disable-components quartus_help,modelsim_ase,modelsim_ae \
+        --accept_eula 1 && \
+    rm /tmp/QuartusLiteSetup.run
+
+# Download + install Cyclone V device support (1.1 GB)
+RUN wget -q --no-check-certificate \
+        "${QUARTUS_BASE}/cyclonev-${QUARTUS_VER}.qdz" \
+        -O /tmp/cyclonev.qdz && \
+    /opt/intelFPGA_lite/17.1/quartus/bin/quartus_sh \
+        --install /tmp/cyclonev.qdz && \
+    rm /tmp/cyclonev.qdz
+
+ENV PATH="/opt/intelFPGA_lite/17.1/quartus/bin:${PATH}"
+ENV QUARTUS_ROOTDIR="/opt/intelFPGA_lite/17.1/quartus"
