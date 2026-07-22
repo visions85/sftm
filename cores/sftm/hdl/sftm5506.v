@@ -165,7 +165,7 @@ begin
     // global PAGE register (spec loc H78)
     if( addr==6'h3c ) page <= data[5:0];
     // ACTIVE register (spec loc H7C): voices-1 clamped to NVOICES-1
-    else if( addr==6'h3e ) active <= (data[4:0] >= NVOICES) ? 3'(NVOICES-1) : data[2:0];
+    else if( addr==6'h3e ) active <= (data[4:0] >= NVOICES) ? 3'd7 : data[2:0];
     else if( pg < NVOICES ) begin
         // Low pages 0-(NVOICES-1): voice per-sample registers.
         // Layout per OTTO spec §4 (byte offset H00..H38, addr[5:3] selects reg).

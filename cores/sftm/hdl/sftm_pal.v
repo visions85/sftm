@@ -11,22 +11,23 @@ module sftm_pal(
     input               cpu_we,
     output reg  [15:0]  cpu_q,
     input       [14:0]  rd_idx,
-    output      [14:0]  rd_rgb
+    output reg  [14:0]  rd_rgb
 );
     reg [14:0] mem[0:32767];
-    wire [14:0] rd_addr = rd_idx;
 
     // Initialise entry 0 to bright cyan so the screen is non-black on the very
     // first frame.  VRAM defaults to 0x00 everywhere, so every pixel (fg=0,
     // bg=0) looks up palette[0].  The game will overwrite this during its own
     // palette init.  All other entries default to 0 (black) per Quartus BRAM
     // init-to-zero policy for unspecified locations.
+    // NOTE: the read port is registered (synchronous) so Quartus infers this
+    // as an M10K true-dual-port block.  An async read would require 32K*15 =
+    // 491,520 flip-flops — more than the entire Cyclone V register file.
     initial mem[0] = 15'h03FF;   // R=0 G=31 B=31  (bright cyan)
 
     always @(posedge clk) begin
         if( cpu_we ) mem[cpu_addr] <= cpu_dout[14:0];
-        cpu_q <= {1'b0, mem[cpu_addr]};
+        cpu_q  <= {1'b0, mem[cpu_addr]};
+        rd_rgb <= mem[rd_idx];     // registered: adds 1-clk latency (< 6-clk pxl_cen period)
     end
-
-    assign rd_rgb = mem[rd_addr];
 endmodule
