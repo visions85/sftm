@@ -9,6 +9,10 @@ GAMETOP=jtsftm_game_sdram
 # Measured refresh (itech32 P/N 1083: VSync 59.7612 Hz)
 JTFRAME_RATE=59.76
 
+# Active video dimensions (MAME: visarea 0-383 h, 8-255 v)
+JTFRAME_WIDTH=384
+JTFRAME_HEIGHT=248
+
 # 15-bit palette -> 5 bits per colour channel
 JTFRAME_COLORW=5
 
