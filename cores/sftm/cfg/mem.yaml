@@ -33,7 +33,7 @@ sdram:
   banks:
     # ---- bank 0: program + sound CPU ------------------------------------
     - buses:
-        - name: prog          # 68EC020 program, 32-bit
+        - name: main          # 68EC020 program, 32-bit ("prog" is reserved by JTFRAME for the download port)
           addr_width: 18       # 256K longwords = 1 MB
           data_width: 32
         - name: snd           # 6809 program, 8-bit
