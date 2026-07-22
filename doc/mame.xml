@@ -1,0 +1,279 @@
+<?xml version="1.0"?>
+<!DOCTYPE mame [
+<!ELEMENT mame (machine+)>
+	<!ATTLIST mame build CDATA #IMPLIED>
+	<!ATTLIST mame debug (yes|no) "no">
+	<!ATTLIST mame mameconfig CDATA #REQUIRED>
+	<!ELEMENT machine (description, year?, manufacturer?, biosset*, rom*, disk*, device_ref*, sample*, chip*, display*, sound?, input?, dipswitch*, configuration*, port*, adjuster*, driver?, feature*, device*, slot*, softwarelist*, ramoption*)>
+		<!ATTLIST machine name CDATA #REQUIRED>
+		<!ATTLIST machine sourcefile CDATA #IMPLIED>
+		<!ATTLIST machine isbios (yes|no) "no">
+		<!ATTLIST machine isdevice (yes|no) "no">
+		<!ATTLIST machine ismechanical (yes|no) "no">
+		<!ATTLIST machine runnable (yes|no) "yes">
+		<!ATTLIST machine cloneof CDATA #IMPLIED>
+		<!ATTLIST machine romof CDATA #IMPLIED>
+		<!ATTLIST machine sampleof CDATA #IMPLIED>
+		<!ELEMENT description (#PCDATA)>
+		<!ELEMENT year (#PCDATA)>
+		<!ELEMENT manufacturer (#PCDATA)>
+		<!ELEMENT biosset EMPTY>
+			<!ATTLIST biosset name CDATA #REQUIRED>
+			<!ATTLIST biosset description CDATA #REQUIRED>
+			<!ATTLIST biosset default (yes|no) "no">
+		<!ELEMENT rom EMPTY>
+			<!ATTLIST rom name CDATA #REQUIRED>
+			<!ATTLIST rom bios CDATA #IMPLIED>
+			<!ATTLIST rom size CDATA #REQUIRED>
+			<!ATTLIST rom crc CDATA #IMPLIED>
+			<!ATTLIST rom sha1 CDATA #IMPLIED>
+			<!ATTLIST rom merge CDATA #IMPLIED>
+			<!ATTLIST rom region CDATA #IMPLIED>
+			<!ATTLIST rom offset CDATA #IMPLIED>
+			<!ATTLIST rom status (baddump|nodump|good) "good">
+			<!ATTLIST rom optional (yes|no) "no">
+		<!ELEMENT disk EMPTY>
+			<!ATTLIST disk name CDATA #REQUIRED>
+			<!ATTLIST disk sha1 CDATA #IMPLIED>
+			<!ATTLIST disk merge CDATA #IMPLIED>
+			<!ATTLIST disk region CDATA #IMPLIED>
+			<!ATTLIST disk index CDATA #IMPLIED>
+			<!ATTLIST disk writable (yes|no) "no">
+			<!ATTLIST disk status (baddump|nodump|good) "good">
+			<!ATTLIST disk optional (yes|no) "no">
+		<!ELEMENT device_ref EMPTY>
+			<!ATTLIST device_ref tag CDATA #REQUIRED>
+			<!ATTLIST device_ref name CDATA #REQUIRED>
+		<!ELEMENT sample EMPTY>
+			<!ATTLIST sample name CDATA #REQUIRED>
+		<!ELEMENT chip EMPTY>
+			<!ATTLIST chip name CDATA #REQUIRED>
+			<!ATTLIST chip tag CDATA #IMPLIED>
+			<!ATTLIST chip type (cpu|audio) #REQUIRED>
+			<!ATTLIST chip clock CDATA #IMPLIED>
+		<!ELEMENT display EMPTY>
+			<!ATTLIST display tag CDATA #IMPLIED>
+			<!ATTLIST display type (raster|vector|lcd|svg|unknown) #REQUIRED>
+			<!ATTLIST display rotate (0|90|180|270) #IMPLIED>
+			<!ATTLIST display flipx (yes|no) "no">
+			<!ATTLIST display width CDATA #IMPLIED>
+			<!ATTLIST display height CDATA #IMPLIED>
+			<!ATTLIST display refresh CDATA #REQUIRED>
+			<!ATTLIST display pixclock CDATA #IMPLIED>
+			<!ATTLIST display htotal CDATA #IMPLIED>
+			<!ATTLIST display hbend CDATA #IMPLIED>
+			<!ATTLIST display hbstart CDATA #IMPLIED>
+			<!ATTLIST display vtotal CDATA #IMPLIED>
+			<!ATTLIST display vbend CDATA #IMPLIED>
+			<!ATTLIST display vbstart CDATA #IMPLIED>
+		<!ELEMENT sound EMPTY>
+			<!ATTLIST sound channels CDATA #REQUIRED>
+		<!ELEMENT condition EMPTY>
+			<!ATTLIST condition tag CDATA #REQUIRED>
+			<!ATTLIST condition mask CDATA #REQUIRED>
+			<!ATTLIST condition relation (eq|ne|gt|le|lt|ge) #REQUIRED>
+			<!ATTLIST condition value CDATA #REQUIRED>
+		<!ELEMENT input (control*)>
+			<!ATTLIST input service (yes|no) "no">
+			<!ATTLIST input tilt (yes|no) "no">
+			<!ATTLIST input players CDATA #REQUIRED>
+			<!ATTLIST input coins CDATA #IMPLIED>
+			<!ELEMENT control EMPTY>
+				<!ATTLIST control type CDATA #REQUIRED>
+				<!ATTLIST control player CDATA #IMPLIED>
+				<!ATTLIST control buttons CDATA #IMPLIED>
+				<!ATTLIST control minimum CDATA #IMPLIED>
+				<!ATTLIST control maximum CDATA #IMPLIED>
+				<!ATTLIST control sensitivity CDATA #IMPLIED>
+				<!ATTLIST control keydelta CDATA #IMPLIED>
+				<!ATTLIST control reverse (yes|no) "no">
+				<!ATTLIST control ways CDATA #IMPLIED>
+				<!ATTLIST control ways2 CDATA #IMPLIED>
+				<!ATTLIST control ways3 CDATA #IMPLIED>
+		<!ELEMENT dipswitch (condition?, diplocation*, dipvalue*)>
+			<!ATTLIST dipswitch name CDATA #REQUIRED>
+			<!ATTLIST dipswitch tag CDATA #REQUIRED>
+			<!ATTLIST dipswitch mask CDATA #REQUIRED>
+			<!ELEMENT diplocation EMPTY>
+				<!ATTLIST diplocation name CDATA #REQUIRED>
+				<!ATTLIST diplocation number CDATA #REQUIRED>
+				<!ATTLIST diplocation inverted (yes|no) "no">
+			<!ELEMENT dipvalue (condition?)>
+				<!ATTLIST dipvalue name CDATA #REQUIRED>
+				<!ATTLIST dipvalue value CDATA #REQUIRED>
+				<!ATTLIST dipvalue default (yes|no) "no">
+		<!ELEMENT configuration (condition?, conflocation*, confsetting*)>
+			<!ATTLIST configuration name CDATA #REQUIRED>
+			<!ATTLIST configuration tag CDATA #REQUIRED>
+			<!ATTLIST configuration mask CDATA #REQUIRED>
+			<!ELEMENT conflocation EMPTY>
+				<!ATTLIST conflocation name CDATA #REQUIRED>
+				<!ATTLIST conflocation number CDATA #REQUIRED>
+				<!ATTLIST conflocation inverted (yes|no) "no">
+			<!ELEMENT confsetting (condition?)>
+				<!ATTLIST confsetting name CDATA #REQUIRED>
+				<!ATTLIST confsetting value CDATA #REQUIRED>
+				<!ATTLIST confsetting default (yes|no) "no">
+		<!ELEMENT port (analog*)>
+			<!ATTLIST port tag CDATA #REQUIRED>
+			<!ELEMENT analog EMPTY>
+				<!ATTLIST analog mask CDATA #REQUIRED>
+		<!ELEMENT adjuster (condition?)>
+			<!ATTLIST adjuster name CDATA #REQUIRED>
+			<!ATTLIST adjuster default CDATA #REQUIRED>
+		<!ELEMENT driver EMPTY>
+			<!ATTLIST driver status (good|imperfect|preliminary) #REQUIRED>
+			<!ATTLIST driver emulation (good|imperfect|preliminary) #REQUIRED>
+			<!ATTLIST driver cocktail (good|imperfect|preliminary) #IMPLIED>
+			<!ATTLIST driver savestate (supported|unsupported) #REQUIRED>
+			<!ATTLIST driver requiresartwork (yes|no) "no">
+			<!ATTLIST driver unofficial (yes|no) "no">
+			<!ATTLIST driver nosoundhardware (yes|no) "no">
+			<!ATTLIST driver incomplete (yes|no) "no">
+		<!ELEMENT feature EMPTY>
+			<!ATTLIST feature type (protection|timing|graphics|palette|sound|capture|camera|microphone|controls|keyboard|mouse|media|disk|printer|tape|punch|drum|rom|comms|lan|wan) #REQUIRED>
+			<!ATTLIST feature status (unemulated|imperfect) #IMPLIED>
+			<!ATTLIST feature overall (unemulated|imperfect) #IMPLIED>
+		<!ELEMENT device (instance?, extension*)>
+			<!ATTLIST device type CDATA #REQUIRED>
+			<!ATTLIST device tag CDATA #IMPLIED>
+			<!ATTLIST device fixed_image CDATA #IMPLIED>
+			<!ATTLIST device mandatory CDATA #IMPLIED>
+			<!ATTLIST device interface CDATA #IMPLIED>
+			<!ELEMENT instance EMPTY>
+				<!ATTLIST instance name CDATA #REQUIRED>
+				<!ATTLIST instance briefname CDATA #REQUIRED>
+			<!ELEMENT extension EMPTY>
+				<!ATTLIST extension name CDATA #REQUIRED>
+		<!ELEMENT slot (slotoption*)>
+			<!ATTLIST slot name CDATA #REQUIRED>
+			<!ELEMENT slotoption EMPTY>
+				<!ATTLIST slotoption name CDATA #REQUIRED>
+				<!ATTLIST slotoption devname CDATA #REQUIRED>
+				<!ATTLIST slotoption default (yes|no) "no">
+		<!ELEMENT softwarelist EMPTY>
+			<!ATTLIST softwarelist tag CDATA #REQUIRED>
+			<!ATTLIST softwarelist name CDATA #REQUIRED>
+			<!ATTLIST softwarelist status (original|compatible) #REQUIRED>
+			<!ATTLIST softwarelist filter CDATA #IMPLIED>
+		<!ELEMENT ramoption (#PCDATA)>
+			<!ATTLIST ramoption name CDATA #REQUIRED>
+			<!ATTLIST ramoption default CDATA #IMPLIED>
+]>
+
+<mame build="0.288 (unknown)" debug="no" mameconfig="10">
+	<machine name="sftm" sourcefile="itech/itech32.cpp">
+		<description>Street Fighter: The Movie (v1.12)</description>
+		<year>1995</year>
+		<manufacturer>Capcom / Incredible Technologies</manufacturer>
+		<rom name="sfm_prom0_v1.12.prom0" size="262144" crc="9d09355c" sha1="ca8c31d580e4b18b630c38e4ac1c353cf27ab4a2" region="maindata" offset="0"/>
+		<rom name="sfm_prom1_v1.12.prom1" size="262144" crc="a58ac6a9" sha1="a481a789c397151efcbec7ad9983daa30f289d4e" region="maindata" offset="1"/>
+		<rom name="sfm_prom2_v1.12.prom2" size="262144" crc="2f21a4f6" sha1="66b158c40375a0f729d44fd4c888cf6a5bbe2bf1" region="maindata" offset="2"/>
+		<rom name="sfm_prom3_v1.12.prom3" size="262144" crc="d26648d9" sha1="9e3e1fa104da680c4a704d10d6518eea6382f039" region="maindata" offset="3"/>
+		<rom name="sfm_snd_v1.u23" size="262144" crc="10d85366" sha1="10d539c3ba37e277642c0c5888cb1886fb0f55fc" region="soundcpu" offset="10000"/>
+		<rom name="rm0-0.grm0_0" size="4194304" crc="09ef29cb" sha1="430da5b00554582391478849d5b1547fe12eedbe" region="grom" offset="0"/>
+		<rom name="rm0-1.grm0_1" size="4194304" crc="6f5910fa" sha1="1979d19dd36a9118dfaf021e05302982be5dbe69" region="grom" offset="1"/>
+		<rom name="rm0-2.grm0_2" size="4194304" crc="b8a2add5" sha1="62e5bef936f014ac836c0cd5322eaba7018496b4" region="grom" offset="2"/>
+		<rom name="rm0-3.grm0_3" size="4194304" crc="6b6ff867" sha1="72bc95ef361f9238602f0e03aed0adac8b59d227" region="grom" offset="3"/>
+		<rom name="rm1-0.grm1_0" size="4194304" crc="d5d65f77" sha1="0bbb83bb42a442ef157472f3243ab44efa0c0aa0" region="grom" offset="1000000"/>
+		<rom name="rm1-1.grm1_1" size="4194304" crc="90467e27" sha1="217561664871c60b0193337e34020ddd336b8f15" region="grom" offset="1000001"/>
+		<rom name="rm1-2.grm1_2" size="4194304" crc="903e56c2" sha1="843ed9855ffdf37b100b3c5614139d552fd9cd6d" region="grom" offset="1000002"/>
+		<rom name="rm1-3.grm1_3" size="4194304" crc="fac35686" sha1="ba99ab265620575c14c46806dc543d1f9fd24462" region="grom" offset="1000003"/>
+		<rom name="sfm_grm3_0.grm3_0" size="131072" crc="3e1f76f7" sha1="8aefe376e7248a583a6af02e5f9b2a4b48cc91d7" region="grom" offset="2000000"/>
+		<rom name="sfm_grm3_1.grm3_1" size="131072" crc="578054b6" sha1="99201959de28dbfd7692cedea4485751d3d4788f" region="grom" offset="2000001"/>
+		<rom name="sfm_grm3_2.grm3_2" size="131072" crc="9af2f698" sha1="e679728d8eba9f09379e503fa380202cd9adfde1" region="grom" offset="2000002"/>
+		<rom name="sfm_grm3_3.grm3_3" size="131072" crc="cd38d1d6" sha1="0cea60d6897b34eeb13997030f6ee7e1dfb3c833" region="grom" offset="2000003"/>
+		<rom name="sfm_srom0.srom0" size="2097152" crc="6ca1d3fc" sha1="904f4c55a1bc83531a6d87ff706afd8cdfaee83b" region="ensoniq.0" offset="0"/>
+		<rom name="sfm_srom3.srom3" size="524288" crc="4f181534" sha1="e858a33b22558665427146ec79dfba48edc20c2c" region="ensoniq.3" offset="0"/>
+		<device_ref tag=":maincpu" name="m68ec020"/>
+		<device_ref tag=":soundcpu" name="mc6809e"/>
+		<device_ref tag=":soundlatch" name="generic_latch_8"/>
+		<device_ref tag=":ticket" name="ticket_dispenser"/>
+		<device_ref tag=":watchdog" name="watchdog"/>
+		<device_ref tag=":palette" name="palette"/>
+		<device_ref tag=":screen" name="screen"/>
+		<device_ref tag=":speaker" name="speaker"/>
+		<device_ref tag=":ensoniq" name="es5506"/>
+		<device_ref tag=":nvram32" name="nvram"/>
+		<device_ref tag=":soundirq" name="ipt_merge_any_hi"/>
+		<device_ref tag=":soundlatch2" name="generic_latch_8"/>
+		<chip type="cpu" tag="maincpu" name="Motorola MC68EC020" clock="25000000"/>
+		<chip type="cpu" tag="soundcpu" name="Motorola MC6809E" clock="2000000"/>
+		<chip type="audio" tag="speaker" name="Speaker"/>
+		<chip type="audio" tag="ensoniq" name="Ensoniq ES5506" clock="16000000"/>
+		<display tag="screen" type="raster" rotate="0" width="384" height="240" refresh="60.106990" pixclock="8000000" htotal="508" hbend="0" hbstart="384" vtotal="262" vbend="0" vbstart="240" />
+		<sound channels="1"/>
+		<input players="2" coins="2" service="yes">
+			<control type="joy" player="1" buttons="6" ways="8"/>
+			<control type="joy" player="2" buttons="6" ways="8"/>
+		</input>
+		<dipswitch name="Video Sync" tag="DIPS" mask="1048576">
+			<diplocation name="SW1" number="4"/>
+			<dipvalue name="-" value="0" default="yes"/>
+			<dipvalue name="+" value="1048576"/>
+		</dipswitch>
+		<dipswitch name="Flip Screen" tag="DIPS" mask="2097152">
+			<diplocation name="SW1" number="3"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="2097152"/>
+		</dipswitch>
+		<dipswitch name="Freeze Screen" tag="DIPS" mask="4194304">
+			<diplocation name="SW1" number="2"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="4194304"/>
+		</dipswitch>
+		<dipswitch name="Service Mode" tag="DIPS" mask="8388608">
+			<diplocation name="SW1" number="1"/>
+			<dipvalue name="Off" value="0" default="yes"/>
+			<dipvalue name="On" value="8388608"/>
+		</dipswitch>
+		<port tag=":DIPS">
+		</port>
+		<port tag=":P1">
+		</port>
+		<port tag=":P2">
+		</port>
+		<port tag=":P3">
+		</port>
+		<port tag=":P4">
+		</port>
+		<port tag=":ticket:TEST">
+		</port>
+		<driver status="good" emulation="good" savestate="supported"/>
+	</machine>
+	<machine name="es5506" sourcefile="devices/sound/es5506.cpp" isdevice="yes" runnable="no">
+		<description>Ensoniq ES5506</description>
+		<sound channels="0"/>
+	</machine>
+	<machine name="generic_latch_8" sourcefile="devices/machine/gen_latch.cpp" isdevice="yes" runnable="no">
+		<description>Generic 8-bit latch</description>
+	</machine>
+	<machine name="ipt_merge_any_hi" sourcefile="devices/machine/input_merger.cpp" isdevice="yes" runnable="no">
+		<description>Input Merger (any high)</description>
+	</machine>
+	<machine name="m68ec020" sourcefile="devices/cpu/m68000/m68020.cpp" isdevice="yes" runnable="no">
+		<description>Motorola MC68EC020</description>
+	</machine>
+	<machine name="mc6809e" sourcefile="devices/cpu/m6809/m6809.cpp" isdevice="yes" runnable="no">
+		<description>Motorola MC6809E</description>
+	</machine>
+	<machine name="nvram" sourcefile="devices/machine/nvram.cpp" isdevice="yes" runnable="no">
+		<description>NVRAM</description>
+	</machine>
+	<machine name="palette" sourcefile="emu/emupal.cpp" isdevice="yes" runnable="no">
+		<description>palette</description>
+	</machine>
+	<machine name="screen" sourcefile="emu/screen.cpp" isdevice="yes" runnable="no">
+		<description>Video Screen</description>
+	</machine>
+	<machine name="speaker" sourcefile="emu/speaker.cpp" isdevice="yes" runnable="no">
+		<description>Speaker</description>
+		<sound channels="1"/>
+	</machine>
+	<machine name="ticket_dispenser" sourcefile="devices/machine/ticket.cpp" isdevice="yes" runnable="no">
+		<description>Ticket Dispenser</description>
+	</machine>
+	<machine name="watchdog" sourcefile="devices/machine/watchdog.cpp" isdevice="yes" runnable="no">
+		<description>Watchdog Timer</description>
+	</machine>
+</mame>
