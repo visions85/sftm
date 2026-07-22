@@ -21,6 +21,13 @@ JTFRAME_COLORW=5
 # 6 action buttons (LP MP HP LK MK HK)
 JTFRAME_BUTTONS=6
 
+# Pixel clock: without this macro pxl_cen is declared OUTPUT from the game
+# and must be driven by the game itself.  With JTFRAME_PXLCLK=8 the JTFRAME
+# board generates it at 48 MHz / 6 = 8 MHz (≈ itech32's 7.96 MHz pixel clock)
+# and delivers it as INPUT to the game.  This is required for arcade_video
+# to sample pixels (its CE gating fires on rising edges of pxl_cen).
+JTFRAME_PXLCLK=8
+
 # --- Memory ------------------------------------------------------------------
 # ~36 MB of ROM (see cfg/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
 # module, because 4 x 8 MB = 32 MB on the standard module is not enough.
