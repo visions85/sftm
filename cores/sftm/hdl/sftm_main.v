@@ -112,7 +112,6 @@ wire        cpu_write  = cen & bus_active & ~cpu_wr_n & (~cpu_uds_n | ~cpu_lds_n
 wire        low_byte_we  = ~cpu_lds_n;
 wire        high_byte_we = ~cpu_uds_n;
 reg  [ 2:0] cpu_ipl;
-reg         dtack;                       // ready to the kernel (via clkena)
 
 // Reset-time boot copy: the 020 fetches its reset SSP/PC from 0x000000, which
 // is RAM here. MAME's init_program_rom copies the first 0x80 bytes of program
@@ -134,7 +133,7 @@ wire   clkena   = cen & ~bus_busy & boot_done;
 // Coarse address decode
 // ---------------------------------------------------------------------------
 wire [7:0] ahi = cpu_a[23:16];
-reg        ram_cs, inp_cs, dip_cs, sys_cs, misc_cs, nvram_cs;
+reg        ram_cs, inp_cs, dip_cs, sys_cs, nvram_cs;
 reg        prot_cs, nopr_cs;
 reg        prog_sel;
 
@@ -148,7 +147,6 @@ always @(*) begin
     pal_cs   = bus_active && cpu_a[23:17]==7'h2c; // 0x580000-0x59ffff
     vram_cs  = 1'b0;                         // VRAM is accessed via VIDEO_TRANSFER
     nvram_cs = cpu_a[23:17]==7'h30;          // 0x600000-0x61ffff NVRAM
-    misc_cs  = ahi==REG_WDOG || ahi==REG_PROT || ahi==REG_PLANE;
     prot_cs  = cpu_a[23:1]==23'h34_0001;     // 0x680002 protection result byte
     nopr_cs  = cpu_a[23:15]==9'h0af;         // 0x578000-0x57ffff reads as 0
 end
@@ -361,9 +359,6 @@ always @(posedge clk) begin
         if( scan_irq   ) cpu_ipl <= 3'b100; // level 3 scanline (highest priority)
     end
 end
-
-// DTACK/ready modelling for the kernel is folded into clkena above.
-always @(posedge clk) dtack <= ~bus_busy;
 
 // ---------------------------------------------------------------------------
 // TG68K.C kernel (CPU="11" -> 68020). Instantiated as a black box; the VHDL
