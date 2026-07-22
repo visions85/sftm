@@ -39,7 +39,7 @@ iverilog -g2012 -Wall -o /tmp/tb_jtsftm_main.vvp \
     cores/sftm/ver/game/stubs.v && \
 vvp /tmp/tb_jtsftm_main.vvp
 
-# jt5506 (ES5506 voice scheduler and loop modes)
+# jt5506 (ES5506 voice scheduler, loop modes, and 4-pole filter)
 iverilog -g2012 -Wall -o /tmp/tb_jt5506.vvp \
     cores/sftm/ver/game/tb_jt5506.v cores/sftm/hdl/jt5506.v && \
 vvp /tmp/tb_jt5506.vvp
@@ -124,7 +124,7 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 
 **SDRAM**: Four banks defined in `cfg/mem.yaml`. `jtframe mem sftm` generates the SDRAM arbiter (`cores/sftm/mist/jtsftm_game_sdram.v`) and port stubs (`mem_ports.inc`). Bank 0 = 68020 program + 6809 ROM; bank 1 = ES5506 sample ROM; bank 2 = 32 MB main graphics (GROM); bank 3 = extra graphics (grm3). The 32 MB GROM region requires the 128 MB SDRAM module.
 
-**Blitter (IT42)**: `jtsftm_video` writes blitter parameters into `vregs[]`, then asserts `blit_start`. `jtsftm_blitter` walks GROM sequentially, writes 8-bit pixels to VRAM. Implemented: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp source-side horizontal scaling with fractional accumulator), DST_XSTEP (8.8 fp destination-side horizontal stretch, active when DSTXSCALE flag set), WIDTHPIX flag (decoded; blitter already counts destination pixels). Not yet: DST_YSTEP, YSTEP_PER_X polygon shear, WIDTHPIX source-count mode.
+**Blitter (IT42)**: `jtsftm_video` writes blitter parameters into `vregs[]`, then asserts `blit_start`. `jtsftm_blitter` walks GROM sequentially, writes 8-bit pixels to VRAM. Implemented: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp source-side horizontal scaling with fractional accumulator), DST_XSTEP (8.8 fp destination-side horizontal stretch, active when DSTXSCALE flag set), DST_YSTEP (8.8 fp destination row stride, always active), WIDTHPIX flag decoded. Not yet: YSTEP_PER_X polygon shear, WIDTHPIX source-count mode.
 
 **Boot vector copy**: On reset, `jtsftm_main` holds the CPU in reset while a FSM copies the first 0x80 bytes of program ROM into main RAM (the 68020 reset SSP/PC must reside at 0x000000, which is RAM on itech32). The CPU is released only after `boot_done`.
 
@@ -153,16 +153,16 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 - Main RAM/NVRAM BRAM (`jtsftm_ram`), protection byte snooper (`jtsftm_prot`)
 - Coarse CPU address decode, sound latch, VIA null stub
 - Video register file (0x00–0x88), CRTC (H/V counters, sync, blank, interrupts), two VRAM planes, 15-bit palette RAM
-- IT42 blitter: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp, fractional accumulator), DST_XSTEP (8.8 fp, DSTXSCALE flag), WIDTHPIX flag decoded
-- ES5506 (`jt5506`): 32-voice scheduler, 8-bit host interface, PAGE/ACTIVE registers, forward loop (LPE), reverse loop (DIR), bidirectional loop (BLE), one-shot stop, bank offset, basic volume/pan mix, 20-bit saturation
+- IT42 blitter: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp, fractional accumulator), DST_XSTEP (8.8 fp, DSTXSCALE flag), DST_YSTEP (8.8 fp, always active), WIDTHPIX flag decoded
+- ES5506 (`jt5506`): 32-voice scheduler, 8-bit host interface, PAGE/ACTIVE registers, forward loop (LPE), reverse loop (DIR), bidirectional loop (BLE), one-shot stop, bank offset, 4-pole IIR filter (K1/K2 per voice; apply_lowpass/apply_highpass matching MAME es5506.cpp; LP mode from control[9:8]), volume/pan mix, 20-bit saturation
 - 6 self-checking testbenches, all passing
 
 **Not yet implemented / validated:**
 - Exact `itech020_map` address decode and input/DIP bit layout
 - TG68K.C vendoring (VHDL→Verilog via `ghdl synth` — needs LLVM-flavor ghdl, not in Ubuntu 24.04 package)
 - Exact MC6809 wrapper port map
-- ES5506: 4-pole K1/K2 filter, envelope/volume ramps, IRQ vector stacking, compressed/u-law sample mode
-- IT42: DST_YSTEP (destination y-stride per row), YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
+- ES5506: K1/K2 ramps, envelope/volume ramps, IRQ vector stacking, compressed/u-law sample mode
+- IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
 - `jtframe mra sftm` MRA generation not yet validated
 - NVRAM SD-card persistence, grm3 plane usage, hardware build (Quartus)
 
