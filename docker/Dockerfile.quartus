@@ -75,15 +75,16 @@ RUN curl -fsSL --retry 3 \
     && ldconfig
 
 # ---- Quartus Prime Lite 17.1 ----
-ARG QUARTUS_VER=17.1.0.590
-ARG QUARTUS_BUILD=304
-ARG QUARTUS_BASE=https://downloads.intel.com/akdlm/software/acdsinst/17.1std.2/${QUARTUS_BUILD}/ib_installers
+# Intel's download CDN requires authentication; download the two files manually
+# from https://www.altera.com/downloads/fpga-development-tools/quartus-prime-lite-edition-design-software-version-17-1-linux
+# and place them in docker/quartus-installers/ before building:
+#   QuartusLiteSetup-17.1.0.590-linux.run   (2 GB, sha1: 2b84182836aad9eefe0c8dcd92d052c9778ce887)
+#   cyclonev-17.1.0.590.qdz                 (1.1 GB, sha1: 392eebbc61e041be7abd1034de16323a414428e7)
+COPY quartus-installers/QuartusLiteSetup-17.1.0.590-linux.run /tmp/QuartusLiteSetup.run
+COPY quartus-installers/cyclonev-17.1.0.590.qdz /tmp/cyclonev.qdz
 
-# Download + install Quartus (disable ModelSim/Help to avoid installer hang)
-RUN wget -q --no-check-certificate \
-        "${QUARTUS_BASE}/QuartusLiteSetup-${QUARTUS_VER}-linux.run" \
-        -O /tmp/QuartusLiteSetup.run && \
-    chmod +x /tmp/QuartusLiteSetup.run && \
+# Install Quartus (disable ModelSim/Help to avoid installer hang on unattended mode)
+RUN chmod +x /tmp/QuartusLiteSetup.run && \
     /tmp/QuartusLiteSetup.run \
         --mode unattended \
         --unattendedmodeui none \
@@ -92,11 +93,8 @@ RUN wget -q --no-check-certificate \
         --accept_eula 1 && \
     rm /tmp/QuartusLiteSetup.run
 
-# Download + install Cyclone V device support (1.1 GB)
-RUN wget -q --no-check-certificate \
-        "${QUARTUS_BASE}/cyclonev-${QUARTUS_VER}.qdz" \
-        -O /tmp/cyclonev.qdz && \
-    /opt/intelFPGA_lite/17.1/quartus/bin/quartus_sh \
+# Install Cyclone V device support
+RUN /opt/intelFPGA_lite/17.1/quartus/bin/quartus_sh \
         --install /tmp/cyclonev.qdz && \
     rm /tmp/cyclonev.qdz
 
