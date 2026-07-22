@@ -19,7 +19,9 @@ REPO_DIR="$(dirname "$SCRIPT_DIR")"
 
 IMAGE="sftm-quartus"
 BASE_IMAGE="sftm-build"
-VOLUME="jtframe-module"
+# Separate volume so the amd64 jtframe binary doesn't collide with the
+# ARM64 binary built by the sftm-build (native) container.
+VOLUME="jtframe-module-amd64"
 
 # ---- Optionally rebuild the base image ----
 if [[ "${1:-}" == "--rebuild" ]]; then
@@ -29,9 +31,12 @@ if [[ "${1:-}" == "--rebuild" ]]; then
 fi
 
 # ---- Build Quartus image if not present ----
+# Must be linux/amd64: Quartus 17.1 is x86_64-only.
+# On Apple Silicon this uses Rosetta 2 emulation automatically.
 if ! docker image inspect "$IMAGE" &>/dev/null; then
     echo "[run-synth.sh] Building Quartus image '$IMAGE' (first time ~30 min)..."
-    docker build -t "$IMAGE" -f "$SCRIPT_DIR/Dockerfile.quartus" "$SCRIPT_DIR"
+    docker build --platform linux/amd64 -t "$IMAGE" \
+        -f "$SCRIPT_DIR/Dockerfile.quartus" "$SCRIPT_DIR"
 fi
 
 # ---- Create jtframe volume if needed ----
@@ -41,7 +46,7 @@ docker volume inspect "$VOLUME" &>/dev/null \
 # ---- Run synthesis ----
 # jtcore is called with -mister target.  The --no-dbg flag keeps macros
 # clean; remove it to include OSD debug overlays.
-exec docker run --rm -it \
+exec docker run --rm -it --platform linux/amd64 \
     -v "${REPO_DIR}:/workspace" \
     -v "${VOLUME}:/workspace/modules/jtframe" \
     -e JTROOT=/workspace \

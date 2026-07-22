@@ -1,31 +1,67 @@
-# Extends sftm-build with Quartus Prime Lite 17.1 for MiSTer synthesis.
+# Standalone linux/amd64 image for MiSTer synthesis.
 #
-# Quartus 17.1 is the version historically used for MiSTer FPGA development.
-# It targets the Cyclone V (5CSEBA6U23I7) on the DE10-Nano.
+# Quartus 17.1 is x86_64-only. On Apple Silicon this runs via Rosetta 2.
+# This image is independent of sftm-build (which may be ARM64).
 #
 # Build (one time, ~30 min first run due to downloads):
-#   docker build -t sftm-quartus -f docker/Dockerfile.quartus docker/
+#   docker build --platform linux/amd64 -t sftm-quartus \
+#       -f docker/Dockerfile.quartus docker/
 #
 # Re-synthesise:
 #   ./docker/run-synth.sh
-#
-# Installers are downloaded from Intel's CDN during the build and cached
-# in Docker layers — subsequent rebuilds skip the download automatically.
 
-FROM sftm-build
+FROM --platform=linux/amd64 ubuntu:24.04
 
-# ---- Quartus 17.1 prerequisites ----
-# libpng12 is required by Quartus 17.1 but is no longer in Ubuntu 24.04 repos;
-# build it from source. i386 libs are needed for some Quartus internals.
-RUN dpkg --add-architecture i386 && \
-    apt-get update && apt-get install -y --no-install-recommends \
-        build-essential zlib1g-dev \
-        libxft2 libxft2:i386 \
-        libxext6 libxext6:i386 \
-        libncurses5:i386 \
-        libc6:i386 libstdc++6:i386 \
-        lib32z1 lib32stdc++6 \
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ---- Base toolchain (mirrors main Dockerfile, but amd64) ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iverilog \
+    ghdl-llvm \
+    verilator \
+    git \
+    make \
+    python3 \
+    python3-pip \
+    wget \
+    curl \
+    ca-certificates \
+    xz-utils \
+    build-essential \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Go 1.23 (for jtframe binary)
+ARG GO_VERSION=1.23.5
+RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tgz \
+    && tar -C /usr/local -xzf /tmp/go.tgz \
+    && rm /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# JTFRAME environment (same as main Dockerfile)
+ENV JTROOT=/workspace
+ENV JTFRAME=/workspace/modules/jtframe
+ENV CORES=/workspace/cores
+ENV MODULES=/workspace/modules
+ENV JTBIN=/workspace/jtbin
+ENV ROM=/workspace/rom
+ENV MRA=/workspace/jtbin/mra
+ENV TARGET=mister
+ENV PATH="/workspace/modules/jtframe/bin:${PATH}"
+
+# ---- Quartus 17.1 prerequisites (no i386 — ModelSim is not installed) ----
+# libpng12 is required by Quartus 17.1 but not available in Ubuntu 24.04 repos.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxft2 \
+        libxext6 \
+        libxrender1 \
+        libxtst6 \
+        libxi6 \
+        libncurses6 \
+    && rm -rf /var/lib/apt/lists/* \
+    # Quartus 17.1 links against libncurses.so.5; symlink to the current .so.6
+    && ln -sf /lib/x86_64-linux-gnu/libncurses.so.6 /lib/x86_64-linux-gnu/libncurses.so.5 \
+    && ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6  /lib/x86_64-linux-gnu/libtinfo.so.5
 
 # Build libpng 1.2 from source (Quartus 17.1 links against libpng12.so.0)
 RUN cd /tmp && \
@@ -64,3 +100,11 @@ RUN wget -q --no-check-certificate \
 
 ENV PATH="/opt/intelFPGA_lite/17.1/quartus/bin:${PATH}"
 ENV QUARTUS_ROOTDIR="/opt/intelFPGA_lite/17.1/quartus"
+
+# Reuse the same entrypoint to auto-clone/build jtframe on first run
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/bin/bash"]
