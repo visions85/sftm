@@ -83,8 +83,8 @@ wire irq_n = ~irq_pending;           // active-low to mc6809i
 // ---------------------------------------------------------------------------
 //  0x0400        soundlatch read
 wire latch_cs  = (a == 16'h0400);
-//  0x0800-0x083F ES5506 (mirror at 0x0880; 0x80 apart so bit6 is don't-care)
-wire es_cs     = (a[15:7] == 9'b0_0000_1000);  // 0x0800-0x087F incl. mirror
+//  0x0800-0x083F ES5506 (mirror at 0x0880-0x08BF; bit7 don't-care within 0x0800-0x08FF)
+wire es_cs     = (a[15:8] == 8'h08);           // 0x0800-0x08FF (covers base + mirror)
 //  0x0C00        bank register write
 wire bank_cs   = (a == 16'h0C00);
 //  0x1000        no-op read/write ("noisy" per MAME)
