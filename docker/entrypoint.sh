@@ -26,6 +26,13 @@ if [ ! -f "${JTFRAME_SENTINEL}" ]; then
     cp -r "$TMP/modules/jtframe/." "${JTFRAME_DIR}/"
     rm -rf "$TMP"
     cd /workspace  # avoid getcwd error after rmdir
+    # Initialise a dummy git repo so jtframe's make_commit_macro() can run
+    # git log without panicking (the sparse-clone cp doesn't carry .git).
+    git -C "${JTFRAME_DIR}" init -q
+    git -C "${JTFRAME_DIR}" config user.email "jtframe@local"
+    git -C "${JTFRAME_DIR}" config user.name "jtframe"
+    git -C "${JTFRAME_DIR}" add -A
+    git -C "${JTFRAME_DIR}" commit -q -m "jtframe snapshot"
     echo "[sftm] jtframe module vendored to ${JTFRAME_DIR}"
 fi
 
