@@ -261,6 +261,13 @@ wire signed [31:0] p4_hpk2      = p3 - o3n1[vidx]
 wire signed [31:0] p4 = lp_mode[1] ? p4_lpk2 : p4_hpk2;
 
 // ---------------------------------------------------------------------------
+// Per-voice contribution (combinatorial; used by both flush and accumulate
+// paths to avoid the NBA conflict when vidx==active and voice is running).
+// ---------------------------------------------------------------------------
+wire signed [31:0] contrib_l = (p4 * $signed({1'b0,lvol[vidx][14:0]})) >>> 14;
+wire signed [31:0] contrib_r = (p4 * $signed({1'b0,rvol[vidx][14:0]})) >>> 14;
+
+// ---------------------------------------------------------------------------
 // Voice scheduler and mixer. One voice per cen. A complete output sample is
 // emitted after active+1 voices have been accumulated.
 // ---------------------------------------------------------------------------
@@ -312,12 +319,9 @@ always @(posedge clk) begin
         vidx <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
     end else if( cen ) begin
         srom_cs <= voice_running;
-        if( voice_running && srom_ok ) begin
-            // Mix using 4-pole filtered output p4.
-            // TODO: interpolation uses current+next samples and frac bits.
-            mix_l <= mix_l + ((p4 * $signed({1'b0,lvol[vidx][14:0]})) >>> 14);
-            mix_r <= mix_r + ((p4 * $signed({1'b0,rvol[vidx][14:0]})) >>> 14);
 
+        // Filter state and accumulator advance (both flush and non-flush paths).
+        if( voice_running && srom_ok ) begin
             // Update filter state (update_pole / update_2_pole from MAME).
             o1n1[vidx] <= p1;
             o2n2[vidx] <= o2n1[vidx];   // shift n-1 → n-2
@@ -331,13 +335,10 @@ always @(posedge clk) begin
                 if( lpe ) begin
                     if( ble ) begin
                         // Bidirectional: flip direction and pin to boundary.
-                        // Was going fwd → hit end → reverse from end.
-                        // Was going rev → hit start → forward from start.
                         control[vidx][CTRL_DIR] <= ~dir;
                         accum[vidx] <= dir ? acc_at_start : acc_at_end;
                     end else begin
                         // Unidirectional loop: jump to the opposite boundary.
-                        // Fwd hit end → restart at start.  Rev hit start → restart at end.
                         accum[vidx] <= dir ? acc_at_end : acc_at_start;
                     end
                 end else begin
@@ -349,14 +350,24 @@ always @(posedge clk) begin
             end
         end
 
-        if( vidx==active ) begin
-            left   <= sat16(mix_l);
-            right  <= sat16(mix_r);
+        // Mixer: separate flush and accumulate paths so the final voice
+        // (vidx==active) is included before mix_l/mix_r are reset.
+        // contrib_l/contrib_r are combinatorial — no NBA conflict.
+        // TODO: interpolation uses current+next samples and frac bits.
+        if( vidx == active ) begin
+            left   <= sat16((voice_running && srom_ok) ? mix_l + contrib_l : mix_l);
+            right  <= sat16((voice_running && srom_ok) ? mix_r + contrib_r : mix_r);
             sample <= 1'b1;
             mix_l  <= 0;
             mix_r  <= 0;
             vidx   <= 0;
-        end else vidx <= vidx + 5'd1;
+        end else begin
+            if( voice_running && srom_ok ) begin
+                mix_l <= mix_l + contrib_l;
+                mix_r <= mix_r + contrib_r;
+            end
+            vidx <= vidx + 5'd1;
+        end
     end
 end
 
