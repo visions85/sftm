@@ -93,11 +93,21 @@ Generated output (`cores/sftm/mist/` or `mister/`) is written back to the host r
 
 ### TG68K.C conversion for Verilator simulation
 
+TG68K.C is vendored as a git submodule at `cores/sftm/hdl/tg68k/`
+(source: `https://github.com/TobiFlex/TG68K.C`).  For Quartus synthesis the
+VHDL files are included directly (mixed-language synthesis).  For iverilog/
+Verilator simulation, convert using `ghdl synth` inside Docker (Docker image
+now uses `ghdl-llvm` which supports synthesis):
+
 ```sh
-cd cores/sftm/hdl/tg68k
-ghdl -a -fsynopsys TG68K_Pack.vhd TG68K_ALU.vhd TG68KdotC_Kernel.vhd TG68K.vhd
-ghdl synth --out=verilog TG68KdotC_Kernel > TG68KdotC_Kernel_conv.v
+./docker/run.sh bash -c '
+  cd /workspace/cores/sftm/hdl/tg68k && \
+  ghdl -a -fsynopsys TG68K_Pack.vhd TG68K_ALU.vhd TG68KdotC_Kernel.vhd TG68K.vhd && \
+  ghdl synth --out=verilog TG68KdotC_Kernel > TG68KdotC_Kernel_conv.v
+'
 ```
+
+The resulting `TG68KdotC_Kernel_conv.v` is not committed (generated artifact).
 
 ## Architecture
 
@@ -159,7 +169,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 **Not yet implemented / validated:**
 - Exact `itech020_map` address decode and input/DIP bit layout
-- TG68K.C vendoring (VHDL→Verilog via `ghdl synth` — needs LLVM-flavor ghdl, not in Ubuntu 24.04 package)
+- TG68K.C VHDL→Verilog conversion for iverilog sim (VHDL is vendored; use `ghdl synth` inside Docker — see above)
 - Exact MC6809 wrapper port map
 - ES5506: K1/K2 ramps, envelope/volume ramps, IRQ vector stacking, compressed/u-law sample mode
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
@@ -168,9 +178,9 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 ## Validation plan
 
-1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe accessible via `docker/run.sh`; TG68K.C still needed for full simulation
+1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe via `docker/run.sh`; TG68K.C VHDL vendored as submodule at `hdl/tg68k/`; ghdl synth conversion still needed for iverilog sim
 2. ~~Run `jtframe mem sftm`~~ — DONE: generated `cores/sftm/mist/sftm_game_sdram.v` and `mem_ports.inc`
-3. Convert TG68K.C for Verilator — requires LLVM-flavor `ghdl synth`; Ubuntu 24.04 package uses mcode backend (no synthesis). Options: build ghdl from source in Docker, or use `vhd2vl`.
+3. Convert TG68K.C for Verilator — run `ghdl synth` inside Docker (Dockerfile now uses `ghdl-llvm`; see the command above). Produces `TG68KdotC_Kernel_conv.v` for iverilog/Verilator sim.
 4. Run 68020 opcode tests before booting ROM code
 5. Log MAME blitter commands and replay into `sftm_blitter` (compare pixel-exact output)
 6. ~~ES5506 basic voice scheduler~~ — DONE. Still needed: compare `sftm5506` output against MAME `es5506.cpp` for a captured register/ROM trace

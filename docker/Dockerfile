@@ -3,9 +3,11 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Core tool deps
+# ghdl-llvm provides the LLVM-backend ghdl needed for 'ghdl synth --out=verilog'.
+# The Ubuntu 24.04 apt package 'ghdl' uses the mcode backend only (no synthesis).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iverilog \
-    ghdl \
+    ghdl-llvm \
     verilator \
     git \
     make \
