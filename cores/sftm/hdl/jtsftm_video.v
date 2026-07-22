@@ -339,8 +339,9 @@ jtsftm_blitter u_blitter(
     .r_rightclip( vregs[VR_RIGHTCLIP][11:0] ),
     .r_topclip  ( vregs[VR_TOPCLIP][11:0]   ),
     .r_botclip  ( vregs[VR_BOTCLIP][11:0]   ),
-    // source stepping
+    // source / destination stepping
     .r_srcxstep ( vregs[VR_SRCXSTEP]        ),
+    .r_dstxstep ( vregs[VR_DSTXSTEP]        ),
     .start      ( blit_start          ),
     .plane_sel  ( plane_en[1] & ~plane_en[0] ),
     .grom_bank  ( grom_bank          ),
