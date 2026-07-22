@@ -9,6 +9,11 @@
       6. Clip rect (F_CLIP=bit10):
            6a. F_CLIP set: 4x4 blit clipped to 2x2 window → 4 VRAM writes.
            6b. F_CLIP clear: same blit with same clip regs → all 16 writes.
+      7. SRC_XSTEP=0x200 — source 2:1 x-scaling.
+      8. DST_XSTEP=0x200 — destination 2:1 x-stretch (F_DSTXSCALE).
+      9. Fractional DST_XSTEP=0x180 — fractional carry path.
+     10. DST_YSTEP=0x200 — destination 2:1 y-stretch (2 rows per step).
+     11. Fractional DST_YSTEP=0x180 — y fractional carry path.
 
     GROM model: word address W returns { 2W+1, 2W } so byte address N = N[7:0].
     All pixel values used in the normal/flip tests are < 0xFF (non-transparent).
@@ -29,9 +34,10 @@ module tb_jtsftm_blitter;
     // Clip rect regs (12-bit pixel coordinates). Default: full range, no clip.
     reg  [11:0] r_leftclip=12'd0, r_rightclip=12'hfff,
                 r_topclip =12'd0, r_botclip  =12'hfff;
-    // Source / destination x-step (8.8 fixed-point; 0x0100 = 1:1).
+    // Source / destination stepping (8.8 fixed-point; 0x0100 = 1:1).
     reg  [15:0] r_srcxstep=16'h0100;
     reg  [15:0] r_dstxstep=16'h0100;
+    reg  [15:0] r_dstystep=16'h0100;
     reg         start=0, plane_sel=0;
     reg  [ 1:0] grom_bank=0;
 
@@ -65,7 +71,7 @@ module tb_jtsftm_blitter;
         .r_x(r_x), .r_y(r_y), .r_addrlo(r_addrlo), .r_addrhi(r_addrhi),
         .r_leftclip(r_leftclip), .r_rightclip(r_rightclip),
         .r_topclip(r_topclip),   .r_botclip(r_botclip),
-        .r_srcxstep(r_srcxstep), .r_dstxstep(r_dstxstep),
+        .r_srcxstep(r_srcxstep), .r_dstxstep(r_dstxstep), .r_dstystep(r_dstystep),
         .start(start), .plane_sel(plane_sel), .grom_bank(grom_bank),
         .grom_addr(grom_addr), .grom_data(grom_data),
         .grom_cs(grom_cs), .grom_ok(grom_cs),
@@ -340,6 +346,48 @@ module tb_jtsftm_blitter;
         check_pix(17'h8201, 8'h01, "t9 dstxstep=1.5 pix1 (1,65)");
         check_pix(17'h8203, 8'h02, "t9 dstxstep=1.5 pix2 (3,65)");
         r_dstxstep = 16'h0100;  // restore 1:1
+
+        // === Test 10: DST_YSTEP=0x200 — 2:1 destination y-stretch ===
+        // 1x3 blit at (0,100), GROM addr 0, r_dstystep=0x200.
+        // Y advances by 2 after each row (frac=0 so no carry variation):
+        //   row0: cury=100 → vram{100,0} = 17'hC800
+        //   row1: cury=102 → vram{102,0} = 17'hCC00
+        //   row2: cury=104 → vram{104,0} = 17'hD000
+        // (vram_addr = {cury[7:0], curx[8:0]}; curx=0 throughout)
+        // GROM model: row0→byte0=0x00, row1→byte1=0x01, row2→byte2=0x02
+        r_dstystep = 16'h0200;
+        write_cnt = 0;
+        do_blit(16'h0000, 16'h0064, 16'h0000, 16'h0002,
+                16'h0000, 16'h0000, 16'h0000, 1'b0);
+        if (write_cnt !== 3) begin
+            $display("FAIL: t10 write_cnt=%0d (expected 3)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'hC800, 8'h00, "t10 dstystep=2 row0 (0,100)");
+        check_pix(17'hCC00, 8'h01, "t10 dstystep=2 row1 (0,102)");
+        check_pix(17'hD000, 8'h02, "t10 dstystep=2 row2 (0,104)");
+        r_dstystep = 16'h0100;  // restore 1:1
+
+        // === Test 11: Fractional DST_YSTEP=0x180 (1.5 rows per source row) ===
+        // 1x3 blit at (0,110), GROM addr 0, r_dstystep=0x180.
+        // dst_yfrac accumulation (frac byte of 0x180 is 0x80):
+        //   after row0: dst_yfrac=0+0x80=0x80 (no carry); dst_y_int=1; cury: 110→111
+        //   after row1: dst_yfrac=0x80+0x80=0x100→carry; dst_y_int=1+1=2; cury: 111→113
+        //   row2 written at cury=113.
+        // Destination rows: y=110, 111, 113.
+        //   vram{110,0}=17'hDC00, {111,0}=17'hDE00, {113,0}=17'hE200
+        r_dstystep = 16'h0180;
+        write_cnt = 0;
+        do_blit(16'h0000, 16'h006E, 16'h0000, 16'h0002,
+                16'h0000, 16'h0000, 16'h0000, 1'b0);
+        if (write_cnt !== 3) begin
+            $display("FAIL: t11 write_cnt=%0d (expected 3)", write_cnt);
+            errors = errors + 1;
+        end
+        check_pix(17'hDC00, 8'h00, "t11 dstystep=1.5 row0 (0,110)");
+        check_pix(17'hDE00, 8'h01, "t11 dstystep=1.5 row1 (0,111)");
+        check_pix(17'hE200, 8'h02, "t11 dstystep=1.5 row2 (0,113)");
+        r_dstystep = 16'h0100;  // restore 1:1
 
         if (errors == 0)
             $display("PASS: jtsftm_blitter all checks");

@@ -342,6 +342,7 @@ jtsftm_blitter u_blitter(
     // source / destination stepping
     .r_srcxstep ( vregs[VR_SRCXSTEP]        ),
     .r_dstxstep ( vregs[VR_DSTXSTEP]        ),
+    .r_dstystep ( vregs[VR_DSTYSTEP]        ),
     .start      ( blit_start          ),
     .plane_sel  ( plane_en[1] & ~plane_en[0] ),
     .grom_bank  ( grom_bank          ),
