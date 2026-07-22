@@ -146,6 +146,17 @@ always @(posedge clk) begin
         vregs[VR_SRCXSTEP] <= 16'h0100;
         vregs[VR_SRCYSTEP] <= 16'h0100;
         vregs[VR_DSTYSTEP] <= 16'h0100;
+        // Pre-load CRTC timing with itech32 hardware values so HS/VS oscillate
+        // from reset even before the CPU programs them (all-zeros → stuck at DC).
+        // Values from MAME itech32.xml: htotal=508 vtotal=262 hbstart=384 vbstart=240.
+        vregs[VR_HTOTAL]  <= 16'd507;   // hcnt wraps at 507 → 508 pixels/line
+        vregs[VR_HSYNC]   <= 16'd452;   // HS starts at pixel 452
+        vregs[VR_HBSTART] <= 16'd384;   // active pixels 0-383
+        vregs[VR_HBEND]   <= 16'd0;
+        vregs[VR_VTOTAL]  <= 16'd261;   // vcnt wraps at 261 → 262 lines/frame
+        vregs[VR_VSYNC]   <= 16'd254;   // VS starts at line 254
+        vregs[VR_VBSTART] <= 16'd240;   // active lines 0-239
+        vregs[VR_VBEND]   <= 16'd0;
         int_state   <= 16'd0;
         xfer_xcount <= 16'd0;
         xfer_ycount <= 16'd0;
