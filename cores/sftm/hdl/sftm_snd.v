@@ -100,9 +100,8 @@ wire brom_cs   = (a[15:14] == 2'b01);          // 0x4000-0x7FFF
 assign rom_cs  = a[15];                         // 0x8000-0xFFFF
 
 // ---------------------------------------------------------------------------
-// Bank register (written at 0x0C00 by 6809)
-// MAME configures 256 banks of 16 KB starting at soundcpu ROM offset 0x10000.
-// snd_addr for banked ROM = 0x10000 + bank*0x4000 + a[13:0]
+// Bank register (written at 0x0C00 by 6809): raw bank index (0-based).
+// Firmware writes bank N; SDRAM offset = 0x10000 + N*0x4000 (see rom_addr below).
 // ---------------------------------------------------------------------------
 reg [7:0] rom_bank;
 always @(posedge clk) begin
@@ -112,16 +111,14 @@ always @(posedge clk) begin
         rom_bank <= dout;
 end
 
-// ROM address mux:
-//   fixed   (0x8000-0xFFFF): ROM byte-addr = 0x8000 + a[14:0]  -> snd_addr[14:0] = a[14:0], bit15=1
-//   banked  (0x4000-0x7FFF): ROM byte-addr = 0x10000 + bank*0x4000 + a[13:0]
-// Both fit in 18-bit snd_addr (max 256 KB).
-// rom_addr layout (18-bit byte addresses, 256 KB total snd SDRAM bus):
-//   fixed  0x8000-0xFFFF  → {3'b001, a[14:0]}         (32 KB)
-//   banked 0x10000-0x1FFFF → {2'b01, bank[1:0], a[13:0]} (4×16 KB = 64 KB)
-// 4 banks is the maximum within 18-bit addressing given the fixed-ROM layout.
-// More banks require a wider snd SDRAM bus (needs JTFRAME mem.yaml change).
-assign rom_addr = brom_cs ? { 2'b01, rom_bank[1:0], a[13:0] }   // banked (4 banks × 16 KB)
+// ROM address mux (18-bit byte addresses, 256 KB total snd SDRAM bus):
+//   fixed  0x8000-0xFFFF  → SDRAM 0x08000-0x0FFFF  = {3'b001, a[14:0]}
+//   banked 0x4000-0x7FFF  → SDRAM 0x10000 + N×0x4000 + a[13:0]
+//     SDRAM bits[17:14] = 4+N, so N=0..11 → banks at 0x10000-0x3FFFF (12×16 KB).
+//     Bank 12+ wraps (invalid; game firmware does not reach that far).
+// Layout assumption per MAME sound_map: fixed ROM at ROM offset 0x8000-0xFFFF;
+// banks 0-11 at ROM offsets 0x10000-0x3FFFF.
+assign rom_addr = brom_cs ? { 4'd4 + rom_bank[3:0], a[13:0] }   // banked (12 banks × 16 KB)
                            : { 3'b001, a[14:0] };                // fixed 0x8000-0xFFFF
 
 // ---------------------------------------------------------------------------
