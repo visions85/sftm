@@ -104,7 +104,7 @@ integer i;
 // Force register arrays into the sensitivity list.  iverilog does not always
 // infer array element dependencies from function calls in always @(*), so we
 // read a XOR-reduction of every voice's key registers here.  Excluded from
-// synthesis since Quartus uses static analysis and doesn't need this trick.
+// Quartus via translate_off since it uses static analysis and doesn't need this.
 // synthesis translate_off
 wire _sens_k2    = ^{k2   [0],k2   [1],k2   [2],k2   [3],k2   [4],k2   [5],k2   [6],k2   [7],
                      k2   [8],k2   [9],k2  [10],k2  [11],k2  [12],k2  [13],k2  [14],k2  [15],
