@@ -30,14 +30,14 @@ if [[ "${1:-}" == "--rebuild" ]]; then
     shift
 fi
 
-# ---- Build Quartus image if not present ----
-# Must be linux/amd64: Quartus 17.1 is x86_64-only.
+# ---- Build Quartus image (uses Docker layer cache after first build) ----
+# Must be linux/amd64: Quartus 21.1 is x86_64-only.
 # On Apple Silicon this uses Rosetta 2 emulation automatically.
-if ! docker image inspect "$IMAGE" &>/dev/null; then
-    echo "[run-synth.sh] Building Quartus image '$IMAGE' (first time ~30 min)..."
-    docker build --platform linux/amd64 -t "$IMAGE" \
-        -f "$SCRIPT_DIR/Dockerfile.quartus" "$SCRIPT_DIR"
-fi
+# We always call 'docker build' so changed Dockerfiles are picked up;
+# unchanged layers are served from cache so subsequent runs are fast.
+echo "[run-synth.sh] Building Quartus image '$IMAGE' (cached after first build)..."
+docker build --platform linux/amd64 -t "$IMAGE" \
+    -f "$SCRIPT_DIR/Dockerfile.quartus" "$SCRIPT_DIR"
 
 # ---- Create jtframe volume if needed ----
 docker volume inspect "$VOLUME" &>/dev/null \
