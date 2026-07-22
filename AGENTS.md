@@ -173,7 +173,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 - Exact MC6809 wrapper port map
 - ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
-- `jtframe mra sftm` MRA generation not yet validated
+- MRA generation needs `doc/mame.xml` (run `mame -listxml sftm > doc/mame.xml` once MAME is installed; then `./docker/run.sh jtframe mra sftm`)
 - NVRAM SD-card persistence, grm3 plane usage, hardware build (Quartus)
 
 ## Validation plan
