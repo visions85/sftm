@@ -100,8 +100,9 @@ end
 always @(*) begin
     host_dout = 8'hff;
     case(host_addr)
-        6'h38: host_dout = irqv;      // IRQV (low byte) - spec loc H70 / host fold
+        6'h38: host_dout = irqv;         // IRQV (low byte)
         6'h3c: host_dout = {2'b0,page};
+        6'h3e: host_dout = {3'b0,active}; // ACTIVE
         default: host_dout = read_reg(page, host_addr);
     endcase
 end
@@ -110,6 +111,8 @@ task write_reg(input [5:0] pg, input [5:0] addr, input [7:0] data);
 begin
     // global PAGE register (spec loc H78)
     if( addr==6'h3c ) page <= data[5:0];
+    // ACTIVE register (spec loc H7C): number of active voices - 1
+    else if( addr==6'h3e ) active <= data[4:0];
     else if( pg < 32 ) begin
         case(addr[5:3])
             3'h0: control[pg][ (addr[1] ? 15:7) -: 8 ] <= data; // CR
@@ -160,6 +163,36 @@ wire [1:0] bank = {control[vidx][CTRL_BS1], control[vidx][CTRL_BS0]};
 wire [20:0] bank_base = (bank == 2'b11) ? 21'h100000 : 21'h000000;
 assign srom_addr = accum[vidx][31:11] + bank_base;
 
+// ---------------------------------------------------------------------------
+// Loop mode combinatorial logic (evaluated for the current voice each cen).
+//
+// CTRL_DIR (bit 6): 0 = forward (accum += FC), 1 = reverse (accum -= FC).
+// CTRL_LPE (bit 3): loop enable.  0 = one-shot (stop at boundary).
+// CTRL_BLE (bit 4): bidirectional loop.  DIR toggles at each boundary.
+//
+// Boundary positions as 32-bit accumulator values:
+//   {word_address[20:0], 11'd0}  (word_address = srom word index)
+// ---------------------------------------------------------------------------
+wire       dir  = control[vidx][CTRL_DIR];
+wire       lpe  = control[vidx][CTRL_LPE];
+wire       ble  = control[vidx][CTRL_BLE];
+
+// Direction-aware next accumulator (32-bit; use signed comparison for reverse).
+wire [31:0] next_acc = dir
+    ? (accum[vidx] - {15'd0, fc[vidx]})
+    : (accum[vidx] + {15'd0, fc[vidx]});
+
+// Loop boundary as accumulator integer positions.
+wire [31:0] acc_at_start = {startp[vidx][20:0], 11'd0};
+wire [31:0] acc_at_end   = {endp[vidx][20:0],   11'd0};
+
+// Boundary hit detection on next_acc.
+// Forward: integer part of next_acc >= end word address.
+// Reverse: signed next_acc < start position (correctly handles underflow past 0).
+wire at_fwd_end  = ~dir & (next_acc[31:11] >= endp[vidx][20:0]);
+wire at_rev_end  =  dir & ($signed(next_acc) < $signed(acc_at_start));
+wire at_boundary = at_fwd_end | at_rev_end;
+
 always @(posedge clk) begin
     sample  <= 1'b0;
     srom_cs <= 1'b0;
@@ -167,17 +200,32 @@ always @(posedge clk) begin
     if( rst ) begin
         vidx <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
     end else if( cen ) begin
-        srom_cs   <= voice_running;
+        srom_cs <= voice_running;
         if( voice_running && srom_ok ) begin
             // TODO: interpolation uses current+next samples and frac bits.
             mix_l <= mix_l + (($signed(srom_data) * $signed({1'b0,lvol[vidx][14:0]})) >>> 14);
             mix_r <= mix_r + (($signed(srom_data) * $signed({1'b0,rvol[vidx][14:0]})) >>> 14);
-            accum[vidx] <= accum[vidx] + {15'd0, fc[vidx]}; // 17-bit FC -> 32-bit acc
 
-            // crude loop/stop; exact modes TODO
-            if( accum[vidx][31:11] >= endp[vidx][20:0] ) begin
-                if( control[vidx][CTRL_LPE] ) accum[vidx] <= {startp[vidx][20:0], 11'd0};
-                else control[vidx][CTRL_STOP0] <= 1'b1;
+            // Advance accumulator and handle loop/stop.
+            if( at_boundary ) begin
+                if( lpe ) begin
+                    if( ble ) begin
+                        // Bidirectional: flip direction and pin to boundary.
+                        // Was going fwd → hit end → reverse from end.
+                        // Was going rev → hit start → forward from start.
+                        control[vidx][CTRL_DIR] <= ~dir;
+                        accum[vidx] <= dir ? acc_at_start : acc_at_end;
+                    end else begin
+                        // Unidirectional loop: jump to the opposite boundary.
+                        // Fwd hit end → restart at start.  Rev hit start → restart at end.
+                        accum[vidx] <= dir ? acc_at_end : acc_at_start;
+                    end
+                end else begin
+                    // One-shot: stop the voice.
+                    control[vidx][CTRL_STOP0] <= 1'b1;
+                end
+            end else begin
+                accum[vidx] <= next_acc;
             end
         end
 
