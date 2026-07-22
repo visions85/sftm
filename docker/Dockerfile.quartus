@@ -69,23 +69,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---- Quartus Prime Lite 21.1.1 ----
 # Files must be in docker/quartus-installers/ — see README.md there.
-COPY quartus-installers/QuartusLiteSetup-21.1.0.842-linux.run /tmp/QuartusLiteSetup.run
-COPY quartus-installers/cyclonev-21.1.0.842.qdz /tmp/cyclonev.qdz
+# In Quartus 21.x, `quartus_sh --install` was removed. Device support is
+# installed by placing the .qdz in the same directory as the setup .run file
+# before running the installer; it auto-detects and includes device support.
+COPY quartus-installers/QuartusLiteSetup-21.1.0.842-linux.run /tmp/qinstall/QuartusLiteSetup.run
+COPY quartus-installers/cyclonev-21.1.0.842.qdz /tmp/qinstall/cyclonev-21.1.0.842.qdz
 
-# Install Quartus (disable Questa/Help to avoid installer hang in unattended mode)
-RUN chmod +x /tmp/QuartusLiteSetup.run && \
-    /tmp/QuartusLiteSetup.run \
+# Install Quartus + Cyclone V device support in one step
+RUN chmod +x /tmp/qinstall/QuartusLiteSetup.run && \
+    /tmp/qinstall/QuartusLiteSetup.run \
         --mode unattended \
         --unattendedmodeui none \
         --installdir /opt/intelFPGA_lite/21.1 \
         --disable-components quartus_help,questa_fse,questa_fe \
         --accept_eula 1 && \
-    rm /tmp/QuartusLiteSetup.run
-
-# Install Cyclone V device support
-RUN /opt/intelFPGA_lite/21.1/quartus/bin/quartus_sh \
-        --install /tmp/cyclonev.qdz && \
-    rm /tmp/cyclonev.qdz
+    rm -rf /tmp/qinstall
 
 ENV PATH="/opt/intelFPGA_lite/21.1/quartus/bin:${PATH}"
 ENV QUARTUS_ROOTDIR="/opt/intelFPGA_lite/21.1/quartus"
