@@ -1,11 +1,13 @@
 /*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
 
     Self-checking bench for jt5506.  Exercises:
-      1. Forward loop  (LPE=1, BLE=0, DIR=0): voice keeps producing samples.
-      2. Reverse loop  (LPE=1, BLE=0, DIR=1): voice keeps producing samples.
-      3. Bidirectional (LPE=1, BLE=1, DIR=0): voice keeps producing samples.
-      4. One-shot      (LPE=0, BLE=0, DIR=0): voice stops at end boundary.
-      5. ACTIVE register read/write.
+      1. ACTIVE register read/write.
+      2. Forward loop  (LPE=1, BLE=0, DIR=0): voice keeps producing samples.
+      3. Reverse loop  (LPE=1, BLE=0, DIR=1): voice keeps producing samples.
+      4. Bidirectional (LPE=1, BLE=1, DIR=0): voice keeps producing samples.
+      5. One-shot      (LPE=0, BLE=0, DIR=0): voice stops at end boundary.
+      6. K1/K2 filter coefficient register read/write.
+      7. Filter pass-through (K1=K2=0): output equals unfiltered sample.
 
     SROM model: every word returns 16'h1234 so audio is always non-zero when
     any voice is running.
@@ -209,6 +211,98 @@ module tb_jt5506;
             $display("FAIL t5: one-shot audio not silent after stop: L=%h R=%h",
                      left, right);
             errors = errors + 1;
+        end
+
+        // =================================================================
+        // Test 6: K1/K2 filter coefficient register read/write
+        // K2 is at addr[5:3]=3 (0x18 low, 0x1a high); K1 at addr[5:3]=5 (0x28/0x2a).
+        // =================================================================
+        begin : t6_filter_regs
+            reg [7:0] rd;
+            host_write(6'h3c, 8'h04);    // PAGE = voice 4
+            // Write K2 = 0x5678
+            host_write(6'h18, 8'h78);    // K2 low byte
+            host_write(6'h1a, 8'h56);    // K2 high byte
+            // Write K1 = 0x1234
+            host_write(6'h28, 8'h34);    // K1 low byte
+            host_write(6'h2a, 8'h12);    // K1 high byte
+            // Read back K2
+            host_read(6'h18, rd);
+            if( rd !== 8'h78 ) begin
+                $display("FAIL t6: K2 low rd=%02h exp=78", rd); errors=errors+1;
+            end
+            host_read(6'h1a, rd);
+            if( rd !== 8'h56 ) begin
+                $display("FAIL t6: K2 high rd=%02h exp=56", rd); errors=errors+1;
+            end
+            // Read back K1
+            host_read(6'h28, rd);
+            if( rd !== 8'h34 ) begin
+                $display("FAIL t6: K1 low rd=%02h exp=34", rd); errors=errors+1;
+            end
+            host_read(6'h2a, rd);
+            if( rd !== 8'h12 ) begin
+                $display("FAIL t6: K1 high rd=%02h exp=12", rd); errors=errors+1;
+            end
+        end
+
+        // =================================================================
+        // Test 7: Filter pass-through (K1=K2=0, LP4|LP3 all-LP mode).
+        // With K=0: apply_lp(prev, 0, in) = (0*(prev-in))/4096 + in = in.
+        // All 4 poles are transparent: p4 = fin = srom_data = 0x0100 = 256.
+        // Only voice 5 runs (voices 0-4 stopped, ACTIVE=5).
+        // LVOL = RVOL = 0x4000  →  lvol[14:0] bit14=1, bits13:0=0 → value=2^14=16384.
+        // Expected: left = right = (256 * 16384) >>> 14 = 256 = 0x0100.
+        // =================================================================
+        begin : t7_filter_passthru
+            reg signed [31:0] expected_mix;
+            // Stop voice 4 (used in test 6).
+            host_write(6'h3c, 8'h04); host_write(6'h00, 8'h03);
+            // Configure voice 5: K1=K2=0, LP4|LP3, LPE=1, LVOL=RVOL=0x4000.
+            host_write(6'h3c, 8'h05);     // PAGE = voice 5
+            host_write(6'h18, 8'h00); host_write(6'h1a, 8'h00); // K2 = 0
+            host_write(6'h28, 8'h00); host_write(6'h2a, 8'h00); // K1 = 0
+            // CR low (bits 7:0)  = 0x08 → LPE=1 (STOP bits clear → voice runs)
+            // CR high (bits 15:8) = 0x03 → LP4(bit9)=1, LP3(bit8)=1
+            host_write(6'h00, 8'h08);     // CR low
+            host_write(6'h02, 8'h03);     // CR high
+            host_write(6'h08, 8'h01);     // FC = 1 (slow step; keeps accum in range)
+            // LVOL = 0x4000: low byte first, then high byte
+            host_write(6'h10, 8'h00); host_write(6'h12, 8'h40); // LVOL = 0x4000
+            host_write(6'h20, 8'h00); host_write(6'h22, 8'h40); // RVOL = 0x4000
+            // Extended regs (page 32+5=37).
+            host_write(6'h3c, 8'h25);
+            host_write(6'h0a, 8'h00); host_write(6'h08, 8'h00); // START = 0
+            host_write(6'h12, 8'hff); host_write(6'h10, 8'hff); // END = large (no early stop)
+            // DC sample value.
+            srom_data = 16'h0100;  // 256
+            // Schedule voices 0..6.  ACTIVE=6 so voice 6 (stopped) triggers the
+            // flush; voice 5 (running) contributes at vidx=5, one slot before the
+            // flush — avoiding the NBA conflict where vidx==active and voice both
+            // accumulate and flush in the same cen tick.
+            host_write(6'h3e, 8'h06);     // ACTIVE = 6
+            host_write(6'h3c, 8'h00); host_write(6'h00, 8'h03); // v0 stop
+            host_write(6'h3c, 8'h01); host_write(6'h00, 8'h03); // v1 stop
+            host_write(6'h3c, 8'h02); host_write(6'h00, 8'h03); // v2 stop
+            host_write(6'h3c, 8'h03); host_write(6'h00, 8'h03); // v3 stop
+            host_write(6'h3c, 8'h04); host_write(6'h00, 8'h03); // v4 stop
+            // voice 6 is stopped from reset; no explicit stop needed.
+            // Let filter state settle (K=0 → instant, but wait a few samples).
+            repeat(3) @(posedge sample);
+            // Expected: (256 * 16384) >>> 14 = 256 = 0x0100
+            // lvol[5]=0x4000: bit14=1, bits13:0=0 → lvol[14:0]=16384=0x4000.
+            expected_mix = ($signed(32'sh0100) * $signed(32'sh4000)) >>> 14;
+            if( left !== expected_mix[15:0] ) begin
+                $display("FAIL t7: left=%h exp=%h", left, expected_mix[15:0]);
+                errors = errors + 1;
+            end
+            if( right !== expected_mix[15:0] ) begin
+                $display("FAIL t7: right=%h exp=%h", right, expected_mix[15:0]);
+                errors = errors + 1;
+            end
+            // Restore.
+            srom_data = 16'h1234;
+            host_write(6'h3e, 8'h1f);
         end
 
         // =================================================================
