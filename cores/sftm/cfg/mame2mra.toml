@@ -1,62 +1,42 @@
-# mame2mra configuration for SFTM.
+# mame2mra configuration for SFTM (jtframe mame2mra format).
 #
-# This follows JTFRAME's mame2mra.toml convention but is intentionally explicit
-# and conservative. The generated .mra must be validated against the jtframe
-# version being used, because this core needs a non-standard 128 MB SDRAM
-# layout and 32-bit interleaving for the 68EC020 program ROM.
+# ROM download order must match SDRAM bank assignment in macros.def:
+#   BA0: maindata (1 MB, 32-bit) + soundcpu (256 KB, 8-bit)
+#   BA1: ensoniq.0 (2 MB, 16-bit) + ensoniq.3 (512 KB, 16-bit)
+#   BA2: grom rm0+rm1 (32 MB, 16-bit output from 32-bit interleave)
+#   BA3: grom grm3 (512 KB from grom offset 0x2000000)
 
 [global]
 author   = ["SFTM contributors"]
-platform = "Street Fighter: The Movie"
+platform = "sftm"
 
-# Parse settings: which MAME source file and parent set to process
 [parse]
-sourcefile = ["itech/itech32.cpp"]
+sourcefile = ["itech32.cpp"]
+parents    = [{name="sftm", description="Street Fighter: The Movie (v1.12)"}]
+main       = "sftm"
 
-[parse.skip]
-bootlegs = true
-
-[[parse.parents]]
-name = "sftm"
-
-# Buttons: 6 action buttons (LP MP HP LK MK HK)
 [buttons]
 [[buttons.names]]
 names = "LP,MP,HP,LK,MK,HK"
 
-# DIP switches
+[dipsw]
 [[dipsw.extra]]
 name = "Test Mode"
 bits = "0"
 
-# ROM download order MUST match SDRAM bank order (BA0 first, then BA1…BA3)
-# so that JTFRAME_BA*_START in macros.def correctly partitions the stream:
-#   BA0: prog (1 MB, 32-bit interleaved) + snd (256 KB)
-#   BA1: srom (2.5 MB — srom0 2 MB + srom3 512 KB, ES5506 samples)
-#   BA2: grom (32 MB main graphics, needs 128 MB SDRAM module)
-#   BA3: grm3 (512 KB extra graphics)
-#
-# TODO: validate exact [[rom.regions]] syntax and region names against the
-# active jtframe version's mra parser before generating a real .mra.
-[[rom.regions]]
-name = "maincpu"
-width = 32
-reverse = false
-
-[[rom.regions]]
-name = "soundcpu"
-width = 8
-
-[[rom.regions]]
-name = "ensoniq.0"
-width = 16
-
-[[rom.regions]]
-name = "grom"
-width = 16
-
-[[rom.regions]]
-name = "grm3"
-width = 16
-
-[rom.nvram]
+[ROM]
+regions = [
+    # BA0: 68EC020 program ROM (4 x 256 KB, 32-bit interleaved byte lanes 0-3)
+    { name="maindata", width=32 },
+    # BA0: 6809 sound CPU ROM (8-bit, 256 KB loaded at MAME offset 0x10000)
+    { name="soundcpu", width=8 },
+    # BA1: ES5506 sample ROMs (16-bit)
+    { name="ensoniq.0", width=16, start="JTFRAME_BA1_START" },
+    { name="ensoniq.3", width=16 },
+    # BA2: main graphics (rm0+rm1, 32 MB, 32-bit interleaved -> 16-bit SDRAM words)
+    { name="grom", width=32, start="JTFRAME_BA2_START" },
+    # BA3: grm3 extra graphics (512 KB from grom offset 0x2000000, 32-bit interleaved)
+    # TODO: confirm mame2mra syntax for region split at MAME region offset 0x2000000
+    { name="grom", width=32, start="JTFRAME_BA3_START" },
+]
+order = ["maindata","soundcpu","ensoniq.0","ensoniq.3","grom"]

@@ -28,10 +28,12 @@ JTFRAME_SDRAM128
 #
 # SDRAM bank byte-offset boundaries in the ROM download stream.
 # Download order: BA0 (prog+snd), BA1 (srom), BA2 (grom), BA3 (grm3).
-# prog=1MB(0x100000) snd=256KB(0x40000) srom=2.5MB(0x280000) grom=32MB(0x2000000)
-JTFRAME_BA1_START=0x140000
-JTFRAME_BA2_START=0x3C0000
-JTFRAME_BA3_START=0x23C0000
+# maindata=1MB(0x100000) soundcpu=0x50000(pad 0x10000+ROM 0x40000)
+# ensoniq.0=2MB(0x200000) ensoniq.3=512KB(0x80000)
+# grom rm0+rm1=32MB(0x2000000) grom grm3=512KB(0x80000)
+JTFRAME_BA1_START=0x150000
+JTFRAME_BA2_START=0x3D0000
+JTFRAME_BA3_START=0x23D0000
 #
 # NVRAM (0x600000-0x61ffff) is on-chip BRAM inside sftm_main for now; SD-card
 # persistence (JTFRAME ioctl save/restore) is deferred - see cfg/mem.yaml.
