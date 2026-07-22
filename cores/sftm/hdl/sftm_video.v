@@ -106,9 +106,12 @@ reg  [16:0] cpu_xfer_waddr;
 reg  [ 7:0] cpu_xfer_wdata;
 reg  [ 1:0] cpu_xfer_plane_en;
 reg  [ 9:0] hcnt, vcnt;
+reg         blit_busy;           // set on blit_start, cleared on blit_done
+reg  [ 5:0] startup_cnt;         // counts vblanks; startup_phase = bit5 clear
 wire        blit_done;
 wire [16:0] cpu_xfer_addr;
 wire [ 7:0] fg_io_pix, bg_io_pix;
+wire        startup_phase = ~startup_cnt[5]; // first 32 frames: diagnostic raster
 integer     i;
 
 function [15:0] merge16;
@@ -139,6 +142,8 @@ end
 // CPU register read/write and transfer-port side effects.
 always @(posedge clk) begin
     if( rst ) begin
+        blit_busy   <= 1'b0;
+        startup_cnt <= 6'd0;
         for( i=0; i<128; i=i+1 ) vregs[i] <= 16'd0;
         // Set source/dest step registers to 1:1 scale (0x0100 = 1.0 in 8.8 fp).
         // Game writes correct values before blitting; reset values prevent
@@ -174,6 +179,8 @@ always @(posedge clk) begin
         cpu_xfer_we <= 1'b0;
         blit_start  <= 1'b0;
         cmd_done    <= 1'b0;
+        if( blit_start )                    blit_busy <= 1'b1;
+        else if( blit_done )                blit_busy <= 1'b0;
 
         if( vreg_we ) begin
             case( vreg_a )
@@ -227,7 +234,8 @@ always @(posedge clk) begin
         end
 
         case( vreg_a )
-            VR_STATUS:  vreg_dout <= (vregs[VR_STATUS] & ~16'h0008) | 16'h0005;
+            // bit3 = blitter busy; bits 2,0 always set per MAME itech32_v.cpp.
+            VR_STATUS:  vreg_dout <= (vregs[VR_STATUS] & 16'hFFF0) | {12'd0, blit_busy, 3'b101};
             VR_INT:     vreg_dout <= int_state;
             VR_XFERFLG: vreg_dout <= 16'h00ef; // MAME returns current scanline-1 here
             default:    vreg_dout <= vregs[vreg_a];
@@ -266,6 +274,15 @@ always @(posedge clk) begin
         vblank_irq <= (vcnt==vregs[VR_VBSTART][9:0]) && hcnt==0;
         // scanline INT bit is set via scanline_hit (see int_state_n above)
     end else vblank_irq <= 1'b0;
+end
+
+// Startup diagnostic frame counter: counts vblank pulses.
+// For the first 32 frames (startup_phase=1) we force a colour raster so the
+// user can immediately confirm the video pipeline is alive without touching
+// the OSD.  After 32 frames the core switches to normal game output.
+always @(posedge clk) begin
+    if( rst ) startup_cnt <= 6'd0;
+    else if( vblank_irq && startup_phase ) startup_cnt <= startup_cnt + 6'd1;
 end
 
 // ---------------------------------------------------------------------------
@@ -326,15 +343,17 @@ sftm_pal u_pal(
     .rd_rgb ( pal_rgb   )
 );
 
-// Debug test pattern: when gfx_en[3]=0 (OSD layer-4 disabled), output
-// a colour raster so we can confirm the video pipeline works independent
-// of CPU/palette/VRAM. gfx_en[3]=1 (default) shows normal game output.
+// Colour raster: hcnt/vcnt gradient for diagnostic use.
+// Active during the first 32 vblank periods (startup_phase) AND whenever
+// gfx_en[3]=0 (OSD layer-4 toggle).  This lets us confirm the video pipeline
+// is alive independently of CPU/VRAM/palette.
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
-assign red   = gfx_en[3] ? (gfx_en[0] ? pal_rgb[14:10] : 5'd0) : dbg_r;
-assign green = gfx_en[3] ? (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0) : dbg_g;
-assign blue  = gfx_en[3] ? (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0) : dbg_b;
+wire       show_raster = startup_phase | ~gfx_en[3];
+assign red   = show_raster ? dbg_r : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
+assign green = show_raster ? dbg_g : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
+assign blue  = show_raster ? dbg_b : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
 // ---------------------------------------------------------------------------
 // IT42 blitter
