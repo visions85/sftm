@@ -88,9 +88,7 @@ reg [15:0] k2ramp  [0:31];  // K2RAMP: K2 signed delta per sample (high-page)
 // 4-pole IIR filter state (32-bit signed; 6 delay-line registers per voice)
 reg signed [31:0] o1n1 [0:31];  // pole-1 output n-1
 reg signed [31:0] o2n1 [0:31];  // pole-2 output n-1
-reg signed [31:0] o2n2 [0:31];  // pole-2 output n-2
 reg signed [31:0] o3n1 [0:31];  // pole-3 output n-1
-reg signed [31:0] o3n2 [0:31];  // pole-3 output n-2
 reg signed [31:0] o4n1 [0:31];  // pole-4 output n-1
 
 reg [ 5:0] page;
@@ -105,8 +103,9 @@ integer i;
 
 // Force register arrays into the sensitivity list.  iverilog does not always
 // infer array element dependencies from function calls in always @(*), so we
-// read a XOR-reduction of every voice's key registers here.  The result is
-// discarded; only the side-effect on the sensitivity list matters.
+// read a XOR-reduction of every voice's key registers here.  Excluded from
+// synthesis since Quartus uses static analysis and doesn't need this trick.
+// synthesis translate_off
 wire _sens_k2    = ^{k2   [0],k2   [1],k2   [2],k2   [3],k2   [4],k2   [5],k2   [6],k2   [7],
                      k2   [8],k2   [9],k2  [10],k2  [11],k2  [12],k2  [13],k2  [14],k2  [15],
                      k2  [16],k2  [17],k2  [18],k2  [19],k2  [20],k2  [21],k2  [22],k2  [23],
@@ -130,6 +129,7 @@ wire _sens_ecnt  = ^{ecount[0],ecount[1],ecount[2],ecount[3],ecount[4],ecount[5]
 /* verilator lint_off UNUSED */
 wire _sens_all = _sens_k2 ^ _sens_k1 ^ _sens_lvol ^ _sens_rvol ^ _sens_ecnt;
 /* verilator lint_on UNUSED */
+// synthesis translate_on
 
 // Inline combinatorial read: all array accesses are in this always @(*) block
 // so iverilog includes every voice register in the sensitivity list.
@@ -404,9 +404,7 @@ always @(posedge clk) begin
             k2ramp[i]  <= 16'd0;
             o1n1[i]    <= 32'd0;
             o2n1[i]    <= 32'd0;
-            o2n2[i]    <= 32'd0;
             o3n1[i]    <= 32'd0;
-            o3n2[i]    <= 32'd0;
             o4n1[i]    <= 32'd0;
         end
         vidx  <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
@@ -439,10 +437,10 @@ always @(posedge clk) begin
         // Filter state and accumulator advance (both flush and non-flush paths).
         if( voice_running && srom_ok ) begin
             // Update filter state (update_pole / update_2_pole from MAME).
+            // Note: HP prev_prev uses pre-update o2n1/o3n1 read combinatorially
+            // above, so o2n2/o3n2 delay registers are not needed.
             o1n1[vidx] <= p1;
-            o2n2[vidx] <= o2n1[vidx];   // shift n-1 → n-2
             o2n1[vidx] <= p2;
-            o3n2[vidx] <= o3n1[vidx];   // shift n-1 → n-2
             o3n1[vidx] <= p3;
             o4n1[vidx] <= p4;
 

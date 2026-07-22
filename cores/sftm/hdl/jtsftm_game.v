@@ -52,6 +52,7 @@ wire        blit_irq, scan_irq, vblank_irq;
 wire [ 7:0] snd_latch;
 wire        snd_latch_we;
 wire        snd_irq;                    // ES5506 IRQ -> 6809
+wire [15:0] snd_left, snd_right;        // ES5506 stereo PCM
 
 // ---------------------------------------------------------------------------
 // Main CPU subsystem (68EC020 via TG68K.C in 020 mode)
