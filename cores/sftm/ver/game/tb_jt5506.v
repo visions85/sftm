@@ -251,7 +251,9 @@ module tb_jt5506;
         // With K=0: apply_lp(prev, 0, in) = (0*(prev-in))/4096 + in = in.
         // All 4 poles are transparent: p4 = fin = srom_data = 0x0100 = 256.
         // Only voice 5 runs (voices 0-4 stopped, ACTIVE=5).
-        // LVOL = RVOL = 0x4000  →  lvol[14:0] bit14=1, bits13:0=0 → value=2^14=16384.
+        // ACTIVE=5 means vidx==active when vidx==5, so voice 5 is the final
+        // active voice — exercises the flush-on-same-tick path.
+        // LVOL = RVOL = 0x4000  →  lvol[14:0] = 16384.
         // Expected: left = right = (256 * 16384) >>> 14 = 256 = 0x0100.
         // =================================================================
         begin : t7_filter_passthru
@@ -276,21 +278,17 @@ module tb_jt5506;
             host_write(6'h12, 8'hff); host_write(6'h10, 8'hff); // END = large (no early stop)
             // DC sample value.
             srom_data = 16'h0100;  // 256
-            // Schedule voices 0..6.  ACTIVE=6 so voice 6 (stopped) triggers the
-            // flush; voice 5 (running) contributes at vidx=5, one slot before the
-            // flush — avoiding the NBA conflict where vidx==active and voice both
-            // accumulate and flush in the same cen tick.
-            host_write(6'h3e, 8'h06);     // ACTIVE = 6
+            // ACTIVE=5: voices 0..5 scheduled; voice 5 is both running and the
+            // flush tick (vidx==active).  Tests the fix for the NBA conflict.
+            host_write(6'h3e, 8'h05);     // ACTIVE = 5
             host_write(6'h3c, 8'h00); host_write(6'h00, 8'h03); // v0 stop
             host_write(6'h3c, 8'h01); host_write(6'h00, 8'h03); // v1 stop
             host_write(6'h3c, 8'h02); host_write(6'h00, 8'h03); // v2 stop
             host_write(6'h3c, 8'h03); host_write(6'h00, 8'h03); // v3 stop
             host_write(6'h3c, 8'h04); host_write(6'h00, 8'h03); // v4 stop
-            // voice 6 is stopped from reset; no explicit stop needed.
             // Let filter state settle (K=0 → instant, but wait a few samples).
             repeat(3) @(posedge sample);
             // Expected: (256 * 16384) >>> 14 = 256 = 0x0100
-            // lvol[5]=0x4000: bit14=1, bits13:0=0 → lvol[14:0]=16384=0x4000.
             expected_mix = ($signed(32'sh0100) * $signed(32'sh4000)) >>> 14;
             if( left !== expected_mix[15:0] ) begin
                 $display("FAIL t7: left=%h exp=%h", left, expected_mix[15:0]);
