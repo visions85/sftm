@@ -343,17 +343,25 @@ sftm_pal u_pal(
     .rd_rgb ( pal_rgb   )
 );
 
-// Colour raster: hcnt/vcnt gradient for diagnostic use.
-// Active during the first 32 vblank periods (startup_phase) AND whenever
-// gfx_en[3]=0 (OSD layer-4 toggle).  This lets us confirm the video pipeline
-// is alive independently of CPU/VRAM/palette.
+// Startup diagnostic: solid white for the first 32 vblank periods (~0.5 s)
+// after core load.  This is completely independent of CPU, VRAM, palette and
+// hcnt/vcnt — if the MiSTer display chain is working we MUST see a white
+// screen.  After the startup window the normal game output appears.
+// gfx_en[3]=0 in the OSD restores the hcnt/vcnt gradient at any time.
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
-assign red   = show_raster ? dbg_r : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
-assign green = show_raster ? dbg_g : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
-assign blue  = show_raster ? dbg_b : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
+// During startup_phase force solid white so the diagnostic is unmissable.
+assign red   = startup_phase ? 5'h1F
+             : show_raster   ? dbg_r
+             : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
+assign green = startup_phase ? 5'h1F
+             : show_raster   ? dbg_g
+             : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
+assign blue  = startup_phase ? 5'h1F
+             : show_raster   ? dbg_b
+             : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
 // ---------------------------------------------------------------------------
 // IT42 blitter
