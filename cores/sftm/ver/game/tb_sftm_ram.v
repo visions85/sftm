@@ -1,17 +1,17 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
-    Self-checking bench for jtsftm_ram: verifies full-word writes, independent
+    Self-checking bench for sftm_ram: verifies full-word writes, independent
     high/low byte-lane writes (the other lane must be preserved) and address
     independence, accounting for the 1-cycle registered-read latency.
 
     Run:
-      iverilog -g2012 -Wall -o /tmp/tb_jtsftm_ram.vvp \
-          cores/sftm/ver/game/tb_jtsftm_ram.v cores/sftm/hdl/jtsftm_ram.v && \
-      vvp /tmp/tb_jtsftm_ram.vvp
+      iverilog -g2012 -Wall -o /tmp/tb_sftm_ram.vvp \
+          cores/sftm/ver/game/tb_sftm_ram.v cores/sftm/hdl/sftm_ram.v && \
+      vvp /tmp/tb_sftm_ram.vvp
 */
 `timescale 1ns/1ps
 
-module tb_jtsftm_ram;
+module tb_sftm_ram;
     localparam AW = 4;              // 16 words is plenty for the checks
 
     reg              clk;
@@ -22,7 +22,7 @@ module tb_jtsftm_ram;
 
     integer          errors = 0;
 
-    jtsftm_ram #(.AW(AW)) uut(
+    sftm_ram #(.AW(AW)) uut(
         .clk    ( clk   ),
         .addr   ( addr  ),
         .din    ( din   ),
@@ -107,9 +107,9 @@ module tb_jtsftm_ram;
         check(dout, 16'hCDAB, "@3 undisturbed by @A");
 
         if( errors == 0 )
-            $display("PASS: jtsftm_ram byte-lane RAM");
+            $display("PASS: sftm_ram byte-lane RAM");
         else
-            $display("FAIL: jtsftm_ram (%0d errors)", errors);
+            $display("FAIL: sftm_ram (%0d errors)", errors);
         $finish;
     end
 endmodule

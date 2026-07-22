@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Sound subsystem for itech32 P/N 1066 REV 2 sound board:
       - MC6809 @ 2 MHz
@@ -22,7 +22,7 @@
     `mc6809i` module in the target jtcores revision.
 */
 
-module jtsftm_snd(
+module sftm_snd(
     input               rst,
     input               clk,
     input               cen,        // 2 MHz MC6809 enable
@@ -148,7 +148,7 @@ mc6809i u_cpu(
     .nmi    ( 1'b1    )
 );
 
-jt5506 u_otto(
+sftm5506 u_otto(
     .rst        ( rst              ),
     .clk        ( clk              ),
     .cen        ( es_cen           ),

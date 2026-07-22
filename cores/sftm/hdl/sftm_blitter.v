@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     IT42 blitter for itech32. Copies a width x height block of 8-bit pixels
     from graphics ROM (GROM) into a VRAM plane, honouring the transfer flags
@@ -38,7 +38,7 @@
     Still TODO: YSTEP_PER_X polygon shear and the Driver's Edge skewed-polygon path.
 */
 
-module jtsftm_blitter(
+module sftm_blitter(
     input               rst,
     input               clk,
 

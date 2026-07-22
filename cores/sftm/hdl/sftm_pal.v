@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Palette RAM helper. The original hardware has 15-bit colour (5:5:5) and
     SFTM/020 uses the later 32768-pen xRGB palette path.
 */
-module jtsftm_pal(
+module sftm_pal(
     input               clk,
     input       [14:0]  cpu_addr,
     input       [15:0]  cpu_dout,

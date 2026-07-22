@@ -1,6 +1,6 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
-    Self-checking bench for jt5506.  Exercises:
+    Self-checking bench for sftm5506.  Exercises:
       1. ACTIVE register read/write.
       2. Forward loop  (LPE=1, BLE=0, DIR=0): voice keeps producing samples.
       3. Reverse loop  (LPE=1, BLE=0, DIR=1): voice keeps producing samples.
@@ -13,13 +13,13 @@
     any voice is running.
 
     Run:
-      iverilog -g2012 -Wall -o /tmp/tb_jt5506.vvp \
-          cores/sftm/ver/game/tb_jt5506.v cores/sftm/hdl/jt5506.v && \
-      vvp /tmp/tb_jt5506.vvp
+      iverilog -g2012 -Wall -o /tmp/tb_sftm5506.vvp \
+          cores/sftm/ver/game/tb_sftm5506.v cores/sftm/hdl/sftm5506.v && \
+      vvp /tmp/tb_sftm5506.vvp
 */
 `timescale 1ns/1ps
 
-module tb_jt5506;
+module tb_sftm5506;
     reg         clk=0, rst=1, cen=1;
     reg  [5:0]  host_addr=0;
     reg  [7:0]  host_din=0;
@@ -35,7 +35,7 @@ module tb_jt5506;
 
     always #10 clk = ~clk;   // 50 MHz-ish
 
-    jt5506 uut(
+    sftm5506 uut(
         .rst(rst), .clk(clk), .cen(cen),
         .host_addr(host_addr), .host_din(host_din), .host_dout(host_dout),
         .host_we(host_we), .host_re(host_re), .irq(irq),
@@ -105,7 +105,7 @@ module tb_jt5506;
     end
     endtask
 
-    // CR field bit positions (mirroring jt5506.v localparam names)
+    // CR field bit positions (mirroring sftm5506.v localparam names)
     localparam CR_STOP0 = 0, CR_STOP1 = 1, CR_LEI = 2, CR_LPE = 3,
                CR_BLE  = 4, CR_IRQE  = 5, CR_DIR = 6;
 
@@ -305,9 +305,9 @@ module tb_jt5506;
 
         // =================================================================
         if( errors==0 )
-            $display("PASS: jt5506 all loop-mode checks");
+            $display("PASS: sftm5506 all loop-mode checks");
         else
-            $display("FAIL: jt5506 %0d checks failed", errors);
+            $display("FAIL: sftm5506 %0d checks failed", errors);
         $finish;
     end
 endmodule

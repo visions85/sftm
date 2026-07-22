@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.
-    JTSFTM is free software: you can redistribute it and/or modify it under the
+/*  This file is part of SFTM.
+    SFTM is free software: you can redistribute it and/or modify it under the
     terms of the GNU General Public License as published by the Free Software
     Foundation, either version 3 of the License, or (at your option) any later
     version. See the LICENSE file.
@@ -15,7 +15,7 @@
         pxl_cen    ~8 MHz    pixel clock (HTOTAL 508 * VTOTAL 262 * 59.76Hz)
 */
 
-module jtsftm_game(
+module sftm_game(
     `include "jtframe_game_ports.inc"   // $JTFRAME/hdl/inc/jtframe_game_ports.inc
     // SDRAM buses (prog/snd/srom/grom/grm3) are appended here by
     // the mem.yaml generator:
@@ -57,7 +57,7 @@ wire        snd_irq;                    // ES5506 IRQ -> 6809
 // ---------------------------------------------------------------------------
 // Main CPU subsystem (68EC020 via TG68K.C in 020 mode)
 // ---------------------------------------------------------------------------
-jtsftm_main u_main(
+sftm_main u_main(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .cen        ( e020_cen      ),
@@ -98,14 +98,14 @@ jtsftm_main u_main(
     // sound latch
     .snd_latch  ( snd_latch     ),
     .snd_latch_we(snd_latch_we  ),
-    // NVRAM is on-chip BRAM inside jtsftm_main (persistence deferred)
+    // NVRAM is on-chip BRAM inside sftm_main (persistence deferred)
     .debug_bus  ( debug_bus     )
 );
 
 // ---------------------------------------------------------------------------
 // Video: IT42 blitter + two VRAM planes + palette + scanout
 // ---------------------------------------------------------------------------
-jtsftm_video u_video(
+sftm_video u_video(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .pxl_cen    ( pxl_cen       ),
@@ -154,7 +154,7 @@ jtsftm_video u_video(
 // ---------------------------------------------------------------------------
 // Sound: MC6809 + ES5506 (OTTO)
 // ---------------------------------------------------------------------------
-jtsftm_snd u_snd(
+sftm_snd u_snd(
     .rst        ( rst           ),
     .clk        ( clk           ),
     .cen        ( snd_cen       ),

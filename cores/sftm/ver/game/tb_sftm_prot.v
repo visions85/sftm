@@ -1,17 +1,17 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
-    Self-checking bench for jtsftm_prot: the protection byte must latch the
+    Self-checking bench for sftm_prot: the protection byte must latch the
     high byte written to main-RAM word 0x3d35 (byte 0x7a6a), ignore writes to
     other addresses, and ignore low-byte-only writes (we_hi deasserted).
 
     Run:
-      iverilog -g2012 -Wall -o /tmp/tb_jtsftm_prot.vvp \
-          cores/sftm/ver/game/tb_jtsftm_prot.v cores/sftm/hdl/jtsftm_prot.v && \
-      vvp /tmp/tb_jtsftm_prot.vvp
+      iverilog -g2012 -Wall -o /tmp/tb_sftm_prot.vvp \
+          cores/sftm/ver/game/tb_sftm_prot.v cores/sftm/hdl/sftm_prot.v && \
+      vvp /tmp/tb_sftm_prot.vvp
 */
 `timescale 1ns/1ps
 
-module tb_jtsftm_prot;
+module tb_sftm_prot;
     localparam [13:0] PROT_WORD = 14'h3d35;   // 0x7a6a >> 1
 
     reg              clk, rst;
@@ -22,7 +22,7 @@ module tb_jtsftm_prot;
 
     integer          errors = 0;
 
-    jtsftm_prot uut(
+    sftm_prot uut(
         .clk    ( clk     ),
         .rst    ( rst     ),
         .wr_addr( wr_addr ),
@@ -100,9 +100,9 @@ module tb_jtsftm_prot;
         check(result, 8'h56, "recapture @prot");
 
         if( errors == 0 )
-            $display("PASS: jtsftm_prot protection byte");
+            $display("PASS: sftm_prot protection byte");
         else
-            $display("FAIL: jtsftm_prot (%0d errors)", errors);
+            $display("FAIL: sftm_prot (%0d errors)", errors);
         $finish;
     end
 endmodule
