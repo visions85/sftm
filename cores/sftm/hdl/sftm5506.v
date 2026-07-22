@@ -73,30 +73,34 @@ localparam CTRL_BS1   = 15, CTRL_BS0 = 14, CTRL_CMPD = 13,
 // async reads via feed-through mode.  Forcing MLAB inference avoids keeping
 // all 18 arrays as flip-flops (~11 800 FFs), which causes Quartus error 276003
 // when the full design is active (JTFRAME_PXLCLK=8 ends constant-folding).
-(* ramstyle = "MLAB" *) reg [15:0] control [0:31];
-(* ramstyle = "MLAB" *) reg [16:0] fc      [0:31];
-(* ramstyle = "MLAB" *) reg [24:0] startp  [0:31];
-(* ramstyle = "MLAB" *) reg [24:0] endp    [0:31];
-(* ramstyle = "MLAB" *) reg [31:0] accum   [0:31];
-(* ramstyle = "MLAB" *) reg [15:0] lvol    [0:31];
-(* ramstyle = "MLAB" *) reg [15:0] rvol    [0:31];
+// 8 voices (reduced from 32 to fit Cyclone V register budget while
+// JTFRAME_PXLCLK=8 makes the full design active; restore once MLAB
+// inference or a restructured memory architecture is in place).
+localparam NVOICES = 8;
+reg [15:0] control [0:NVOICES-1];
+reg [16:0] fc      [0:NVOICES-1];
+reg [24:0] startp  [0:NVOICES-1];
+reg [24:0] endp    [0:NVOICES-1];
+reg [31:0] accum   [0:NVOICES-1];
+reg [15:0] lvol    [0:NVOICES-1];
+reg [15:0] rvol    [0:NVOICES-1];
 // Filter coefficients (16-bit unsigned; K>>4 gives 12-bit cutoff factor)
-(* ramstyle = "MLAB" *) reg [15:0] k1      [0:31];
-(* ramstyle = "MLAB" *) reg [15:0] k2      [0:31];
+reg [15:0] k1      [0:NVOICES-1];
+reg [15:0] k2      [0:NVOICES-1];
 // Envelope/ramp registers (16-bit; ramp value in bits [7:0] as signed 8-bit)
-(* ramstyle = "MLAB" *) reg [15:0] lvramp  [0:31];  // LVRAMP: left-vol  ramp signed delta per sample
-(* ramstyle = "MLAB" *) reg [15:0] rvramp  [0:31];  // RVRAMP: right-vol ramp signed delta per sample
-(* ramstyle = "MLAB" *) reg [15:0] ecount  [0:31];  // ECOUNT: ramp countdown (0 = idle)
-(* ramstyle = "MLAB" *) reg [15:0] k1ramp  [0:31];  // K1RAMP: K1 signed delta per sample (high-page)
-(* ramstyle = "MLAB" *) reg [15:0] k2ramp  [0:31];  // K2RAMP: K2 signed delta per sample (high-page)
-// 4-pole IIR filter state (32-bit signed; MLAB in 2-wide 20-bit config)
-(* ramstyle = "MLAB" *) reg signed [31:0] o1n1 [0:31];  // pole-1 output n-1
-(* ramstyle = "MLAB" *) reg signed [31:0] o2n1 [0:31];  // pole-2 output n-1
-(* ramstyle = "MLAB" *) reg signed [31:0] o3n1 [0:31];  // pole-3 output n-1
-(* ramstyle = "MLAB" *) reg signed [31:0] o4n1 [0:31];  // pole-4 output n-1
+reg [15:0] lvramp  [0:NVOICES-1];  // LVRAMP: left-vol  ramp signed delta per sample
+reg [15:0] rvramp  [0:NVOICES-1];  // RVRAMP: right-vol ramp signed delta per sample
+reg [15:0] ecount  [0:NVOICES-1];  // ECOUNT: ramp countdown (0 = idle)
+reg [15:0] k1ramp  [0:NVOICES-1];  // K1RAMP: K1 signed delta per sample (high-page)
+reg [15:0] k2ramp  [0:NVOICES-1];  // K2RAMP: K2 signed delta per sample (high-page)
+// 4-pole IIR filter state (32-bit signed)
+reg signed [31:0] o1n1 [0:NVOICES-1];  // pole-1 output n-1
+reg signed [31:0] o2n1 [0:NVOICES-1];  // pole-2 output n-1
+reg signed [31:0] o3n1 [0:NVOICES-1];  // pole-3 output n-1
+reg signed [31:0] o4n1 [0:NVOICES-1];  // pole-4 output n-1
 
 reg [ 5:0] page;
-reg [ 4:0] active;       // active voices-1, default 31
+reg [ 2:0] active;       // active voices-1, max NVOICES-1
 reg [ 7:0] irqv;         // IRQV register (bit 7 = empty / no-IRQ-pending)
 reg        host_irqv_ack; // pulsed for one clk when host reads IRQV
 
@@ -110,26 +114,11 @@ integer i;
 // read a XOR-reduction of every voice's key registers here.  Excluded from
 // Quartus via translate_off since it uses static analysis and doesn't need this.
 // synthesis translate_off
-wire _sens_k2    = ^{k2   [0],k2   [1],k2   [2],k2   [3],k2   [4],k2   [5],k2   [6],k2   [7],
-                     k2   [8],k2   [9],k2  [10],k2  [11],k2  [12],k2  [13],k2  [14],k2  [15],
-                     k2  [16],k2  [17],k2  [18],k2  [19],k2  [20],k2  [21],k2  [22],k2  [23],
-                     k2  [24],k2  [25],k2  [26],k2  [27],k2  [28],k2  [29],k2  [30],k2  [31]};
-wire _sens_k1    = ^{k1   [0],k1   [1],k1   [2],k1   [3],k1   [4],k1   [5],k1   [6],k1   [7],
-                     k1   [8],k1   [9],k1  [10],k1  [11],k1  [12],k1  [13],k1  [14],k1  [15],
-                     k1  [16],k1  [17],k1  [18],k1  [19],k1  [20],k1  [21],k1  [22],k1  [23],
-                     k1  [24],k1  [25],k1  [26],k1  [27],k1  [28],k1  [29],k1  [30],k1  [31]};
-wire _sens_lvol  = ^{lvol [0],lvol [1],lvol [2],lvol [3],lvol [4],lvol [5],lvol [6],lvol [7],
-                     lvol [8],lvol [9],lvol[10],lvol[11],lvol[12],lvol[13],lvol[14],lvol[15],
-                     lvol[16],lvol[17],lvol[18],lvol[19],lvol[20],lvol[21],lvol[22],lvol[23],
-                     lvol[24],lvol[25],lvol[26],lvol[27],lvol[28],lvol[29],lvol[30],lvol[31]};
-wire _sens_rvol  = ^{rvol [0],rvol [1],rvol [2],rvol [3],rvol [4],rvol [5],rvol [6],rvol [7],
-                     rvol [8],rvol [9],rvol[10],rvol[11],rvol[12],rvol[13],rvol[14],rvol[15],
-                     rvol[16],rvol[17],rvol[18],rvol[19],rvol[20],rvol[21],rvol[22],rvol[23],
-                     rvol[24],rvol[25],rvol[26],rvol[27],rvol[28],rvol[29],rvol[30],rvol[31]};
-wire _sens_ecnt  = ^{ecount[0],ecount[1],ecount[2],ecount[3],ecount[4],ecount[5],ecount[6],ecount[7],
-                     ecount[8],ecount[9],ecount[10],ecount[11],ecount[12],ecount[13],ecount[14],ecount[15],
-                     ecount[16],ecount[17],ecount[18],ecount[19],ecount[20],ecount[21],ecount[22],ecount[23],
-                     ecount[24],ecount[25],ecount[26],ecount[27],ecount[28],ecount[29],ecount[30],ecount[31]};
+wire _sens_k2   = ^{k2[0],k2[1],k2[2],k2[3],k2[4],k2[5],k2[6],k2[7]};
+wire _sens_k1   = ^{k1[0],k1[1],k1[2],k1[3],k1[4],k1[5],k1[6],k1[7]};
+wire _sens_lvol = ^{lvol[0],lvol[1],lvol[2],lvol[3],lvol[4],lvol[5],lvol[6],lvol[7]};
+wire _sens_rvol = ^{rvol[0],rvol[1],rvol[2],rvol[3],rvol[4],rvol[5],rvol[6],rvol[7]};
+wire _sens_ecnt = ^{ecount[0],ecount[1],ecount[2],ecount[3],ecount[4],ecount[5],ecount[6],ecount[7]};
 /* verilator lint_off UNUSED */
 wire _sens_all = _sens_k2 ^ _sens_k1 ^ _sens_lvol ^ _sens_rvol ^ _sens_ecnt;
 /* verilator lint_on UNUSED */
@@ -142,28 +131,28 @@ always @(*) begin
     case(host_addr)
         6'h38: host_dout = irqv;
         6'h3c: host_dout = {2'b0,page};
-        6'h3e: host_dout = {3'b0,active};
+        6'h3e: host_dout = {5'b0,active};
         default: begin
-            if( page < 32 ) begin
+    if( page < NVOICES ) begin
                 case(host_addr[5:3])
-                    3'h0: host_dout = host_addr[1] ? control[page][15:8]  : control[page][7:0];
-                    3'h1: host_dout = host_addr[1] ? fc[page][15:8]       : fc[page][7:0];
-                    3'h2: host_dout = host_addr[1] ? lvol[page][15:8]     : lvol[page][7:0];
-                    3'h3: host_dout = host_addr[1] ? lvramp[page][15:8]   : lvramp[page][7:0];
-                    3'h4: host_dout = host_addr[1] ? rvol[page][15:8]     : rvol[page][7:0];
-                    3'h5: host_dout = host_addr[1] ? rvramp[page][15:8]   : rvramp[page][7:0];
-                    3'h6: host_dout = host_addr[1] ? ecount[page][15:8]   : ecount[page][7:0];
-                    3'h7: host_dout = host_addr[1] ? k2[page][15:8]       : k2[page][7:0];
+                    3'h0: host_dout = host_addr[1] ? control[page[2:0]][15:8]  : control[page[2:0]][7:0];
+                    3'h1: host_dout = host_addr[1] ? fc[page[2:0]][15:8]       : fc[page[2:0]][7:0];
+                    3'h2: host_dout = host_addr[1] ? lvol[page[2:0]][15:8]     : lvol[page[2:0]][7:0];
+                    3'h3: host_dout = host_addr[1] ? lvramp[page[2:0]][15:8]   : lvramp[page[2:0]][7:0];
+                    3'h4: host_dout = host_addr[1] ? rvol[page[2:0]][15:8]     : rvol[page[2:0]][7:0];
+                    3'h5: host_dout = host_addr[1] ? rvramp[page[2:0]][15:8]   : rvramp[page[2:0]][7:0];
+                    3'h6: host_dout = host_addr[1] ? ecount[page[2:0]][15:8]   : ecount[page[2:0]][7:0];
+                    3'h7: host_dout = host_addr[1] ? k2[page[2:0]][15:8]       : k2[page[2:0]][7:0];
                     default: ;
                 endcase
-            end else if( page >= 6'h20 ) begin  // pages 32-63 (6-bit: 6'h40 overflows)
+            end else if( page >= NVOICES && page < 2*NVOICES ) begin  // high pages
                 case(host_addr[5:3])
-                    3'h1: host_dout = host_addr[1] ? startp[page[4:0]][23:16] : startp[page[4:0]][15:8];
-                    3'h2: host_dout = host_addr[1] ? endp  [page[4:0]][23:16] : endp  [page[4:0]][15:8];
-                    3'h3: host_dout = host_addr[1] ? accum [page[4:0]][31:24] : accum [page[4:0]][23:16];
-                    3'h5: host_dout = host_addr[1] ? k1    [page[4:0]][15:8]  : k1    [page[4:0]][7:0];
-                    3'h6: host_dout = host_addr[1] ? k2ramp[page[4:0]][15:8]  : k2ramp[page[4:0]][7:0];
-                    3'h7: host_dout = host_addr[1] ? k1ramp[page[4:0]][15:8]  : k1ramp[page[4:0]][7:0];
+                    3'h1: host_dout = host_addr[1] ? startp[page[2:0]][23:16] : startp[page[2:0]][15:8];
+                    3'h2: host_dout = host_addr[1] ? endp  [page[2:0]][23:16] : endp  [page[2:0]][15:8];
+                    3'h3: host_dout = host_addr[1] ? accum [page[2:0]][31:24] : accum [page[2:0]][23:16];
+                    3'h5: host_dout = host_addr[1] ? k1    [page[2:0]][15:8]  : k1    [page[2:0]][7:0];
+                    3'h6: host_dout = host_addr[1] ? k2ramp[page[2:0]][15:8]  : k2ramp[page[2:0]][7:0];
+                    3'h7: host_dout = host_addr[1] ? k1ramp[page[2:0]][15:8]  : k1ramp[page[2:0]][7:0];
                     default: ;
                 endcase
             end
@@ -175,10 +164,10 @@ task write_reg(input [5:0] pg, input [5:0] addr, input [7:0] data);
 begin
     // global PAGE register (spec loc H78)
     if( addr==6'h3c ) page <= data[5:0];
-    // ACTIVE register (spec loc H7C): number of active voices - 1
-    else if( addr==6'h3e ) active <= data[4:0];
-    else if( pg < 32 ) begin
-        // Low pages 0-31: voice per-sample registers.
+    // ACTIVE register (spec loc H7C): voices-1 clamped to NVOICES-1
+    else if( addr==6'h3e ) active <= (data[4:0] >= NVOICES) ? 3'(NVOICES-1) : data[2:0];
+    else if( pg < NVOICES ) begin
+        // Low pages 0-(NVOICES-1): voice per-sample registers.
         // Layout per OTTO spec §4 (byte offset H00..H38, addr[5:3] selects reg).
         case(addr[5:3])
             3'h0: control[pg][ (addr[1] ? 15:7) -: 8 ]  <= data; // H00 CR
@@ -190,15 +179,15 @@ begin
             3'h6: ecount[pg][ (addr[1] ? 15:7) -: 8 ]   <= data; // H30 ECOUNT
             3'h7: k2[pg][ (addr[1] ? 15:7) -: 8 ]       <= data; // H38 K2
         endcase
-    end else if( pg>=32 && pg<64 ) begin
-        // High pages 32-63: address/accumulator + remaining coefficients.
+    end else if( pg>=NVOICES && pg<2*NVOICES ) begin
+        // High pages NVOICES..2*NVOICES-1: address/accumulator + remaining coefficients.
         case(addr[5:3])
-            3'h1: startp[pg[4:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H08 START
-            3'h2: endp  [pg[4:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H10 END
-            3'h3: accum [pg[4:0]][ (addr[1] ? 31:23) -: 8 ] <= data; // H18 ACCUM
-            3'h5: k1    [pg[4:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H28 K1
-            3'h6: k2ramp[pg[4:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H30 K2RAMP
-            3'h7: k1ramp[pg[4:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H38 K1RAMP
+            3'h1: startp[pg[2:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H08 START
+            3'h2: endp  [pg[2:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H10 END
+            3'h3: accum [pg[2:0]][ (addr[1] ? 31:23) -: 8 ] <= data; // H18 ACCUM
+            3'h5: k1    [pg[2:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H28 K1
+            3'h6: k2ramp[pg[2:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H30 K2RAMP
+            3'h7: k1ramp[pg[2:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H38 K1RAMP
             default: ;
         endcase
     end
@@ -208,26 +197,26 @@ endtask
 function [7:0] read_reg(input [5:0] pg, input [5:0] addr);
 begin
     read_reg = 8'hff;
-    if( pg < 32 ) begin
+    if( pg < NVOICES ) begin
         case(addr[5:3])
-            3'h0: read_reg = addr[1] ? control[pg][15:8] : control[pg][7:0];
-            3'h1: read_reg = addr[1] ? fc[pg][15:8]      : fc[pg][7:0];
-            3'h2: read_reg = addr[1] ? lvol[pg][15:8]    : lvol[pg][7:0];
-            3'h3: read_reg = addr[1] ? lvramp[pg][15:8]  : lvramp[pg][7:0];
-            3'h4: read_reg = addr[1] ? rvol[pg][15:8]    : rvol[pg][7:0];
-            3'h5: read_reg = addr[1] ? rvramp[pg][15:8]  : rvramp[pg][7:0];
-            3'h6: read_reg = addr[1] ? ecount[pg][15:8]  : ecount[pg][7:0];
-            3'h7: read_reg = addr[1] ? k2[pg][15:8]      : k2[pg][7:0];
+            3'h0: read_reg = addr[1] ? control[pg[2:0]][15:8] : control[pg[2:0]][7:0];
+            3'h1: read_reg = addr[1] ? fc[pg[2:0]][15:8]      : fc[pg[2:0]][7:0];
+            3'h2: read_reg = addr[1] ? lvol[pg[2:0]][15:8]    : lvol[pg[2:0]][7:0];
+            3'h3: read_reg = addr[1] ? lvramp[pg[2:0]][15:8]  : lvramp[pg[2:0]][7:0];
+            3'h4: read_reg = addr[1] ? rvol[pg[2:0]][15:8]    : rvol[pg[2:0]][7:0];
+            3'h5: read_reg = addr[1] ? rvramp[pg[2:0]][15:8]  : rvramp[pg[2:0]][7:0];
+            3'h6: read_reg = addr[1] ? ecount[pg[2:0]][15:8]  : ecount[pg[2:0]][7:0];
+            3'h7: read_reg = addr[1] ? k2[pg[2:0]][15:8]      : k2[pg[2:0]][7:0];
             default: ;
         endcase
-    end else if( pg>=32 && pg<64 ) begin
+    end else if( pg>=NVOICES && pg<2*NVOICES ) begin
         case(addr[5:3])
-            3'h1: read_reg = addr[1] ? startp[pg[4:0]][23:16] : startp[pg[4:0]][15:8];
-            3'h2: read_reg = addr[1] ? endp  [pg[4:0]][23:16] : endp  [pg[4:0]][15:8];
-            3'h3: read_reg = addr[1] ? accum [pg[4:0]][31:24] : accum [pg[4:0]][23:16];
-            3'h5: read_reg = addr[1] ? k1    [pg[4:0]][15:8]  : k1    [pg[4:0]][7:0];
-            3'h6: read_reg = addr[1] ? k2ramp[pg[4:0]][15:8]  : k2ramp[pg[4:0]][7:0];
-            3'h7: read_reg = addr[1] ? k1ramp[pg[4:0]][15:8]  : k1ramp[pg[4:0]][7:0];
+            3'h1: read_reg = addr[1] ? startp[pg[2:0]][23:16] : startp[pg[2:0]][15:8];
+            3'h2: read_reg = addr[1] ? endp  [pg[2:0]][23:16] : endp  [pg[2:0]][15:8];
+            3'h3: read_reg = addr[1] ? accum [pg[2:0]][31:24] : accum [pg[2:0]][23:16];
+            3'h5: read_reg = addr[1] ? k1    [pg[2:0]][15:8]  : k1    [pg[2:0]][7:0];
+            3'h6: read_reg = addr[1] ? k2ramp[pg[2:0]][15:8]  : k2ramp[pg[2:0]][7:0];
+            3'h7: read_reg = addr[1] ? k1ramp[pg[2:0]][15:8]  : k1ramp[pg[2:0]][7:0];
             default: ;
         endcase
     end
@@ -389,9 +378,9 @@ always @(posedge clk) begin
     if( rst ) begin
         // ---- reset everything (merged from both original always blocks) ----
         page   <= 6'd0;
-        active <= 5'd31;
+        active <= NVOICES - 1;  // NVOICES-1 = 7
         host_irqv_ack <= 1'b0;
-        for(i=0;i<32;i=i+1) begin
+        for(i=0;i<NVOICES;i=i+1) begin
             control[i] <= 16'h0003; // stopped
             fc[i]      <= 17'd0;
             startp[i]  <= 25'd0;
