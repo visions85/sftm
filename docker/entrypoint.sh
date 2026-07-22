@@ -37,7 +37,7 @@ fi
 if [ ! -f "${JTFRAME_COMPILED}" ]; then
     echo "[sftm] Pre-compiling jtframe binary (~1 min, first run only)..."
     cd "${JTFRAME_DIR}/src/jtframe"
-    go build .
+    go build -buildvcs=false .
     echo "[sftm] jtframe binary ready: ${JTFRAME_COMPILED}"
 fi
 
