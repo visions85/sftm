@@ -46,7 +46,7 @@ docker volume inspect "$VOLUME" &>/dev/null \
 # ---- Run synthesis ----
 # jtcore is called with -mister target.  The --no-dbg flag keeps macros
 # clean; remove it to include OSD debug overlays.
-exec docker run --rm -it --platform linux/amd64 \
+exec docker run --rm --platform linux/amd64 \
     -v "${REPO_DIR}:/workspace" \
     -v "${VOLUME}:/workspace/modules/jtframe" \
     -e JTROOT=/workspace \
