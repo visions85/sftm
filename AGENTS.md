@@ -164,14 +164,14 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 - Coarse CPU address decode, sound latch, VIA null stub
 - Video register file (0x00–0x88), CRTC (H/V counters, sync, blank, interrupts), two VRAM planes, 15-bit palette RAM
 - IT42 blitter: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp, fractional accumulator), DST_XSTEP (8.8 fp, DSTXSCALE flag), DST_YSTEP (8.8 fp, always active), WIDTHPIX flag decoded
-- ES5506 (`sftm5506`): 32-voice scheduler, 8-bit host interface, PAGE/ACTIVE registers, forward loop (LPE), reverse loop (DIR), bidirectional loop (BLE), one-shot stop, bank offset, 4-pole IIR filter (K1/K2 per voice; apply_lowpass/apply_highpass matching MAME es5506.cpp; LP mode from control[9:8]), volume/pan mix, 20-bit saturation
-- 6 self-checking testbenches, all passing
+- ES5506 (`sftm5506`): 32-voice scheduler, 8-bit host interface, PAGE/ACTIVE registers, forward loop (LPE), reverse loop (DIR), bidirectional loop (BLE), one-shot stop, bank offset, 4-pole IIR filter (K1/K2 per voice; apply_lowpass/apply_highpass matching MAME es5506.cpp; LP mode from control[9:8]), volume/pan mix, 20-bit saturation; correct OTTO-spec register map (LVRAMP/RVRAMP/ECOUNT/K2 in low pages; K1/K2RAMP/K1RAMP in high pages); envelope/volume ramps (ECOUNT countdown, signed 8-bit LVRAMP/RVRAMP/K1RAMP/K2RAMP deltas applied per sample tick); IRQ vector stacking (one-shot stop + ECOUNT expiry with IRQE fire IRQV; rescan on ack)
+- 6 self-checking testbenches (sftm5506 now covers 9 sub-tests), all passing
 
 **Not yet implemented / validated:**
 - Exact `itech020_map` address decode and input/DIP bit layout
 - TG68K.C VHDL→Verilog conversion for iverilog sim (VHDL is vendored; use `ghdl synth` inside Docker — see above)
 - Exact MC6809 wrapper port map
-- ES5506: K1/K2 ramps, envelope/volume ramps, IRQ vector stacking, compressed/u-law sample mode
+- ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
 - `jtframe mra sftm` MRA generation not yet validated
 - NVRAM SD-card persistence, grm3 plane usage, hardware build (Quartus)

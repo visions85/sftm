@@ -19,14 +19,17 @@
         apply_highpass matching MAME es5506.cpp apply_filters() exactly;
         LP mode selected by control[9:8] = {LP4, LP3}.
 
+    Implemented (Phase 4):
+      - Correct low-page register map (per OTTO spec §4):
+          addr[5:3]: 0=CR, 1=FC, 2=LVOL, 3=LVRAMP, 4=RVOL, 5=RVRAMP, 6=ECOUNT, 7=K2
+      - Correct high-page (32-63) additions:
+          addr[5:3]=5=K1, 6=K2RAMP, 7=K1RAMP
+      - Envelope/volume ramps: LVRAMP/RVRAMP applied to LVOL/RVOL each sample tick
+        while ECOUNT > 0; K1RAMP/K2RAMP applied similarly to K1/K2.
+      - IRQ vector stacking: voice events (one-shot stop, ECOUNT expiry with IRQE)
+        push to IRQV; stacked IRQs re-fire after IRQV is acknowledged.
+
     TODO:
-      - exact byte-lane latch semantics from es5506.cpp (K2 at byte 0x1C,
-        K1 at byte 0x24 in MAME's 32-bit-aligned scheme — our simplified
-        layout puts K2 at addr[5:3]=3, K1 at addr[5:3]=5; good enough until
-        we run MAME register traces)
-      - K1/K2 ramps (envelope-driven cutoff sweep)
-      - envelope counters and volume ramps
-      - IRQ vector stacking
       - compressed/u-law sample mode
       - six serial channels; SFTM routes to stereo only
       - 20-bit clamp/saturation exactly like real ES5506
@@ -76,6 +79,12 @@ reg [15:0] rvol    [0:31];
 // Filter coefficients (16-bit unsigned; K>>4 gives 12-bit cutoff factor)
 reg [15:0] k1      [0:31];
 reg [15:0] k2      [0:31];
+// Envelope/ramp registers (16-bit; ramp value in bits [7:0] as signed 8-bit)
+reg [15:0] lvramp  [0:31];  // LVRAMP: left-vol  ramp signed delta per sample
+reg [15:0] rvramp  [0:31];  // RVRAMP: right-vol ramp signed delta per sample
+reg [15:0] ecount  [0:31];  // ECOUNT: ramp countdown (0 = idle)
+reg [15:0] k1ramp  [0:31];  // K1RAMP: K1 signed delta per sample (high-page)
+reg [15:0] k2ramp  [0:31];  // K2RAMP: K2 signed delta per sample (high-page)
 // 4-pole IIR filter state (32-bit signed; 6 delay-line registers per voice)
 reg signed [31:0] o1n1 [0:31];  // pole-1 output n-1
 reg signed [31:0] o2n1 [0:31];  // pole-2 output n-1
@@ -86,7 +95,8 @@ reg signed [31:0] o4n1 [0:31];  // pole-4 output n-1
 
 reg [ 5:0] page;
 reg [ 4:0] active;       // active voices-1, default 31
-reg [ 7:0] irqv;
+reg [ 7:0] irqv;         // IRQV register (bit 7 = empty / no-IRQ-pending)
+reg        host_irqv_ack; // pulsed for one clk when host reads IRQV
 
 // host write latch: ES5506 registers are 32-bit addressed through byte lanes.
 // This simplified path writes the selected byte directly.
@@ -95,8 +105,7 @@ always @(posedge clk) begin
     if( rst ) begin
         page   <= 6'd0;
         active <= 5'd31;
-        irqv   <= 8'h80;
-        irq    <= 1'b0;
+        // irqv and irq are owned by the scheduler always block.
         for(i=0;i<32;i=i+1) begin
             control[i] <= 16'h0003; // stopped
             fc[i]      <= 17'd0;
@@ -107,6 +116,11 @@ always @(posedge clk) begin
             rvol[i]    <= 16'd0;
             k1[i]      <= 16'd0;
             k2[i]      <= 16'd0;
+            lvramp[i]  <= 16'd0;
+            rvramp[i]  <= 16'd0;
+            ecount[i]  <= 16'd0;
+            k1ramp[i]  <= 16'd0;
+            k2ramp[i]  <= 16'd0;
             o1n1[i]    <= 32'd0;
             o2n1[i]    <= 32'd0;
             o2n2[i]    <= 32'd0;
@@ -114,22 +128,76 @@ always @(posedge clk) begin
             o3n2[i]    <= 32'd0;
             o4n1[i]    <= 32'd0;
         end
+        host_irqv_ack <= 1'b0;
     end else begin
+        host_irqv_ack <= 1'b0;
         if( host_we ) write_reg(page, host_addr, host_din);
-        if( host_re && host_addr==6'h38 ) begin
-            irq  <= 1'b0;       // IRQ vector read acknowledges
-            irqv <= 8'h80;
-        end
+        // IRQV read: signal the scheduler to clear irqv (one-cycle pulse).
+        if( host_re && host_addr==6'h38 ) host_irqv_ack <= 1'b1;
     end
 end
 
+// Force register arrays into the sensitivity list.  iverilog does not always
+// infer array element dependencies from function calls in always @(*), so we
+// read a XOR-reduction of every voice's key registers here.  The result is
+// discarded; only the side-effect on the sensitivity list matters.
+wire _sens_k2    = ^{k2   [0],k2   [1],k2   [2],k2   [3],k2   [4],k2   [5],k2   [6],k2   [7],
+                     k2   [8],k2   [9],k2  [10],k2  [11],k2  [12],k2  [13],k2  [14],k2  [15],
+                     k2  [16],k2  [17],k2  [18],k2  [19],k2  [20],k2  [21],k2  [22],k2  [23],
+                     k2  [24],k2  [25],k2  [26],k2  [27],k2  [28],k2  [29],k2  [30],k2  [31]};
+wire _sens_k1    = ^{k1   [0],k1   [1],k1   [2],k1   [3],k1   [4],k1   [5],k1   [6],k1   [7],
+                     k1   [8],k1   [9],k1  [10],k1  [11],k1  [12],k1  [13],k1  [14],k1  [15],
+                     k1  [16],k1  [17],k1  [18],k1  [19],k1  [20],k1  [21],k1  [22],k1  [23],
+                     k1  [24],k1  [25],k1  [26],k1  [27],k1  [28],k1  [29],k1  [30],k1  [31]};
+wire _sens_lvol  = ^{lvol [0],lvol [1],lvol [2],lvol [3],lvol [4],lvol [5],lvol [6],lvol [7],
+                     lvol [8],lvol [9],lvol[10],lvol[11],lvol[12],lvol[13],lvol[14],lvol[15],
+                     lvol[16],lvol[17],lvol[18],lvol[19],lvol[20],lvol[21],lvol[22],lvol[23],
+                     lvol[24],lvol[25],lvol[26],lvol[27],lvol[28],lvol[29],lvol[30],lvol[31]};
+wire _sens_rvol  = ^{rvol [0],rvol [1],rvol [2],rvol [3],rvol [4],rvol [5],rvol [6],rvol [7],
+                     rvol [8],rvol [9],rvol[10],rvol[11],rvol[12],rvol[13],rvol[14],rvol[15],
+                     rvol[16],rvol[17],rvol[18],rvol[19],rvol[20],rvol[21],rvol[22],rvol[23],
+                     rvol[24],rvol[25],rvol[26],rvol[27],rvol[28],rvol[29],rvol[30],rvol[31]};
+wire _sens_ecnt  = ^{ecount[0],ecount[1],ecount[2],ecount[3],ecount[4],ecount[5],ecount[6],ecount[7],
+                     ecount[8],ecount[9],ecount[10],ecount[11],ecount[12],ecount[13],ecount[14],ecount[15],
+                     ecount[16],ecount[17],ecount[18],ecount[19],ecount[20],ecount[21],ecount[22],ecount[23],
+                     ecount[24],ecount[25],ecount[26],ecount[27],ecount[28],ecount[29],ecount[30],ecount[31]};
+/* verilator lint_off UNUSED */
+wire _sens_all = _sens_k2 ^ _sens_k1 ^ _sens_lvol ^ _sens_rvol ^ _sens_ecnt;
+/* verilator lint_on UNUSED */
+
+// Inline combinatorial read: all array accesses are in this always @(*) block
+// so iverilog includes every voice register in the sensitivity list.
 always @(*) begin
     host_dout = 8'hff;
     case(host_addr)
-        6'h38: host_dout = irqv;         // IRQV (low byte)
+        6'h38: host_dout = irqv;
         6'h3c: host_dout = {2'b0,page};
-        6'h3e: host_dout = {3'b0,active}; // ACTIVE
-        default: host_dout = read_reg(page, host_addr);
+        6'h3e: host_dout = {3'b0,active};
+        default: begin
+            if( page < 32 ) begin
+                case(host_addr[5:3])
+                    3'h0: host_dout = host_addr[1] ? control[page][15:8]  : control[page][7:0];
+                    3'h1: host_dout = host_addr[1] ? fc[page][15:8]       : fc[page][7:0];
+                    3'h2: host_dout = host_addr[1] ? lvol[page][15:8]     : lvol[page][7:0];
+                    3'h3: host_dout = host_addr[1] ? lvramp[page][15:8]   : lvramp[page][7:0];
+                    3'h4: host_dout = host_addr[1] ? rvol[page][15:8]     : rvol[page][7:0];
+                    3'h5: host_dout = host_addr[1] ? rvramp[page][15:8]   : rvramp[page][7:0];
+                    3'h6: host_dout = host_addr[1] ? ecount[page][15:8]   : ecount[page][7:0];
+                    3'h7: host_dout = host_addr[1] ? k2[page][15:8]       : k2[page][7:0];
+                    default: ;
+                endcase
+            end else if( page >= 6'h20 ) begin  // pages 32-63 (6-bit: 6'h40 overflows)
+                case(host_addr[5:3])
+                    3'h1: host_dout = host_addr[1] ? startp[page[4:0]][23:16] : startp[page[4:0]][15:8];
+                    3'h2: host_dout = host_addr[1] ? endp  [page[4:0]][23:16] : endp  [page[4:0]][15:8];
+                    3'h3: host_dout = host_addr[1] ? accum [page[4:0]][31:24] : accum [page[4:0]][23:16];
+                    3'h5: host_dout = host_addr[1] ? k1    [page[4:0]][15:8]  : k1    [page[4:0]][7:0];
+                    3'h6: host_dout = host_addr[1] ? k2ramp[page[4:0]][15:8]  : k2ramp[page[4:0]][7:0];
+                    3'h7: host_dout = host_addr[1] ? k1ramp[page[4:0]][15:8]  : k1ramp[page[4:0]][7:0];
+                    default: ;
+                endcase
+            end
+        end
     endcase
 end
 
@@ -140,20 +208,27 @@ begin
     // ACTIVE register (spec loc H7C): number of active voices - 1
     else if( addr==6'h3e ) active <= data[4:0];
     else if( pg < 32 ) begin
+        // Low pages 0-31: voice per-sample registers.
+        // Layout per OTTO spec §4 (byte offset H00..H38, addr[5:3] selects reg).
         case(addr[5:3])
-            3'h0: control[pg][ (addr[1] ? 15:7) -: 8 ] <= data; // CR
-            3'h1: fc[pg][ (addr[1] ? 15:7) -: 8 ]      <= data; // FC low 16
-            3'h2: lvol[pg][ (addr[1] ? 15:7) -: 8 ]    <= data; // LVOL
-            3'h3: k2[pg][ (addr[1] ? 15:7) -: 8 ]      <= data; // K2 filter coeff
-            3'h4: rvol[pg][ (addr[1] ? 15:7) -: 8 ]    <= data; // RVOL
-            3'h5: k1[pg][ (addr[1] ? 15:7) -: 8 ]      <= data; // K1 filter coeff
-            default: ;
+            3'h0: control[pg][ (addr[1] ? 15:7) -: 8 ]  <= data; // H00 CR
+            3'h1: fc[pg][ (addr[1] ? 15:7) -: 8 ]       <= data; // H08 FC
+            3'h2: lvol[pg][ (addr[1] ? 15:7) -: 8 ]     <= data; // H10 LVOL
+            3'h3: lvramp[pg][ (addr[1] ? 15:7) -: 8 ]   <= data; // H18 LVRAMP
+            3'h4: rvol[pg][ (addr[1] ? 15:7) -: 8 ]     <= data; // H20 RVOL
+            3'h5: rvramp[pg][ (addr[1] ? 15:7) -: 8 ]   <= data; // H28 RVRAMP
+            3'h6: ecount[pg][ (addr[1] ? 15:7) -: 8 ]   <= data; // H30 ECOUNT
+            3'h7: k2[pg][ (addr[1] ? 15:7) -: 8 ]       <= data; // H38 K2
         endcase
     end else if( pg>=32 && pg<64 ) begin
+        // High pages 32-63: address/accumulator + remaining coefficients.
         case(addr[5:3])
-            3'h1: startp[pg[4:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // START
-            3'h2: endp  [pg[4:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // END
-            3'h3: accum [pg[4:0]][ (addr[1] ? 31:23) -: 8 ] <= data; // ACCUM
+            3'h1: startp[pg[4:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H08 START
+            3'h2: endp  [pg[4:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H10 END
+            3'h3: accum [pg[4:0]][ (addr[1] ? 31:23) -: 8 ] <= data; // H18 ACCUM
+            3'h5: k1    [pg[4:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H28 K1
+            3'h6: k2ramp[pg[4:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H30 K2RAMP
+            3'h7: k1ramp[pg[4:0]][ (addr[1] ? 15:7)  -: 8 ] <= data; // H38 K1RAMP
             default: ;
         endcase
     end
@@ -168,9 +243,21 @@ begin
             3'h0: read_reg = addr[1] ? control[pg][15:8] : control[pg][7:0];
             3'h1: read_reg = addr[1] ? fc[pg][15:8]      : fc[pg][7:0];
             3'h2: read_reg = addr[1] ? lvol[pg][15:8]    : lvol[pg][7:0];
-            3'h3: read_reg = addr[1] ? k2[pg][15:8]      : k2[pg][7:0];
+            3'h3: read_reg = addr[1] ? lvramp[pg][15:8]  : lvramp[pg][7:0];
             3'h4: read_reg = addr[1] ? rvol[pg][15:8]    : rvol[pg][7:0];
-            3'h5: read_reg = addr[1] ? k1[pg][15:8]      : k1[pg][7:0];
+            3'h5: read_reg = addr[1] ? rvramp[pg][15:8]  : rvramp[pg][7:0];
+            3'h6: read_reg = addr[1] ? ecount[pg][15:8]  : ecount[pg][7:0];
+            3'h7: read_reg = addr[1] ? k2[pg][15:8]      : k2[pg][7:0];
+            default: ;
+        endcase
+    end else if( pg>=32 && pg<64 ) begin
+        case(addr[5:3])
+            3'h1: read_reg = addr[1] ? startp[pg[4:0]][23:16] : startp[pg[4:0]][15:8];
+            3'h2: read_reg = addr[1] ? endp  [pg[4:0]][23:16] : endp  [pg[4:0]][15:8];
+            3'h3: read_reg = addr[1] ? accum [pg[4:0]][31:24] : accum [pg[4:0]][23:16];
+            3'h5: read_reg = addr[1] ? k1    [pg[4:0]][15:8]  : k1    [pg[4:0]][7:0];
+            3'h6: read_reg = addr[1] ? k2ramp[pg[4:0]][15:8]  : k2ramp[pg[4:0]][7:0];
+            3'h7: read_reg = addr[1] ? k1ramp[pg[4:0]][15:8]  : k1ramp[pg[4:0]][7:0];
             default: ;
         endcase
     end
@@ -268,6 +355,20 @@ wire signed [31:0] contrib_l = (p4 * $signed({1'b0,lvol[vidx][14:0]})) >>> 14;
 wire signed [31:0] contrib_r = (p4 * $signed({1'b0,rvol[vidx][14:0]})) >>> 14;
 
 // ---------------------------------------------------------------------------
+// Envelope ramp wires (18-bit signed; compute clamped result for current vidx).
+// Each ramp value is the signed 8-bit delta in bits [7:0] of its register.
+// Result is clamped to [0, 0xFFFF]: negative → 0, >0xFFFF → 0xFFFF.
+// ---------------------------------------------------------------------------
+wire signed [17:0] env_lv_s = $signed({2'b00,lvol[vidx]}) + $signed({{10{lvramp[vidx][7]}},lvramp[vidx][7:0]});
+wire signed [17:0] env_rv_s = $signed({2'b00,rvol[vidx]}) + $signed({{10{rvramp[vidx][7]}},rvramp[vidx][7:0]});
+wire signed [17:0] env_k1_s = $signed({2'b00,k1[vidx]})   + $signed({{10{k1ramp[vidx][7]}},k1ramp[vidx][7:0]});
+wire signed [17:0] env_k2_s = $signed({2'b00,k2[vidx]})   + $signed({{10{k2ramp[vidx][7]}},k2ramp[vidx][7:0]});
+wire [15:0] env_lv_c = env_lv_s[17] ? 16'h0000 : env_lv_s[16] ? 16'hFFFF : env_lv_s[15:0];
+wire [15:0] env_rv_c = env_rv_s[17] ? 16'h0000 : env_rv_s[16] ? 16'hFFFF : env_rv_s[15:0];
+wire [15:0] env_k1_c = env_k1_s[17] ? 16'h0000 : env_k1_s[16] ? 16'hFFFF : env_k1_s[15:0];
+wire [15:0] env_k2_c = env_k2_s[17] ? 16'h0000 : env_k2_s[16] ? 16'hFFFF : env_k2_s[15:0];
+
+// ---------------------------------------------------------------------------
 // Voice scheduler and mixer. One voice per cen. A complete output sample is
 // emitted after active+1 voices have been accumulated.
 // ---------------------------------------------------------------------------
@@ -316,9 +417,29 @@ always @(posedge clk) begin
     srom_cs <= 1'b0;
 
     if( rst ) begin
-        vidx <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
-    end else if( cen ) begin
+        vidx  <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
+        irqv  <= 8'h80;
+        irq   <= 1'b0;
+    end else begin
+        // IRQV acknowledge: host read IRQV last cycle → clear it.
+        // Also clear CTRL_IRQ in the voice that was acknowledged so the
+        // rescan does not immediately re-fire the same IRQ.
+        if( host_irqv_ack ) begin
+            if( !irqv[7] ) control[irqv[4:0]][CTRL_IRQ] <= 1'b0;
+            irqv <= 8'h80;
+            irq  <= 1'b0;
+        end
+    end
+
+    if( !rst && cen ) begin
         srom_cs <= voice_running;
+
+        // IRQ rescan: if current voice has a stacked CTRL_IRQ and irqv is free,
+        // deliver it now.  This re-fires pending IRQs after IRQV acknowledge.
+        if( control[vidx][CTRL_IRQ] && irqv[7] ) begin
+            irqv <= {3'b000, vidx};
+            irq  <= 1'b1;
+        end
 
         // Filter state and accumulator advance (both flush and non-flush paths).
         if( voice_running && srom_ok ) begin
@@ -342,11 +463,35 @@ always @(posedge clk) begin
                         accum[vidx] <= dir ? acc_at_end : acc_at_start;
                     end
                 end else begin
-                    // One-shot: stop the voice.
+                    // One-shot: stop the voice and optionally fire IRQ.
                     control[vidx][CTRL_STOP0] <= 1'b1;
+                    if( control[vidx][CTRL_IRQE] ) begin
+                        control[vidx][CTRL_IRQ] <= 1'b1;
+                        if( irqv[7] ) begin   // irqv free — deliver immediately
+                            irqv <= {3'b000, vidx};
+                            irq  <= 1'b1;
+                        end
+                    end
                 end
             end else begin
                 accum[vidx] <= next_acc;
+            end
+
+            // Envelope ramp: apply signed 8-bit deltas to LVOL/RVOL/K1/K2.
+            if( ecount[vidx] != 16'd0 ) begin
+                lvol[vidx]  <= env_lv_c;
+                rvol[vidx]  <= env_rv_c;
+                k1[vidx]    <= env_k1_c;
+                k2[vidx]    <= env_k2_c;
+                ecount[vidx] <= ecount[vidx] - 16'd1;
+                // Fire IRQ when envelope expires (if IRQE set).
+                if( ecount[vidx] == 16'd1 && control[vidx][CTRL_IRQE] ) begin
+                    control[vidx][CTRL_IRQ] <= 1'b1;
+                    if( irqv[7] ) begin
+                        irqv <= {3'b000, vidx};
+                        irq  <= 1'b1;
+                    end
+                end
             end
         end
 
@@ -368,7 +513,7 @@ always @(posedge clk) begin
             end
             vidx <= vidx + 5'd1;
         end
-    end
+    end // cen
 end
 
 function [15:0] sat16(input signed [31:0] v);
