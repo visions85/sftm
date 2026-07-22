@@ -25,10 +25,10 @@ JTFRAME_BUTTONS=6
 # ~36 MB of ROM (see cfg/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
 # module, because 4 x 8 MB = 32 MB on the standard module is not enough.
 JTFRAME_SDRAM_BANKS
-# 128 MB SDRAM module (4 x 32 MB banks). Confirm macro name against the
-# installed JTFRAME version's doc/sdram.md; JTFRAME_SDRAM128 is the typical
-# MiSTer 128 MB macro. Bank 2 needs a 32 MB bank for the 32 MB grom region.
-JTFRAME_SDRAM128
+# 128 MB SDRAM module (4 x 32 MB banks). JTFRAME_SDRAM_LARGE sets SDRAMW=24
+# (24-bit per-bank address = 32 MB per bank), required for the 32 MB grom
+# region and for correct 128 MB SDRAM initialisation.
+JTFRAME_SDRAM_LARGE
 #
 # SDRAM bank byte-offset boundaries in the ROM download stream.
 # Download order: BA0 (prog+snd), BA1 (srom), BA2 (grom), BA3 (grm3).
