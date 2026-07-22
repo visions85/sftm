@@ -1,4 +1,4 @@
-JTSFTM FPGA clone of Street Fighter: The Movie arcade hardware
+SFTM FPGA clone of Street Fighter: The Movie arcade hardware
 ================================================================
 
 Target hardware
@@ -31,7 +31,7 @@ JTFRAME supplies:
 - MC6809 CPU wrapper (`mc6809i`)
 - simulation and build tools
 
-This core keeps game-specific logic in `jtsftm_game`.
+This core keeps game-specific logic in `sftm_game`.
 
 128 MB SDRAM requirement
 ------------------------
@@ -90,7 +90,7 @@ Implemented:
 
 - JTFRAME-style folder layout
 - `cfg/macros.def`, `cfg/files.yaml`, `hdl/mem.yaml`
-- `jtsftm_game` top-level wiring
+- `sftm_game` top-level wiring
 - coarse main CPU memory-map skeleton
 - video register file and CRTC skeleton
 - two VRAM planes and palette RAM
@@ -118,8 +118,8 @@ Validation plan
 2. Generate mem ports with `jtframe mem sftm` and fix all interface names.
 3. Convert TG68K.C for Verilator or switch to mixed-language simulation.
 4. Run main CPU opcode tests before booting ROM code.
-5. Log MAME blitter commands and replay them into `jtsftm_blitter`.
-6. Unit-test `jt5506` against MAME `es5506.cpp` sample outputs.
+5. Log MAME blitter commands and replay them into `sftm_blitter`.
+6. Unit-test `sftm5506` against MAME `es5506.cpp` sample outputs.
 7. Bring up ROM boot to self-test, then attract mode.
 
 ROMs

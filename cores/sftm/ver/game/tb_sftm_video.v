@@ -1,4 +1,4 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Self-checking bench for the IT42/video memory-mapped I/O block. It drives
     the CPU-facing register bus directly so it can run before the 68EC020 core
@@ -6,7 +6,7 @@
 */
 `timescale 1ns/1ps
 
-module tb_jtsftm_video;
+module tb_sftm_video;
     localparam VIDEO_STATUS  = 8'h00;
     localparam VIDEO_INTACK  = 8'h02;
     localparam VIDEO_XFER    = 8'h04;
@@ -48,7 +48,7 @@ module tb_jtsftm_video;
 
     always #5 clk = ~clk;
 
-    jtsftm_video uut(
+    sftm_video uut(
         .rst(rst), .clk(clk), .pxl_cen(pxl_cen), .pxl2_cen(pxl2_cen),
         .cpu_addr(cpu_addr), .cpu_dout(cpu_dout), .cpu_rnw(cpu_rnw),
         .cpu_uds_n(cpu_uds_n), .cpu_lds_n(cpu_lds_n),
@@ -253,9 +253,9 @@ module tb_jtsftm_video;
         check16(q, 16'h00b6, "VIDEO_XFER readback pixel 1");
 
         if( errors==0 )
-            $display("PASS: jtsftm_video memory-mapped I/O");
+            $display("PASS: sftm_video memory-mapped I/O");
         else
-            $display("FAIL: %0d jtsftm_video checks failed", errors);
+            $display("FAIL: %0d sftm_video checks failed", errors);
 
         $finish;
     end

@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Street Fighter: The Movie protection stand-in.
 
@@ -15,9 +15,9 @@
     byte address, i.e. the high / UDS byte of 16-bit main-RAM word 0x3d35.
 
     This module snoops CPU byte writes into main RAM and latches the byte at
-    that address; jtsftm_main presents it on D[15:8] when 0x680002 is read.
+    that address; sftm_main presents it on D[15:8] when 0x680002 is read.
 */
-module jtsftm_prot(
+module sftm_prot(
     input               clk,
     input               rst,
     input      [13:0]   wr_addr,    // main RAM word address (cpu_a[14:1])

@@ -1,4 +1,4 @@
-# mame2mra configuration for JTSFTM.
+# mame2mra configuration for SFTM.
 #
 # This follows JTFRAME's mame2mra.toml convention but is intentionally explicit
 # and conservative. The generated .mra must be validated against the jtframe
@@ -6,7 +6,7 @@
 # layout and 32-bit interleaving for the 68EC020 program ROM.
 
 [global]
-author   = ["JTSFTM contributors"]
+author   = ["SFTM contributors"]
 platform = "Street Fighter: The Movie"
 
 # Parse settings: which MAME source file and parent set to process

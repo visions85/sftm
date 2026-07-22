@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Video subsystem for Street Fighter: The Movie (itech32 IT42 blitter).
 
@@ -9,10 +9,10 @@
       - the programmable CRTC (H/V total, sync, blank) and scanout counters
       - two 512-wide VRAM planes (foreground / background) in BRAM
       - 15-bit palette RAM
-      - the IT42 blitter (jtsftm_blitter) that copies GROM -> VRAM
+      - the IT42 blitter (sftm_blitter) that copies GROM -> VRAM
 */
 
-module jtsftm_video(
+module sftm_video(
     input               rst,
     input               clk,
     input               pxl_cen,
@@ -274,13 +274,13 @@ assign vram_wdata    = cpu_xfer_we ? cpu_xfer_wdata : blt_wdata;
 assign fg_vram_we    = (blt_we & ~blt_plane) | (cpu_xfer_we & cpu_xfer_plane_en[0]);
 assign bg_vram_we    = (blt_we &  blt_plane) | (cpu_xfer_we & cpu_xfer_plane_en[1]);
 
-jtsftm_vram #(.AW(17)) u_fg(
+sftm_vram #(.AW(17)) u_fg(
     .clk(clk), .we( fg_vram_we ),
     .waddr(vram_waddr), .wdata(vram_wdata),
     .raddr(fg_scan_addr), .rdata(fg_pix),
     .io_addr(cpu_xfer_addr), .io_data(fg_io_pix) );
 
-jtsftm_vram #(.AW(17)) u_bg(
+sftm_vram #(.AW(17)) u_bg(
     .clk(clk), .we( bg_vram_we ),
     .waddr(vram_waddr), .wdata(vram_wdata),
     .raddr(bg_scan_addr), .rdata(bg_pix),
@@ -305,7 +305,7 @@ wire [6:0] px_color = fg_opaque ? color_latch0 : color_latch1;
 // index = { color_latch bank bits, pixel }
 // ---------------------------------------------------------------------------
 wire [14:0] pal_rgb;
-jtsftm_pal u_pal(
+sftm_pal u_pal(
     .clk    ( clk       ),
     .cpu_addr(cpu_addr[15:1]),
     .cpu_dout(cpu_dout  ),
@@ -322,7 +322,7 @@ assign blue  = gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0;
 // ---------------------------------------------------------------------------
 // IT42 blitter
 // ---------------------------------------------------------------------------
-jtsftm_blitter u_blitter(
+sftm_blitter u_blitter(
     .rst        ( rst           ),
     .clk        ( clk           ),
     // command / parameters from the register file

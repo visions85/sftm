@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Main CPU subsystem for Street Fighter: The Movie (itech32, 020 board).
 
@@ -11,7 +11,7 @@
     and `init_sftm_common`. All offsets cross-checked against MAME source.
 */
 
-module jtsftm_main(
+module sftm_main(
     input               rst,
     input               clk,
     input               cen,        // ~25 MHz enable
@@ -32,7 +32,7 @@ module jtsftm_main(
     input       [ 7:0]  dipsw_a,
     input       [ 7:0]  dipsw_b,
 
-    // Video / blitter / palette bus (to jtsftm_video)
+    // Video / blitter / palette bus (to sftm_video)
     output      [23:1]  cpu_addr,
     output      [15:0]  cpu_dout,
     output              cpu_rnw,
@@ -175,7 +175,7 @@ wire [15:0] ram_din   = boot_done ? cpu_dout    : boot_word;
 wire        ram_we_lo = boot_done ? (cpu_write & ram_cs & low_byte_we ) : boot_we;
 wire        ram_we_hi = boot_done ? (cpu_write & ram_cs & high_byte_we) : boot_we;
 
-jtsftm_ram #(.AW(14)) u_ram(
+sftm_ram #(.AW(14)) u_ram(
     .clk    ( clk       ),
     .addr   ( ram_addr  ),
     .din    ( ram_din   ),
@@ -195,7 +195,7 @@ wire [15:0] nvram_dout;
 wire        nvram_we_lo = cpu_write & nvram_cs & low_byte_we;
 wire        nvram_we_hi = cpu_write & nvram_cs & high_byte_we;
 
-jtsftm_ram #(.AW(14)) u_nvram(
+sftm_ram #(.AW(14)) u_nvram(
     .clk    ( clk         ),
     .addr   ( cpu_a[14:1] ),
     .din    ( cpu_dout    ),
@@ -206,11 +206,11 @@ jtsftm_ram #(.AW(14)) u_nvram(
 
 // ---------------------------------------------------------------------------
 // Protection: 0x680002 returns a main-RAM byte (MAME itech020_prot_result_r).
-// jtsftm_prot snoops CPU writes to that address (0x7a6a) and latches the byte.
+// sftm_prot snoops CPU writes to that address (0x7a6a) and latches the byte.
 // ---------------------------------------------------------------------------
 wire [7:0] prot_byte;
 
-jtsftm_prot u_prot(
+sftm_prot u_prot(
     .clk    ( clk         ),
     .rst    ( rst         ),
     .wr_addr( cpu_a[14:1] ),

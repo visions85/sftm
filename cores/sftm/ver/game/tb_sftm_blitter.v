@@ -1,6 +1,6 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
-    Self-checking bench for jtsftm_blitter. Exercises:
+    Self-checking bench for sftm_blitter. Exercises:
       1. Normal 2x2 blit — pixel values and VRAM addresses verified.
       2. Transparency (F_TRANSP) — 0xFF pixels must not produce a VRAM write.
       3. X-flip (F_XFLIP)       — destination X counts downward.
@@ -19,13 +19,13 @@
     All pixel values used in the normal/flip tests are < 0xFF (non-transparent).
 
     Run:
-      iverilog -g2012 -Wall -o /tmp/tb_jtsftm_blitter.vvp \
-          cores/sftm/ver/game/tb_jtsftm_blitter.v cores/sftm/hdl/jtsftm_blitter.v && \
-      vvp /tmp/tb_jtsftm_blitter.vvp
+      iverilog -g2012 -Wall -o /tmp/tb_sftm_blitter.vvp \
+          cores/sftm/ver/game/tb_sftm_blitter.v cores/sftm/hdl/sftm_blitter.v && \
+      vvp /tmp/tb_sftm_blitter.vvp
 */
 `timescale 1ns/1ps
 
-module tb_jtsftm_blitter;
+module tb_sftm_blitter;
 
     // DUT ports
     reg         clk=0, rst=1;
@@ -64,7 +64,7 @@ module tb_jtsftm_blitter;
     // grom_ok: combinatorial — respond in the same cycle grom_cs is asserted.
     // The FETCH state checks grom_ok on the clock after asserting grom_cs,
     // so using grom_cs directly gives exactly 1 FETCH cycle per pixel.
-    jtsftm_blitter uut(
+    sftm_blitter uut(
         .rst(rst), .clk(clk),
         .r_command(r_command), .r_flags(r_flags),
         .r_width(r_width), .r_height(r_height),
@@ -390,9 +390,9 @@ module tb_jtsftm_blitter;
         r_dstystep = 16'h0100;  // restore 1:1
 
         if (errors == 0)
-            $display("PASS: jtsftm_blitter all checks");
+            $display("PASS: sftm_blitter all checks");
         else
-            $display("FAIL: jtsftm_blitter %0d checks failed", errors);
+            $display("FAIL: sftm_blitter %0d checks failed", errors);
         $finish;
     end
 

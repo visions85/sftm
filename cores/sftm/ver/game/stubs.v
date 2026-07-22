@@ -1,4 +1,4 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     SIMULATION/LINT-ONLY black-box stubs for the vendored CPUs. These are NOT
     the real cores; they only expose matching port names so the surrounding

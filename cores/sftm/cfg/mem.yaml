@@ -1,6 +1,6 @@
-# JTSFTM memory description for JTFRAME (`jtframe mem sftm`).
+# SFTM memory description for JTFRAME (`jtframe mem sftm`).
 # Lives in cfg/ (jtframe reads $JTROOT/cores/<core>/cfg/mem.yaml).
-# Generates jtsftm_game_sdram.v (in cores/sftm/mister/) and mem_ports.inc.
+# Generates sftm_game_sdram.v (in cores/sftm/mister/) and mem_ports.inc.
 #
 # ROM regions — download order must match SDRAM bank order (see cfg/mame2mra.toml):
 #   prog   1.00 MB  4x256KB PROMs, 32-bit interleaved   (68EC020 program)
@@ -56,7 +56,7 @@ sdram:
           data_width: 16
 
   # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board) is
-  # currently kept in on-chip BRAM inside jtsftm_main (u_nvram) so the CPU can
+  # currently kept in on-chip BRAM inside sftm_main (u_nvram) so the CPU can
   # boot and run self-test. Persistence is deferred: add a top-level bram entry
   #   bram:
   #     - name: nvram
@@ -65,4 +65,4 @@ sdram:
   #       rw: true
   #       ioctl: { save: true, order: 0 }
   # (see modules/jtframe/doc/sdram.md) once JTFRAME is vendored, then wire the
-  # generated nvram_* ports back into jtsftm_main.
+  # generated nvram_* ports back into sftm_main.

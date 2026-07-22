@@ -1,14 +1,14 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Generic synchronous work-RAM with a 16-bit word bus and independent high /
     low byte write enables, matching the MC68EC020's UDS/LDS byte strobes.
 
     Inferred single-port BRAM with registered read data (1-cycle latency),
-    following the same style as jtsftm_vram / jtsftm_pal. One access per clock;
+    following the same style as sftm_vram / sftm_pal. One access per clock;
     the itech32 CPU never reads and writes the same RAM in the same cycle.
 */
-module jtsftm_ram #(parameter AW=14)(
+module sftm_ram #(parameter AW=14)(
     input               clk,
     input      [AW-1:0] addr,       // word address
     input      [15:0]   din,

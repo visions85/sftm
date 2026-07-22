@@ -1,6 +1,6 @@
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
-    Self-checking bench for jtsftm_main. Tests:
+    Self-checking bench for sftm_main. Tests:
       1. Boot vector copy FSM — rom_cs goes high on reset release, then drops
          to 0 once all 32 long-words (64 rom_ok pulses) have been copied.
       2. Reset-state outputs — plane_en=11, grom_bank=00, snd_latch_we=0,
@@ -11,17 +11,17 @@
     outputs assert after boot.
 
     Run:
-      iverilog -g2012 -Wall -o /tmp/tb_jtsftm_main.vvp \
-          cores/sftm/ver/game/tb_jtsftm_main.v \
-          cores/sftm/hdl/jtsftm_main.v \
-          cores/sftm/hdl/jtsftm_ram.v \
-          cores/sftm/hdl/jtsftm_prot.v \
+      iverilog -g2012 -Wall -o /tmp/tb_sftm_main.vvp \
+          cores/sftm/ver/game/tb_sftm_main.v \
+          cores/sftm/hdl/sftm_main.v \
+          cores/sftm/hdl/sftm_ram.v \
+          cores/sftm/hdl/sftm_prot.v \
           cores/sftm/ver/game/stubs.v && \
-      vvp /tmp/tb_jtsftm_main.vvp
+      vvp /tmp/tb_sftm_main.vvp
 */
 `timescale 1ns/1ps
 
-module tb_jtsftm_main;
+module tb_sftm_main;
 
     reg          clk=0, rst=1, cen=1;
 
@@ -59,7 +59,7 @@ module tb_jtsftm_main;
 
     always #5 clk = ~clk;
 
-    jtsftm_main uut(
+    sftm_main uut(
         .rst(rst),         .clk(clk),        .cen(cen),
         .rom_addr(rom_addr), .rom_data(rom_data),
         .rom_cs(rom_cs),   .rom_ok(rom_ok),
@@ -164,9 +164,9 @@ module tb_jtsftm_main;
         check1(vram_cs, 1'b0, "vram_cs hardwired 0");
 
         if (errors == 0)
-            $display("PASS: jtsftm_main boot FSM and reset state");
+            $display("PASS: sftm_main boot FSM and reset state");
         else
-            $display("FAIL: jtsftm_main %0d checks failed", errors);
+            $display("FAIL: sftm_main %0d checks failed", errors);
         $finish;
     end
 

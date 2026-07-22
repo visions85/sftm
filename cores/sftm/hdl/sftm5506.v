@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     Ensoniq ES5506 "OTTO" sample synthesizer.
 
@@ -32,7 +32,7 @@
       - 20-bit clamp/saturation exactly like real ES5506
 */
 
-module jt5506(
+module sftm5506(
     input               rst,
     input               clk,
     input               cen,          // 16 MHz master enable

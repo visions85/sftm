@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
-/*  This file is part of JTSFTM.  GPLv3 - see LICENSE.
+/*  This file is part of SFTM.  GPLv3 - see LICENSE.
 
     One VRAM plane: 8-bit indexed pixels, one write port (blitter/CPU) and one
     read port (scanout). Inferred simple dual-port BRAM.
 */
-module jtsftm_vram #(parameter AW=17)(
+module sftm_vram #(parameter AW=17)(
     input               clk,
     input               we,
     input      [AW-1:0]  waddr,

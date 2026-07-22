@@ -1,10 +1,10 @@
-# JTSFTM - Street Fighter: The Movie (Incredible Technologies itech32)
+# SFTM - Street Fighter: The Movie (Incredible Technologies itech32)
 # JTFRAME macro configuration. Evaluated with `jtframe cfgstr sftm`.
 
-CORENAME=JTSFTM
-GAMETOP=jtsftm_game
-MAIN_MODULE=jtsftm_main
-VIDEO_MODULE=jtsftm_video
+CORENAME=SFTM
+GAMETOP=sftm_game
+MAIN_MODULE=sftm_main
+VIDEO_MODULE=sftm_video
 
 # Measured refresh (itech32 P/N 1083: VSync 59.7612 Hz)
 JTFRAME_RATE=59.76
@@ -33,7 +33,7 @@ JTFRAME_BA1_START=0x140000
 JTFRAME_BA2_START=0x3C0000
 JTFRAME_BA3_START=0x23C0000
 #
-# NVRAM (0x600000-0x61ffff) is on-chip BRAM inside jtsftm_main for now; SD-card
+# NVRAM (0x600000-0x61ffff) is on-chip BRAM inside sftm_main for now; SD-card
 # persistence (JTFRAME ioctl save/restore) is deferred - see cfg/mem.yaml.
 
 [mister]
