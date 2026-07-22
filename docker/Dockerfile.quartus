@@ -63,14 +63,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -sf /lib/x86_64-linux-gnu/libncurses.so.6 /lib/x86_64-linux-gnu/libncurses.so.5 \
     && ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6  /lib/x86_64-linux-gnu/libtinfo.so.5
 
-# Install libpng12-0 from Ubuntu 16.04 (Xenial) package archive.
-# SourceForge is unreachable from Docker's build network; archive.ubuntu.com is not.
-# libpng12-0 depends only on libc6 >= 2.14; Ubuntu 24.04 ships glibc 2.39, so fine.
+# Install libpng12.so.0 (required by Quartus 17.1).
+# Ubuntu 24.04 uses a merged /lib → usr/lib symlink; dpkg from the Xenial package
+# can't resolve this correctly, so extract the library manually with dpkg-deb -x.
 RUN curl -fsSL --retry 3 \
         "http://archive.ubuntu.com/ubuntu/pool/main/libp/libpng/libpng12-0_1.2.54-1ubuntu1_amd64.deb" \
         -o /tmp/libpng12.deb \
-    && dpkg -i /tmp/libpng12.deb \
-    && rm /tmp/libpng12.deb \
+    && dpkg-deb -x /tmp/libpng12.deb /tmp/libpng12-extract \
+    && cp -a /tmp/libpng12-extract/lib/x86_64-linux-gnu/libpng12* /usr/lib/x86_64-linux-gnu/ \
+    && rm -rf /tmp/libpng12.deb /tmp/libpng12-extract \
     && ldconfig
 
 # ---- Quartus Prime Lite 17.1 ----
