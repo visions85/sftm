@@ -149,7 +149,7 @@ mc6809i u_cpu(
     .D          ( din       ),   // data in from bus
     .DOut       ( dout      ),   // data out to bus
     .nIRQ       ( irq_n     ),   // active-low IRQ (soundlatch)
-    .nFIRQ      ( 1'b1      ),   // not used
+    .nFIRQ      ( ~snd_irq  ),   // ES5506 IRQ → 6809 /FIRQ (active-low)
     .nNMI       ( 1'b1      ),   // not used
     .nHALT      ( 1'b1      ),   // not halted
     .nDMABREQ   ( 1'b1      ),   // no DMA
