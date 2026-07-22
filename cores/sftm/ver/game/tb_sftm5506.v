@@ -6,8 +6,10 @@
       3. Reverse loop  (LPE=1, BLE=0, DIR=1): voice keeps producing samples.
       4. Bidirectional (LPE=1, BLE=1, DIR=0): voice keeps producing samples.
       5. One-shot      (LPE=0, BLE=0, DIR=0): voice stops at end boundary.
-      6. K1/K2 filter coefficient register read/write.
+      6. K2/K1 register read/write (correct OTTO-spec addresses).
       7. Filter pass-through (K1=K2=0): output equals unfiltered sample.
+      8. Envelope/volume ramp (LVRAMP/RVRAMP/ECOUNT): LVOL/RVOL delta applied.
+      9. IRQ on one-shot stop (IRQE=1): irq asserted, IRQV holds voice index.
 
     SROM model: every word returns 16'h1234 so audio is always non-zero when
     any voice is running.
@@ -214,27 +216,28 @@ module tb_sftm5506;
         end
 
         // =================================================================
-        // Test 6: K1/K2 filter coefficient register read/write
-        // K2 is at addr[5:3]=3 (0x18 low, 0x1a high); K1 at addr[5:3]=5 (0x28/0x2a).
+        // Test 6: K2/K1 register read/write (corrected OTTO-spec addresses)
+        // K2 is now at low-page addr[5:3]=7 (H38): write 0x38 / 0x3a.
+        // K1 is now in high page (32+voice), addr[5:3]=5 (H28): 0x28 / 0x2a.
+        // Note: reading addr 0x38 returns IRQV (not K2 low byte) because
+        //       the global IRQV register overlaps; only the high byte 0x3a
+        //       is verified here.
         // =================================================================
         begin : t6_filter_regs
             reg [7:0] rd;
-            host_write(6'h3c, 8'h04);    // PAGE = voice 4
-            // Write K2 = 0x5678
-            host_write(6'h18, 8'h78);    // K2 low byte
-            host_write(6'h1a, 8'h56);    // K2 high byte
-            // Write K1 = 0x1234
-            host_write(6'h28, 8'h34);    // K1 low byte
-            host_write(6'h2a, 8'h12);    // K1 high byte
-            // Read back K2
-            host_read(6'h18, rd);
-            if( rd !== 8'h78 ) begin
-                $display("FAIL t6: K2 low rd=%02h exp=78", rd); errors=errors+1;
-            end
-            host_read(6'h1a, rd);
+            host_write(6'h3c, 8'h04);    // PAGE = voice 4 (low page)
+            // Write K2 = 0x5678 (addr[5:3]=7 = H38)
+            host_write(6'h38, 8'h78);    // K2 low byte  (H38)
+            host_write(6'h3a, 8'h56);    // K2 high byte (H3a)
+            // Read back K2 high byte (0x38 returns IRQV, so skip low byte)
+            host_read(6'h3a, rd);
             if( rd !== 8'h56 ) begin
                 $display("FAIL t6: K2 high rd=%02h exp=56", rd); errors=errors+1;
             end
+            // Write K1 = 0x1234 in high page (32+4=36), addr[5:3]=5 (H28)
+            host_write(6'h3c, 8'h24);    // PAGE = 36 (high page for voice 4)
+            host_write(6'h28, 8'h34);    // K1 low byte
+            host_write(6'h2a, 8'h12);    // K1 high byte
             // Read back K1
             host_read(6'h28, rd);
             if( rd !== 8'h34 ) begin
@@ -261,9 +264,14 @@ module tb_sftm5506;
             // Stop voice 4 (used in test 6).
             host_write(6'h3c, 8'h04); host_write(6'h00, 8'h03);
             // Configure voice 5: K1=K2=0, LP4|LP3, LPE=1, LVOL=RVOL=0x4000.
-            host_write(6'h3c, 8'h05);     // PAGE = voice 5
-            host_write(6'h18, 8'h00); host_write(6'h1a, 8'h00); // K2 = 0
+            host_write(6'h3c, 8'h05);     // PAGE = voice 5 (low page)
+            host_write(6'h18, 8'h00); host_write(6'h1a, 8'h00); // LVRAMP = 0
+            host_write(6'h28, 8'h00); host_write(6'h2a, 8'h00); // RVRAMP = 0
+            host_write(6'h38, 8'h00); host_write(6'h3a, 8'h00); // K2 = 0
+            // K1 is in high page (32+5=37), addr[5:3]=5
+            host_write(6'h3c, 8'h25);
             host_write(6'h28, 8'h00); host_write(6'h2a, 8'h00); // K1 = 0
+            host_write(6'h3c, 8'h05);     // Back to low page 5
             // CR low (bits 7:0)  = 0x08 → LPE=1 (STOP bits clear → voice runs)
             // CR high (bits 15:8) = 0x03 → LP4(bit9)=1, LP3(bit8)=1
             host_write(6'h00, 8'h08);     // CR low
@@ -301,6 +309,110 @@ module tb_sftm5506;
             // Restore.
             srom_data = 16'h1234;
             host_write(6'h3e, 8'h1f);
+            host_write(6'h3c, 8'h05); host_write(6'h00, 8'h03); // v5 stop
+        end
+
+        // =================================================================
+        // Test 8: Envelope/volume ramp.
+        // Voice 6: LVOL=0x0100, LVRAMP=+4/sample, ECOUNT=3.
+        // After 3 sample ticks LVOL should be 0x010C (0x100 + 3*4).
+        // RVOL=0x0200, RVRAMP=-4/sample (0xFC), after 3 ticks RVOL=0x01F4.
+        // =================================================================
+        begin : t8_env_ramp
+            reg [7:0] rd_lo, rd_hi;
+            host_write(6'h3c, 8'h06);    // PAGE = voice 6 (low page)
+            host_write(6'h00, 8'h08);    // CR low: LPE=1
+            host_write(6'h02, 8'h00);    // CR high: no LP modes
+            host_write(6'h08, 8'h01);    // FC = 1
+            host_write(6'h10, 8'h00); host_write(6'h12, 8'h01); // LVOL = 0x0100
+            host_write(6'h20, 8'h00); host_write(6'h22, 8'h02); // RVOL = 0x0200
+            host_write(6'h18, 8'h04);    // LVRAMP = +4 (signed byte)
+            host_write(6'h28, 8'hFC);    // RVRAMP = -4 (0xFC in two's complement)
+            host_write(6'h30, 8'h03);    // ECOUNT = 3
+            // Extended regs (page 32+6=38)
+            host_write(6'h3c, 8'h26);
+            host_write(6'h0a, 8'h00); host_write(6'h08, 8'h00); // START=0
+            host_write(6'h12, 8'hff); host_write(6'h10, 8'hff); // END=large
+            // ACTIVE=6: run voices 0..6; stop all but voice 6.
+            host_write(6'h3e, 8'h06);
+            host_write(6'h3c, 8'h00); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h01); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h02); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h03); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h04); host_write(6'h00, 8'h03);
+            // Wait 4 output samples (each = 7 voice ticks; ramp applied 3 ticks then stops).
+            repeat(4) @(posedge sample);
+            // Check LVOL: expect 0x0100 + 3*4 = 0x010C.
+            host_write(6'h3c, 8'h06);
+            host_read(6'h10, rd_lo);
+            host_read(6'h12, rd_hi);
+            if( {rd_hi, rd_lo} !== 16'h010C ) begin
+                $display("FAIL t8: LVOL=%04h exp=010C", {rd_hi, rd_lo}); errors=errors+1;
+            end
+            // Check RVOL: expect 0x0200 - 3*4 = 0x01F4.
+            host_read(6'h20, rd_lo);
+            host_read(6'h22, rd_hi);
+            if( {rd_hi, rd_lo} !== 16'h01F4 ) begin
+                $display("FAIL t8: RVOL=%04h exp=01F4", {rd_hi, rd_lo}); errors=errors+1;
+            end
+            // Check ECOUNT = 0.
+            host_read(6'h30, rd_lo);
+            if( rd_lo !== 8'h00 ) begin
+                $display("FAIL t8: ECOUNT=%02h exp=00", rd_lo); errors=errors+1;
+            end
+        end
+
+        // =================================================================
+        // Test 9: IRQ on one-shot stop (IRQE=1).
+        // Voice 7: LPE=0 (one-shot), IRQE=1 (bit 5 of CR), immediate end.
+        // After the voice plays through once, irq must be asserted and
+        // irqv[4:0] must equal 7 (voice index) with irqv[7]=0.
+        // Acknowledge by reading IRQV (host_addr 0x38); irq must then clear.
+        // =================================================================
+        begin : t9_irq_stop
+            reg [7:0] rd;
+            host_write(6'h3c, 8'h06); host_write(6'h00, 8'h03); // v6 stop
+            // Configure voice 7: LPE=0, IRQE=1 (CR=0x20), very short end.
+            host_write(6'h3c, 8'h07);
+            host_write(6'h00, 8'h20);    // CR low: IRQE=1, STOP bits clear
+            host_write(6'h02, 8'h00);    // CR high
+            host_write(6'h08, 8'h40);    // FC = 64 (fast advance)
+            host_write(6'h10, 8'h40); host_write(6'h12, 8'h00); // LVOL=0x0040
+            host_write(6'h20, 8'h40); host_write(6'h22, 8'h00); // RVOL=0x0040
+            // Extended regs (page 32+7=39): START=0, END=4 (very short)
+            host_write(6'h3c, 8'h27);
+            host_write(6'h0a, 8'h00); host_write(6'h08, 8'h00); // START=0
+            host_write(6'h12, 8'h00); host_write(6'h10, 8'h00); // END=0 (immediate boundary)
+            // ACTIVE=7; stop other voices.
+            host_write(6'h3e, 8'h07);
+            host_write(6'h3c, 8'h00); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h01); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h02); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h03); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h04); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h05); host_write(6'h00, 8'h03);
+            host_write(6'h3c, 8'h06); host_write(6'h00, 8'h03);
+            // Wait for 2 audio samples (= 16 voice ticks); voice 7 fires on
+            // the first tick it is scheduled after ACTIVE=7 takes effect.
+            repeat(2) @(posedge sample);
+            // irq must be high.
+            if( irq !== 1'b1 ) begin
+                $display("FAIL t9: irq not asserted after one-shot stop"); errors=errors+1;
+            end
+            // Read IRQV: should hold {3'b0, 5'd7} = 8'h07.
+            host_read(6'h38, rd);
+            if( rd[6:0] !== 7'h07 ) begin
+                $display("FAIL t9: irqv=%02h exp=07", rd); errors=errors+1;
+            end
+            if( rd[7] !== 1'b0 ) begin
+                $display("FAIL t9: irqv bit7 should be 0 (pending)"); errors=errors+1;
+            end
+            // After acknowledge, wait one full sample period for the scheduler
+            // to process the ack and de-assert irq.
+            repeat(2) @(posedge sample);
+            if( irq !== 1'b0 ) begin
+                $display("FAIL t9: irq still asserted after IRQV ack"); errors=errors+1;
+            end
         end
 
         // =================================================================
