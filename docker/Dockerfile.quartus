@@ -1,9 +1,15 @@
 # Standalone linux/amd64 image for MiSTer synthesis.
 #
-# Quartus 17.1 is x86_64-only. On Apple Silicon this runs via Rosetta 2.
-# This image is independent of sftm-build (which may be ARM64).
+# Uses Quartus Prime Lite 21.1.1 (2022-era binary, Rosetta 2 compatible).
+# Quartus 17.1 (2017) fails on Apple Silicon with "rosetta error: bss_size overflow".
+# On Apple Silicon this runs via Rosetta 2; on x86_64 Linux it runs natively.
 #
-# Build (one time, ~30 min first run due to downloads):
+# Prerequisites: place these in docker/quartus-installers/ first:
+#   QuartusLiteSetup-21.1.0.842-linux.run  (1.7 GB)
+#   cyclonev-21.1.0.842.qdz                (600 MB)
+# See docker/quartus-installers/README.md for download instructions.
+#
+# Build (one time, ~15 min):
 #   docker build --platform linux/amd64 -t sftm-quartus \
 #       -f docker/Dockerfile.quartus docker/
 #
@@ -49,8 +55,8 @@ ENV MRA=/workspace/jtbin/mra
 ENV TARGET=mister
 ENV PATH="/workspace/modules/jtframe/bin:${PATH}"
 
-# ---- Quartus 17.1 prerequisites (no i386 — ModelSim is not installed) ----
-# libpng12 is required by Quartus 17.1 but not available in Ubuntu 24.04 repos.
+# ---- Quartus 21.1.1 prerequisites ----
+# 21.1 uses libpng16 and modern ncurses — no compat hacks needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libxft2 \
         libxext6 \
@@ -58,48 +64,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxtst6 \
         libxi6 \
         libncurses6 \
-    && rm -rf /var/lib/apt/lists/* \
-    # Quartus 17.1 links against libncurses.so.5; symlink to the current .so.6
-    && ln -sf /lib/x86_64-linux-gnu/libncurses.so.6 /lib/x86_64-linux-gnu/libncurses.so.5 \
-    && ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6  /lib/x86_64-linux-gnu/libtinfo.so.5
+        libpng16-16 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install libpng12.so.0 (required by Quartus 17.1).
-# Ubuntu 24.04 uses a merged /lib → usr/lib symlink; dpkg from the Xenial package
-# can't resolve this correctly, so extract the library manually with dpkg-deb -x.
-RUN curl -fsSL --retry 3 \
-        "http://archive.ubuntu.com/ubuntu/pool/main/libp/libpng/libpng12-0_1.2.54-1ubuntu1_amd64.deb" \
-        -o /tmp/libpng12.deb \
-    && dpkg-deb -x /tmp/libpng12.deb /tmp/libpng12-extract \
-    && cp -a /tmp/libpng12-extract/lib/x86_64-linux-gnu/libpng12* /usr/lib/x86_64-linux-gnu/ \
-    && rm -rf /tmp/libpng12.deb /tmp/libpng12-extract \
-    && ldconfig
+# ---- Quartus Prime Lite 21.1.1 ----
+# Files must be in docker/quartus-installers/ — see README.md there.
+COPY quartus-installers/QuartusLiteSetup-21.1.0.842-linux.run /tmp/QuartusLiteSetup.run
+COPY quartus-installers/cyclonev-21.1.0.842.qdz /tmp/cyclonev.qdz
 
-# ---- Quartus Prime Lite 17.1 ----
-# Intel's download CDN requires authentication; download the two files manually
-# from https://www.altera.com/downloads/fpga-development-tools/quartus-prime-lite-edition-design-software-version-17-1-linux
-# and place them in docker/quartus-installers/ before building:
-#   QuartusLiteSetup-17.1.0.590-linux.run   (2 GB, sha1: 2b84182836aad9eefe0c8dcd92d052c9778ce887)
-#   cyclonev-17.1.0.590.qdz                 (1.1 GB, sha1: 392eebbc61e041be7abd1034de16323a414428e7)
-COPY quartus-installers/QuartusLiteSetup-17.1.0.590-linux.run /tmp/QuartusLiteSetup.run
-COPY quartus-installers/cyclonev-17.1.0.590.qdz /tmp/cyclonev.qdz
-
-# Install Quartus (disable ModelSim/Help to avoid installer hang on unattended mode)
+# Install Quartus (disable Questa/Help to avoid installer hang in unattended mode)
 RUN chmod +x /tmp/QuartusLiteSetup.run && \
     /tmp/QuartusLiteSetup.run \
         --mode unattended \
         --unattendedmodeui none \
-        --installdir /opt/intelFPGA_lite/17.1 \
-        --disable-components quartus_help,modelsim_ase,modelsim_ae \
+        --installdir /opt/intelFPGA_lite/21.1 \
+        --disable-components quartus_help,questa_fse,questa_fe \
         --accept_eula 1 && \
     rm /tmp/QuartusLiteSetup.run
 
 # Install Cyclone V device support
-RUN /opt/intelFPGA_lite/17.1/quartus/bin/quartus_sh \
+RUN /opt/intelFPGA_lite/21.1/quartus/bin/quartus_sh \
         --install /tmp/cyclonev.qdz && \
     rm /tmp/cyclonev.qdz
 
-ENV PATH="/opt/intelFPGA_lite/17.1/quartus/bin:${PATH}"
-ENV QUARTUS_ROOTDIR="/opt/intelFPGA_lite/17.1/quartus"
+ENV PATH="/opt/intelFPGA_lite/21.1/quartus/bin:${PATH}"
+ENV QUARTUS_ROOTDIR="/opt/intelFPGA_lite/21.1/quartus"
 
 # Reuse the same entrypoint to auto-clone/build jtframe on first run
 COPY entrypoint.sh /entrypoint.sh
