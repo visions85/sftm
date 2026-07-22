@@ -55,6 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libegl1 \
     libglx0 \
+    gawk \
     && rm -rf /var/lib/apt/lists/*
 
 # Go 1.23 (for jtframe binary)

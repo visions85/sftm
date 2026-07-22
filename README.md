@@ -40,7 +40,23 @@ the standard JTFRAME flow:
 └── modules/               # JTFRAME goes here (git submodule)
 ```
 
-## Building (Linux)
+## Building
+
+### Quick start (Docker — recommended)
+
+Requires Docker. Place the Quartus 21.1 installer files in
+`docker/quartus-installers/` first (see `docker/quartus-installers/README.md`).
+
+```sh
+git clone https://github.com/visions85/sftm
+cd sftm
+git submodule update --init   # vendors TG68K.C VHDL
+./docker/run-synth.sh         # builds image (~15 min first time), then synthesises
+```
+
+The `.rbf` output lands at `release/mister/sftm.rbf`.
+
+### Manual (Linux, native JTFRAME install)
 
 JTFRAME's toolchain is Linux-only (Quartus, Verilator, ghdl). To build:
 
@@ -55,9 +71,6 @@ source setprj.sh
 jtframe mra sftm
 jtcore sftm -mister
 ```
-
-Alternatively, add JTFRAME here as a submodule under `modules/jtframe` and use
-this directory as `$JTROOT`.
 
 ## The 68EC020 CPU (TG68K.C)
 
