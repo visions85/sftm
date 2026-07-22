@@ -49,6 +49,12 @@ if [ ! -f "${JTFRAME_COMPILED}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Exec requested command (default: /bin/bash)
+# 3. Mark /workspace as git-safe (container runs as root; host files are
+#    owned by the host user — git 2.35.2+ rejects cross-owner repos).
+# ---------------------------------------------------------------------------
+git config --global --add safe.directory /workspace
+
+# ---------------------------------------------------------------------------
+# 4. Exec requested command (default: /bin/bash)
 # ---------------------------------------------------------------------------
 exec "$@"

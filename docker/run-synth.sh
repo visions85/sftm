@@ -58,4 +58,4 @@ exec docker run --rm -it --platform linux/amd64 \
     -e MRA=/workspace/jtbin/mra \
     -e TARGET=mister \
     "$IMAGE" \
-    bash -c 'cd /workspace && jtcore sftm -mister'
+    bash -c 'git config --global --add safe.directory /workspace && cd /workspace && jtcore sftm -mister'
