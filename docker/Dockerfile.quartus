@@ -56,7 +56,8 @@ ENV TARGET=mister
 ENV PATH="/workspace/modules/jtframe/bin:${PATH}"
 
 # ---- Quartus 21.1.1 prerequisites ----
-# 21.1 uses libpng16 and modern ncurses — no compat hacks needed.
+# 21.1 links against Qt5, glib, and several X11/GL libs.
+# Ubuntu 24.04 ships glib as libglib2.0-0t64 (time64 ABI).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libxft2 \
         libxext6 \
@@ -65,6 +66,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxi6 \
         libncurses6 \
         libpng16-16 \
+        libglib2.0-0t64 \
+        libsm6 \
+        libice6 \
+        libx11-6 \
+        libxcb1 \
+        libxkbcommon0 \
+        libfreetype6 \
+        libfontconfig1 \
+        libudev1 \
+        libgl1 \
+        libegl1 \
+        libglx0 \
+        zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Quartus Prime Lite 21.1.1 ----
