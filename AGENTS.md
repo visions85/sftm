@@ -38,6 +38,20 @@ iverilog -g2012 -Wall -o /tmp/tb_jtsftm_main.vvp \
     cores/sftm/hdl/jtsftm_prot.v \
     cores/sftm/ver/game/stubs.v && \
 vvp /tmp/tb_jtsftm_main.vvp
+
+# jt5506 (ES5506 voice scheduler and loop modes)
+iverilog -g2012 -Wall -o /tmp/tb_jt5506.vvp \
+    cores/sftm/ver/game/tb_jt5506.v cores/sftm/hdl/jt5506.v && \
+vvp /tmp/tb_jt5506.vvp
+
+# jtsftm_video (register file, CRTC, VRAM, blitter integration)
+iverilog -g2012 -Wall -o /tmp/tb_jtsftm_video.vvp \
+    cores/sftm/ver/game/tb_jtsftm_video.v \
+    cores/sftm/hdl/jtsftm_video.v \
+    cores/sftm/hdl/jtsftm_blitter.v \
+    cores/sftm/hdl/jtsftm_vram.v \
+    cores/sftm/hdl/jtsftm_pal.v && \
+vvp /tmp/tb_jtsftm_video.vvp
 ```
 
 For modules that depend on vendored CPUs (`jtsftm_main`, `jtsftm_snd`, `jtsftm_video`, `jtsftm_game`), include `cores/sftm/ver/game/stubs.v` in the iverilog invocation to satisfy the `TG68KdotC_Kernel` and `mc6809i` black boxes.
@@ -110,7 +124,7 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 
 **SDRAM**: Four banks defined in `cfg/mem.yaml`. `jtframe mem sftm` generates the SDRAM arbiter (`cores/sftm/mist/jtsftm_game_sdram.v`) and port stubs (`mem_ports.inc`). Bank 0 = 68020 program + 6809 ROM; bank 1 = ES5506 sample ROM; bank 2 = 32 MB main graphics (GROM); bank 3 = extra graphics (grm3). The 32 MB GROM region requires the 128 MB SDRAM module.
 
-**Blitter (IT42)**: `jtsftm_video` writes blitter parameters into `vregs[]`, then asserts `blit_start`. `jtsftm_blitter` walks GROM sequentially, writes 8-bit pixels to VRAM (with transparency, x/y flip). Scaling and clip rect are TODO.
+**Blitter (IT42)**: `jtsftm_video` writes blitter parameters into `vregs[]`, then asserts `blit_start`. `jtsftm_blitter` walks GROM sequentially, writes 8-bit pixels to VRAM. Implemented: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp source-side horizontal scaling with fractional accumulator), DST_XSTEP (8.8 fp destination-side horizontal stretch, active when DSTXSCALE flag set), WIDTHPIX flag (decoded; blitter already counts destination pixels). Not yet: DST_YSTEP, YSTEP_PER_X polygon shear, WIDTHPIX source-count mode.
 
 **Boot vector copy**: On reset, `jtsftm_main` holds the CPU in reset while a FSM copies the first 0x80 bytes of program ROM into main RAM (the 68020 reset SSP/PC must reside at 0x000000, which is RAM on itech32). The CPU is released only after `boot_done`.
 
@@ -132,18 +146,34 @@ jtsftm_game            (cores/sftm/hdl/jtsftm_game.v)  — JTFRAME game top
 
 ## Current implementation status
 
-**Implemented:** JTFRAME folder layout, config files, game-top wiring, coarse CPU address decode, boot vector FSM, main RAM/NVRAM BRAM, video register file, CRTC, two VRAM planes, palette RAM, basic unscaled blitter (transparency + flips), sound subsystem skeleton, ES5506 register/voice/basic mix.
+**Implemented:**
+- JTFRAME folder layout, config files (`cfg/macros.def`, `cfg/mem.yaml`, `cfg/mame2mra.toml`, `cfg/files.yaml`), game-top wiring
+- Docker Linux environment (`docker/`) — `./docker/run.sh jtframe mem sftm` generates `cores/sftm/mist/jtsftm_game_sdram.v` and `mem_ports.inc`
+- Boot vector FSM (copies first 0x80 bytes of prog ROM to RAM before releasing 68020)
+- Main RAM/NVRAM BRAM (`jtsftm_ram`), protection byte snooper (`jtsftm_prot`)
+- Coarse CPU address decode, sound latch, VIA null stub
+- Video register file (0x00–0x88), CRTC (H/V counters, sync, blank, interrupts), two VRAM planes, 15-bit palette RAM
+- IT42 blitter: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp, fractional accumulator), DST_XSTEP (8.8 fp, DSTXSCALE flag), WIDTHPIX flag decoded
+- ES5506 (`jt5506`): 32-voice scheduler, 8-bit host interface, PAGE/ACTIVE registers, forward loop (LPE), reverse loop (DIR), bidirectional loop (BLE), one-shot stop, bank offset, basic volume/pan mix, 20-bit saturation
+- 6 self-checking testbenches, all passing
 
-**Not yet implemented / validated:** exact `itech020_map` address decode, exact input/DIP bit layout, TG68K.C vendoring, exact MC6809 wrapper port map, ES5506 filters/envelopes/loop modes/IRQ stacking/compressed mode, IT42 scaling/clipping/scroll, MRA generation syntax for installed JTFRAME version, NVRAM SD-card persistence, grm3 plane usage, hardware build.
+**Not yet implemented / validated:**
+- Exact `itech020_map` address decode and input/DIP bit layout
+- TG68K.C vendoring (VHDL→Verilog via `ghdl synth` — needs LLVM-flavor ghdl, not in Ubuntu 24.04 package)
+- Exact MC6809 wrapper port map
+- ES5506: 4-pole K1/K2 filter, envelope/volume ramps, IRQ vector stacking, compressed/u-law sample mode
+- IT42: DST_YSTEP (destination y-stride per row), YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
+- `jtframe mra sftm` MRA generation not yet validated
+- NVRAM SD-card persistence, grm3 plane usage, hardware build (Quartus)
 
-## Validation plan (from `doc/sftm.txt`)
+## Validation plan
 
-1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe is accessible via `docker/run.sh`; TG68K.C still needed for full simulation
+1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe accessible via `docker/run.sh`; TG68K.C still needed for full simulation
 2. ~~Run `jtframe mem sftm`~~ — DONE: generated `cores/sftm/mist/jtsftm_game_sdram.v` and `mem_ports.inc`
-3. Convert TG68K.C for Verilator (ghdl/vhd2vl) or use mixed-language simulation
+3. Convert TG68K.C for Verilator — requires LLVM-flavor `ghdl synth`; Ubuntu 24.04 package uses mcode backend (no synthesis). Options: build ghdl from source in Docker, or use `vhd2vl`.
 4. Run 68020 opcode tests before booting ROM code
-5. Log MAME blitter commands and replay into `jtsftm_blitter`
-6. Unit-test `jt5506` against MAME `es5506.cpp` sample outputs
+5. Log MAME blitter commands and replay into `jtsftm_blitter` (compare pixel-exact output)
+6. ~~ES5506 basic voice scheduler~~ — DONE. Still needed: compare `jt5506` output against MAME `es5506.cpp` for a captured register/ROM trace
 7. Boot to self-test, then attract mode
 
 ## Reference
