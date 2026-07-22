@@ -143,7 +143,7 @@ end
 always @(posedge clk) begin
     if( rst ) begin
         blit_busy   <= 1'b0;
-        startup_cnt <= 6'd0;
+        // startup_cnt reset is handled in its own always block below.
         for( i=0; i<128; i=i+1 ) vregs[i] <= 16'd0;
         // Set source/dest step registers to 1:1 scale (0x0100 = 1.0 in 8.8 fp).
         // Game writes correct values before blitting; reset values prevent
