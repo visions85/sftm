@@ -98,44 +98,10 @@ reg [ 4:0] active;       // active voices-1, default 31
 reg [ 7:0] irqv;         // IRQV register (bit 7 = empty / no-IRQ-pending)
 reg        host_irqv_ack; // pulsed for one clk when host reads IRQV
 
-// host write latch: ES5506 registers are 32-bit addressed through byte lanes.
-// This simplified path writes the selected byte directly.
+// All clocked state in a single always block to satisfy Quartus
+// single-driver requirement.  host_irqv_ack is still registered (set in
+// the same cycle the host reads IRQV, applied to control[] the next cycle).
 integer i;
-always @(posedge clk) begin
-    if( rst ) begin
-        page   <= 6'd0;
-        active <= 5'd31;
-        // irqv and irq are owned by the scheduler always block.
-        for(i=0;i<32;i=i+1) begin
-            control[i] <= 16'h0003; // stopped
-            fc[i]      <= 17'd0;
-            startp[i]  <= 25'd0;
-            endp[i]    <= 25'd0;
-            accum[i]   <= 32'd0;
-            lvol[i]    <= 16'd0;
-            rvol[i]    <= 16'd0;
-            k1[i]      <= 16'd0;
-            k2[i]      <= 16'd0;
-            lvramp[i]  <= 16'd0;
-            rvramp[i]  <= 16'd0;
-            ecount[i]  <= 16'd0;
-            k1ramp[i]  <= 16'd0;
-            k2ramp[i]  <= 16'd0;
-            o1n1[i]    <= 32'd0;
-            o2n1[i]    <= 32'd0;
-            o2n2[i]    <= 32'd0;
-            o3n1[i]    <= 32'd0;
-            o3n2[i]    <= 32'd0;
-            o4n1[i]    <= 32'd0;
-        end
-        host_irqv_ack <= 1'b0;
-    end else begin
-        host_irqv_ack <= 1'b0;
-        if( host_we ) write_reg(page, host_addr, host_din);
-        // IRQV read: signal the scheduler to clear irqv (one-cycle pulse).
-        if( host_re && host_addr==6'h38 ) host_irqv_ack <= 1'b1;
-    end
-end
 
 // Force register arrays into the sensitivity list.  iverilog does not always
 // infer array element dependencies from function calls in always @(*), so we
@@ -417,13 +383,42 @@ always @(posedge clk) begin
     srom_cs <= 1'b0;
 
     if( rst ) begin
+        // ---- reset everything (merged from both original always blocks) ----
+        page   <= 6'd0;
+        active <= 5'd31;
+        host_irqv_ack <= 1'b0;
+        for(i=0;i<32;i=i+1) begin
+            control[i] <= 16'h0003; // stopped
+            fc[i]      <= 17'd0;
+            startp[i]  <= 25'd0;
+            endp[i]    <= 25'd0;
+            accum[i]   <= 32'd0;
+            lvol[i]    <= 16'd0;
+            rvol[i]    <= 16'd0;
+            k1[i]      <= 16'd0;
+            k2[i]      <= 16'd0;
+            lvramp[i]  <= 16'd0;
+            rvramp[i]  <= 16'd0;
+            ecount[i]  <= 16'd0;
+            k1ramp[i]  <= 16'd0;
+            k2ramp[i]  <= 16'd0;
+            o1n1[i]    <= 32'd0;
+            o2n1[i]    <= 32'd0;
+            o2n2[i]    <= 32'd0;
+            o3n1[i]    <= 32'd0;
+            o3n2[i]    <= 32'd0;
+            o4n1[i]    <= 32'd0;
+        end
         vidx  <= 0; mix_l <= 0; mix_r <= 0; left <= 0; right <= 0;
         irqv  <= 8'h80;
         irq   <= 1'b0;
     end else begin
-        // IRQV acknowledge: host read IRQV last cycle → clear it.
-        // Also clear CTRL_IRQ in the voice that was acknowledged so the
-        // rescan does not immediately re-fire the same IRQ.
+        // ---- host interface ----
+        host_irqv_ack <= 1'b0;  // default: deassert each cycle
+        if( host_we ) write_reg(page, host_addr, host_din);
+        if( host_re && host_addr==6'h38 ) host_irqv_ack <= 1'b1;
+
+        // ---- IRQV acknowledge (uses host_irqv_ack registered last cycle) ----
         if( host_irqv_ack ) begin
             if( !irqv[7] ) control[irqv[4:0]][CTRL_IRQ] <= 1'b0;
             irqv <= 8'h80;
