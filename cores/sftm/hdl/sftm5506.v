@@ -69,32 +69,31 @@ localparam CTRL_BS1   = 15, CTRL_BS0 = 14, CTRL_CMPD = 13,
            CTRL_STOP0 = 0;
 
 // voice registers (logical 32-bit; not all bits used)
-// ramstyle="no_rw_check": Cyclone V MLAB blocks (32-deep, up to 20-bit wide)
-// support async read in feed-through mode.  This forces MLAB inference even
-// for the combinatorial reads in the filter wires and host_dout block, which
-// would otherwise leave all arrays as flip-flops (>11k FFs, exceeding the
-// synthesis node budget and causing Quartus error 14566).
-(* ramstyle = "no_rw_check" *) reg [15:0] control [0:31];
-(* ramstyle = "no_rw_check" *) reg [16:0] fc      [0:31];
-(* ramstyle = "no_rw_check" *) reg [24:0] startp  [0:31];
-(* ramstyle = "no_rw_check" *) reg [24:0] endp    [0:31];
-(* ramstyle = "no_rw_check" *) reg [31:0] accum   [0:31];
-(* ramstyle = "no_rw_check" *) reg [15:0] lvol    [0:31];
-(* ramstyle = "no_rw_check" *) reg [15:0] rvol    [0:31];
+// MLAB ramstyle: Cyclone V MLAB blocks (32-deep, up to 20-bit wide) support
+// async reads via feed-through mode.  Forcing MLAB inference avoids keeping
+// all 18 arrays as flip-flops (~11 800 FFs), which causes Quartus error 276003
+// when the full design is active (JTFRAME_PXLCLK=8 ends constant-folding).
+(* ramstyle = "MLAB" *) reg [15:0] control [0:31];
+(* ramstyle = "MLAB" *) reg [16:0] fc      [0:31];
+(* ramstyle = "MLAB" *) reg [24:0] startp  [0:31];
+(* ramstyle = "MLAB" *) reg [24:0] endp    [0:31];
+(* ramstyle = "MLAB" *) reg [31:0] accum   [0:31];
+(* ramstyle = "MLAB" *) reg [15:0] lvol    [0:31];
+(* ramstyle = "MLAB" *) reg [15:0] rvol    [0:31];
 // Filter coefficients (16-bit unsigned; K>>4 gives 12-bit cutoff factor)
-(* ramstyle = "no_rw_check" *) reg [15:0] k1      [0:31];
-(* ramstyle = "no_rw_check" *) reg [15:0] k2      [0:31];
+(* ramstyle = "MLAB" *) reg [15:0] k1      [0:31];
+(* ramstyle = "MLAB" *) reg [15:0] k2      [0:31];
 // Envelope/ramp registers (16-bit; ramp value in bits [7:0] as signed 8-bit)
-(* ramstyle = "no_rw_check" *) reg [15:0] lvramp  [0:31];  // LVRAMP: left-vol  ramp signed delta per sample
-(* ramstyle = "no_rw_check" *) reg [15:0] rvramp  [0:31];  // RVRAMP: right-vol ramp signed delta per sample
-(* ramstyle = "no_rw_check" *) reg [15:0] ecount  [0:31];  // ECOUNT: ramp countdown (0 = idle)
-(* ramstyle = "no_rw_check" *) reg [15:0] k1ramp  [0:31];  // K1RAMP: K1 signed delta per sample (high-page)
-(* ramstyle = "no_rw_check" *) reg [15:0] k2ramp  [0:31];  // K2RAMP: K2 signed delta per sample (high-page)
-// 4-pole IIR filter state (32-bit signed; use MLAB for 32-deep arrays)
-(* ramstyle = "no_rw_check" *) reg signed [31:0] o1n1 [0:31];  // pole-1 output n-1
-(* ramstyle = "no_rw_check" *) reg signed [31:0] o2n1 [0:31];  // pole-2 output n-1
-(* ramstyle = "no_rw_check" *) reg signed [31:0] o3n1 [0:31];  // pole-3 output n-1
-(* ramstyle = "no_rw_check" *) reg signed [31:0] o4n1 [0:31];  // pole-4 output n-1
+(* ramstyle = "MLAB" *) reg [15:0] lvramp  [0:31];  // LVRAMP: left-vol  ramp signed delta per sample
+(* ramstyle = "MLAB" *) reg [15:0] rvramp  [0:31];  // RVRAMP: right-vol ramp signed delta per sample
+(* ramstyle = "MLAB" *) reg [15:0] ecount  [0:31];  // ECOUNT: ramp countdown (0 = idle)
+(* ramstyle = "MLAB" *) reg [15:0] k1ramp  [0:31];  // K1RAMP: K1 signed delta per sample (high-page)
+(* ramstyle = "MLAB" *) reg [15:0] k2ramp  [0:31];  // K2RAMP: K2 signed delta per sample (high-page)
+// 4-pole IIR filter state (32-bit signed; MLAB in 2-wide 20-bit config)
+(* ramstyle = "MLAB" *) reg signed [31:0] o1n1 [0:31];  // pole-1 output n-1
+(* ramstyle = "MLAB" *) reg signed [31:0] o2n1 [0:31];  // pole-2 output n-1
+(* ramstyle = "MLAB" *) reg signed [31:0] o3n1 [0:31];  // pole-3 output n-1
+(* ramstyle = "MLAB" *) reg signed [31:0] o4n1 [0:31];  // pole-4 output n-1
 
 reg [ 5:0] page;
 reg [ 4:0] active;       // active voices-1, default 31
