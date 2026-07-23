@@ -111,10 +111,11 @@ reg  [ 8:0] startup_cnt;         // counts vblanks; startup_phase = bit8 clear
 wire        blit_done;
 wire [16:0] cpu_xfer_addr;
 wire [ 7:0] fg_io_pix, bg_io_pix;
-// DIAG: hardwire startup_phase so the white screen shows regardless of counter state.
-// If white is visible on hardware: video chain works, investigate counter logic.
-// If still black: issue is in LHBL/LVBL gating or upstream of arcade_video.
-wire        startup_phase = 1'b1; // was: ~startup_cnt[8]
+// startup_phase=1 for the first 256 vblanks (~4s) after game_rst deasserts.
+// Root cause of original black screen: LHBL/LVBL were reset to 0 (blanked),
+// causing arcade_video to latch VBL=1 on the very first frame edge.  Fixed by
+// initialising LHBL/LVBL to 1 (active) in the CRTC reset block below.
+wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnostic raster
 integer     i;
 
 function [15:0] merge16;
