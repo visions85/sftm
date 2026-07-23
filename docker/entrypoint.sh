@@ -37,6 +37,17 @@ if [ ! -f "${JTFRAME_SENTINEL}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 1b. Apply SFTM-specific jtframe patches (idempotent; always applied).
+#     Stored in docker/jtframe-patches/ to survive volume re-creation.
+# ---------------------------------------------------------------------------
+JTFRAME_PATCHES="/workspace/docker/jtframe-patches"
+if [ -d "${JTFRAME_PATCHES}" ]; then
+    cp -r "${JTFRAME_PATCHES}/." "${JTFRAME_DIR}/"
+fi
+# GAMMA=0: disable gamma correction LUT tables (~2k ALMs saved; no dedicated macro exists)
+sed -i 's/GAMMA=1/GAMMA=0/' "${JTFRAME_DIR}/target/mister/hdl/sys/arcade_video.v" 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
 # 2. Pre-compile jtframe binary (bin/jtframe is a wrapper that auto-compiles
 #    to src/jtframe/jtframe on first call; we do it here so interactive use
 #    is instant rather than waiting ~1 min on first jtframe command)
