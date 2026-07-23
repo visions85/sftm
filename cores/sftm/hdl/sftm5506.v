@@ -145,7 +145,7 @@ always @(*) begin
                     3'h7: host_dout = host_addr[1] ? k2[page[2:0]][15:8]       : k2[page[2:0]][7:0];
                     default: ;
                 endcase
-            end else if( page >= NVOICES && page < 2*NVOICES ) begin  // high pages
+            end else if( page[5] ) begin  // high pages: bit 5 = 1 per OTTO spec (pages 32-63)
                 case(host_addr[5:3])
                     3'h1: host_dout = host_addr[1] ? startp[page[2:0]][23:16] : startp[page[2:0]][15:8];
                     3'h2: host_dout = host_addr[1] ? endp  [page[2:0]][23:16] : endp  [page[2:0]][15:8];
@@ -179,8 +179,8 @@ begin
             3'h6: ecount[pg][ (addr[1] ? 15:7) -: 8 ]   <= data; // H30 ECOUNT
             3'h7: k2[pg][ (addr[1] ? 15:7) -: 8 ]       <= data; // H38 K2
         endcase
-    end else if( pg>=NVOICES && pg<2*NVOICES ) begin
-        // High pages NVOICES..2*NVOICES-1: address/accumulator + remaining coefficients.
+    end else if( pg[5] ) begin
+        // High pages 32..63 per OTTO spec: address/accumulator + remaining coefficients.
         case(addr[5:3])
             3'h1: startp[pg[2:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H08 START
             3'h2: endp  [pg[2:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H10 END
@@ -209,7 +209,7 @@ begin
             3'h7: read_reg = addr[1] ? k2[pg[2:0]][15:8]      : k2[pg[2:0]][7:0];
             default: ;
         endcase
-    end else if( pg>=NVOICES && pg<2*NVOICES ) begin
+    end else if( pg[5] ) begin  // high pages: bit 5 set
         case(addr[5:3])
             3'h1: read_reg = addr[1] ? startp[pg[2:0]][23:16] : startp[pg[2:0]][15:8];
             3'h2: read_reg = addr[1] ? endp  [pg[2:0]][23:16] : endp  [pg[2:0]][15:8];
@@ -237,14 +237,16 @@ reg signed [31:0] mix_l, mix_r;
 // apply_highpass(cur_input, k, state_prev, prev_prev):
 //   result = cur_input - prev_prev + (k>>4) * state_prev / 8192 + state_prev / 2
 //
-// All arithmetic is signed.  Multiplies are done as 64-bit (widened from the
-// 12-bit coefficient × 32-bit state) to avoid Verilog truncation.
+// All arithmetic is signed.  Filter multiplies use real operand widths
+// (12-bit coefficient × 33-bit state = 46-bit product) to enable DSP inference.
 // ---------------------------------------------------------------------------
 
-// K coefficients, right-shifted by 4 (= FILTER_SHIFT), zero-extended to 64 b.
-// This produces the 12-bit integer multiplier used in the formulas above.
-wire signed [63:0] fk1_64 = {48'd0, k1[vidx][15:4]};
-wire signed [63:0] fk2_64 = {48'd0, k2[vidx][15:4]};
+// K coefficients, right-shifted by 4 (= FILTER_SHIFT): 12-bit unsigned.
+// Using real operand widths so Quartus can infer DSP blocks rather than soft
+// LUT multipliers.  The (* multstyle = "dsp" *) attribute is a Quartus
+// synthesis directive; iverilog ignores it.
+wire [11:0] fk1 = k1[vidx][15:4];
+wire [11:0] fk2 = k2[vidx][15:4];
 
 // LP mode from control register bits 9:8 = {LP4, LP3}.
 //   2'b00: pole3=HP K2, pole4=HP K2
@@ -258,60 +260,59 @@ wire signed [31:0] fin = {{16{srom_data[15]}}, srom_data};
 
 // --- Pole 1: always LP using K1 ---
 // result = fk1*(o1n1 - fin)/4096 + fin
-wire signed [63:0] p1_diff_64 = {{32{o1n1[vidx][31]}}, o1n1[vidx]}
-                                - {{32{fin[31]}}, fin};
-wire signed [63:0] p1_prod    = fk1_64 * p1_diff_64;
-wire signed [31:0] p1         = $signed(p1_prod[43:12]) + fin;
+// 13-bit signed × 33-bit signed = 46-bit product; [43:12] = /4096.
+wire signed [32:0] p1_diff = {o1n1[vidx][31], o1n1[vidx]} - {fin[31], fin};
+(* multstyle = "dsp" *) wire signed [45:0] p1_prod = $signed({1'b0, fk1}) * p1_diff;
+wire signed [31:0] p1 = $signed(p1_prod[43:12]) + fin;
 
 // --- Pole 2: always LP using K1 ---
-wire signed [63:0] p2_diff_64 = {{32{o2n1[vidx][31]}}, o2n1[vidx]}
-                                - {{32{p1[31]}}, p1};
-wire signed [63:0] p2_prod    = fk1_64 * p2_diff_64;
-wire signed [31:0] p2         = $signed(p2_prod[43:12]) + p1;
+wire signed [32:0] p2_diff = {o2n1[vidx][31], o2n1[vidx]} - {p1[31], p1};
+(* multstyle = "dsp" *) wire signed [45:0] p2_prod = $signed({1'b0, fk1}) * p2_diff;
+wire signed [31:0] p2 = $signed(p2_prod[43:12]) + p1;
 
 // --- Pole 3: LP K1 variant (lp_mode=2'b01 or 2'b11) ---
-wire signed [63:0] p3_lpk1_diff = {{32{o3n1[vidx][31]}}, o3n1[vidx]}
-                                  - {{32{p2[31]}}, p2};
-wire signed [63:0] p3_lpk1_prod = fk1_64 * p3_lpk1_diff;
-wire signed [31:0] p3_lpk1      = $signed(p3_lpk1_prod[43:12]) + p2;
+wire signed [32:0] p3_lpk1_diff = {o3n1[vidx][31], o3n1[vidx]} - {p2[31], p2};
+(* multstyle = "dsp" *) wire signed [45:0] p3_lpk1_prod = $signed({1'b0, fk1}) * p3_lpk1_diff;
+wire signed [31:0] p3_lpk1 = $signed(p3_lpk1_prod[43:12]) + p2;
 
 // --- Pole 3: LP K2 variant (lp_mode=2'b10) ---
-wire signed [63:0] p3_lpk2_diff = {{32{o3n1[vidx][31]}}, o3n1[vidx]}
-                                  - {{32{p2[31]}}, p2};
-wire signed [63:0] p3_lpk2_prod = fk2_64 * p3_lpk2_diff;
-wire signed [31:0] p3_lpk2      = $signed(p3_lpk2_prod[43:12]) + p2;
+wire signed [32:0] p3_lpk2_diff = {o3n1[vidx][31], o3n1[vidx]} - {p2[31], p2};
+(* multstyle = "dsp" *) wire signed [45:0] p3_lpk2_prod = $signed({1'b0, fk2}) * p3_lpk2_diff;
+wire signed [31:0] p3_lpk2 = $signed(p3_lpk2_prod[43:12]) + p2;
 
 // --- Pole 3: HP K2 variant (lp_mode=2'b00) ---
-// apply_hp(p2, k2, o3n1, prev=o2n1)
-wire signed [63:0] p3_hpk2_prod = fk2_64 * {{32{o3n1[vidx][31]}}, o3n1[vidx]};
-wire signed [31:0] p3_hpk2      = p2 - o2n1[vidx]
-                                  + $signed(p3_hpk2_prod[44:13])
-                                  + (o3n1[vidx] >>> 1);
+// apply_hp(p2, k2, o3n1, prev=o2n1): result uses /8192 so extract [44:13].
+(* multstyle = "dsp" *) wire signed [45:0] p3_hpk2_prod = $signed({1'b0, fk2}) * {o3n1[vidx][31], o3n1[vidx]};
+wire signed [31:0] p3_hpk2 = p2 - o2n1[vidx]
+                             + $signed(p3_hpk2_prod[44:13])
+                             + (o3n1[vidx] >>> 1);
 
 wire signed [31:0] p3 = lp_mode[1] ? (lp_mode[0] ? p3_lpk1 : p3_lpk2)
                                     : (lp_mode[0] ? p3_lpk1 : p3_hpk2);
 
 // --- Pole 4: LP K2 variant (lp_mode=2'b10 or 2'b11) ---
-wire signed [63:0] p4_lpk2_diff = {{32{o4n1[vidx][31]}}, o4n1[vidx]}
-                                  - {{32{p3[31]}}, p3};
-wire signed [63:0] p4_lpk2_prod = fk2_64 * p4_lpk2_diff;
-wire signed [31:0] p4_lpk2      = $signed(p4_lpk2_prod[43:12]) + p3;
+wire signed [32:0] p4_lpk2_diff = {o4n1[vidx][31], o4n1[vidx]} - {p3[31], p3};
+(* multstyle = "dsp" *) wire signed [45:0] p4_lpk2_prod = $signed({1'b0, fk2}) * p4_lpk2_diff;
+wire signed [31:0] p4_lpk2 = $signed(p4_lpk2_prod[43:12]) + p3;
 
 // --- Pole 4: HP K2 variant (lp_mode=2'b00 or 2'b01) ---
-// apply_hp(p3, k2, o4n1, prev=o3n1 [becomes new o3n2 after pole-3 update])
-wire signed [63:0] p4_hpk2_prod = fk2_64 * {{32{o4n1[vidx][31]}}, o4n1[vidx]};
-wire signed [31:0] p4_hpk2      = p3 - o3n1[vidx]
-                                  + $signed(p4_hpk2_prod[44:13])
-                                  + (o4n1[vidx] >>> 1);
+// apply_hp(p3, k2, o4n1, prev=o3n1)
+(* multstyle = "dsp" *) wire signed [45:0] p4_hpk2_prod = $signed({1'b0, fk2}) * {o4n1[vidx][31], o4n1[vidx]};
+wire signed [31:0] p4_hpk2 = p3 - o3n1[vidx]
+                             + $signed(p4_hpk2_prod[44:13])
+                             + (o4n1[vidx] >>> 1);
 
 wire signed [31:0] p4 = lp_mode[1] ? p4_lpk2 : p4_hpk2;
 
 // ---------------------------------------------------------------------------
 // Per-voice contribution (combinatorial; used by both flush and accumulate
 // paths to avoid the NBA conflict when vidx==active and voice is running).
+// 32-bit signed × 15-bit unsigned = 47-bit product; [45:14] = /16384.
 // ---------------------------------------------------------------------------
-wire signed [31:0] contrib_l = (p4 * $signed({1'b0,lvol[vidx][14:0]})) >>> 14;
-wire signed [31:0] contrib_r = (p4 * $signed({1'b0,rvol[vidx][14:0]})) >>> 14;
+(* multstyle = "dsp" *) wire signed [47:0] contrib_l_48 = p4 * $signed({1'b0, lvol[vidx][14:0]});
+(* multstyle = "dsp" *) wire signed [47:0] contrib_r_48 = p4 * $signed({1'b0, rvol[vidx][14:0]});
+wire signed [31:0] contrib_l = contrib_l_48[45:14];
+wire signed [31:0] contrib_r = contrib_r_48[45:14];
 
 // ---------------------------------------------------------------------------
 // Envelope ramp wires (18-bit signed; compute clamped result for current vidx).
