@@ -11,7 +11,9 @@
 #   ./docker/run-synth.sh --rebuild     # force image rebuild before synthesis
 #
 # The .rbf output will be at:
-#   jtbin/mister/jtsftm.rbf  (or cores/sftm/mister/output_files/jtsftm.rbf)
+#   release/mister/sftm.rbf   (Quartus project is named 'sftm')
+#   release/mister/jtsftm.rbf (copy created after synthesis for MRA compatibility;
+#                               the MRA <rbf> tag uses the JTFRAME jt-prefix name)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,7 +48,8 @@ docker volume inspect "$VOLUME" &>/dev/null \
 # ---- Run synthesis ----
 # jtcore is called with -mister target.  The --no-dbg flag keeps macros
 # clean; remove it to include OSD debug overlays.
-exec docker run --rm --platform linux/amd64 \
+set +e
+docker run --rm --platform linux/amd64 \
     -v "${REPO_DIR}:/workspace" \
     -v "${VOLUME}:/workspace/modules/jtframe" \
     -e JTROOT=/workspace \
@@ -59,3 +62,16 @@ exec docker run --rm --platform linux/amd64 \
     -e TARGET=mister \
     "$IMAGE" \
     bash -c 'git config --global --add safe.directory /workspace && cd /workspace && jtcore sftm -mister'
+RC=$?
+set -e
+
+# Create the jtsftm.rbf alias expected by the MRA <rbf> tag.
+# The Quartus project is named 'sftm' so Quartus outputs sftm.rbf;
+# JTFRAME MRA generation uses the jt-prefix convention (jtsftm).
+RBF="${REPO_DIR}/release/mister/sftm.rbf"
+if [[ -f "$RBF" ]]; then
+    cp "$RBF" "${REPO_DIR}/release/mister/jtsftm.rbf"
+    echo "[run-synth.sh] Copied sftm.rbf -> jtsftm.rbf"
+fi
+
+exit $RC
