@@ -106,12 +106,39 @@ now uses `ghdl-llvm` which supports synthesis):
 ```sh
 ./docker/run.sh bash -c '
   cd /workspace/cores/sftm/hdl/tg68k && \
-  ghdl -a -fsynopsys TG68K_Pack.vhd TG68K_ALU.vhd TG68KdotC_Kernel.vhd TG68K.vhd && \
-  ghdl synth --out=verilog TG68KdotC_Kernel > TG68KdotC_Kernel_conv.v
+  ghdl -a --std=08 -fsynopsys -frelaxed-rules \
+      TG68K_Pack.vhd TG68K_ALU.vhd TG68KdotC_Kernel.vhd TG68K.vhd && \
+  ghdl synth --std=08 -fsynopsys -frelaxed-rules --out=verilog TG68KdotC_Kernel \
+      > /workspace/cores/sftm/hdl/tg68k/TG68KdotC_Kernel_conv.v
 '
 ```
 
-The resulting `TG68KdotC_Kernel_conv.v` is not committed (generated artifact).
+Post-processing (add dummy Verilog `#(parameter ...)` so `sftm_main.v`'s
+`#(.SR_Read(2), ...)` instantiation compiles cleanly):
+
+```sh
+python3 -c "
+content = open('cores/sftm/hdl/tg68k/TG68KdotC_Kernel_conv.v').read()
+old = 'module TG68KdotC_Kernel\\n  (input  clk,'
+new = '''module TG68KdotC_Kernel
+  #(parameter SR_Read=2, VBR_Stackframe=2, extAddr_Mode=2,
+              MUL_Mode=2, DIV_Mode=2, BitField=2,
+              BarrelShifter=2, MUL_Hardware=1)
+  (input  clk,'''
+assert old in content
+open('cores/sftm/hdl/tg68k/TG68KdotC_Kernel_conv.v','w').write(content.replace(old, new, 1))
+print('PATCHED_OK')
+"
+```
+
+The resulting `TG68KdotC_Kernel_conv.v` is not committed (listed in `.gitignore`).
+
+Notes on `--std=08 -fsynopsys -frelaxed-rules`: ghdl 4.x bundles a VHDL-93
+`std_logic_1164` that defines `=` for `std_logic_vector`, conflicting with
+`std_logic_unsigned` (which TG68K_ALU.vhd also uses).  `--std=08` with
+`-frelaxed-rules` resolves the ambiguity; `-fsynopsys` permits the Synopsys
+package name.  The `libllvm18` package and a `libLLVM-18.so.18.1` symlink are
+required — both are supplied by the Dockerfile.
 
 ## Architecture
 
@@ -174,9 +201,10 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 - IT42 blitter: transparency, X/Y flip, clip rect, SRC_XSTEP (8.8 fp, fractional accumulator), DST_XSTEP (8.8 fp, DSTXSCALE flag), DST_YSTEP (8.8 fp, always active), WIDTHPIX flag decoded
 - ES5506 (`sftm5506`): 32-voice scheduler, 8-bit host interface, PAGE/ACTIVE registers, forward loop (LPE), reverse loop (DIR), bidirectional loop (BLE), one-shot stop, bank offset, 4-pole IIR filter (K1/K2 per voice; apply_lowpass/apply_highpass matching MAME es5506.cpp; LP mode from control[9:8]), volume/pan mix, 20-bit saturation; correct OTTO-spec register map (LVRAMP/RVRAMP/ECOUNT/K2 in low pages; K1/K2RAMP/K1RAMP in high pages); envelope/volume ramps (ECOUNT countdown, signed 8-bit LVRAMP/RVRAMP/K1RAMP/K2RAMP deltas applied per sample tick); IRQ vector stacking (one-shot stop + ECOUNT expiry with IRQE fire IRQV; rescan on ack)
 - 6 self-checking testbenches (sftm5506 now covers 9 sub-tests), all passing
+- `tb_sftm_main_boot` — full-boot bench using real TG68KdotC_Kernel CPU (ghdl-converted); verifies boot-vector copy → CPU reset-vector read → first ROM fetch at 0x800008 (PASS)
 
 **Not yet implemented / validated:**
-- TG68K.C VHDL→Verilog conversion for iverilog sim (VHDL is vendored; use `ghdl synth` inside Docker — see above)
+- ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
 - ROM download via OSD + first boot (game does not yet execute; black screen expected)
 - ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces); IRQV host_addr 0x38 overlaps K2[7:0] low-byte read (reading 0x38 returns IRQV per current design)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
@@ -188,7 +216,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe via `docker/run.sh`; TG68K.C VHDL vendored as submodule at `hdl/tg68k/`; ghdl synth conversion still needed for iverilog sim
 2. ~~Run `jtframe mem sftm`~~ — DONE: generated `cores/sftm/mist/sftm_game_sdram.v` and `mem_ports.inc`
 3. ~~Hardware build (Quartus)~~ — DONE: 22,903/41,910 ALMs (55%), core loads on MiSTer, OSD visible (2026-07-23)
-4. Convert TG68K.C for Verilator — run `ghdl synth` inside Docker (Dockerfile now uses `ghdl-llvm`; see the command above). Produces `TG68KdotC_Kernel_conv.v` for iverilog/Verilator sim.
+4. ~~Convert TG68K.C for Verilator~~ — DONE: `ghdl synth --std=08 -fsynopsys -frelaxed-rules` produces `TG68KdotC_Kernel_conv.v` (35,339 lines); boot testbench PASS.
 5. Run 68020 opcode tests before booting ROM code
 6. Log MAME blitter commands and replay into `sftm_blitter` (compare pixel-exact output)
 7. ~~ES5506 basic voice scheduler~~ — DONE. Still needed: compare `sftm5506` output against MAME `es5506.cpp` for a captured register/ROM trace

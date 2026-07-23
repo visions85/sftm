@@ -27,6 +27,8 @@ simulation/
 *.vcd
 *.fst
 *.wlf
+# ghdl synth output (generated artifact, not committed)
+cores/*/hdl/tg68k/TG68KdotC_Kernel_conv.v
 # ROMs are never committed
 *.zip
 *.7z

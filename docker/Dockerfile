@@ -8,6 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     iverilog \
     ghdl-llvm \
+    libllvm18 \
     verilator \
     git \
     make \
@@ -17,7 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     xz-utils \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/lib/x86_64-linux-gnu/libLLVM.so.18.1 \
+             /usr/lib/x86_64-linux-gnu/libLLVM-18.so.18.1
 
 # Go 1.23 — jtframe go.mod requires >= 1.22, toolchain 1.23.4
 # Auto-detect arch so this works on both x86_64 and Apple Silicon.
