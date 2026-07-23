@@ -124,7 +124,10 @@ assign rom_addr = brom_cs ? { 4'd4 + rom_bank[3:0], a[13:0] }   // banked (12 ba
 // ---------------------------------------------------------------------------
 // RAM (8 KB)
 // ---------------------------------------------------------------------------
-reg [7:0] ram[0:8191];
+// Force MLAB inference: Cyclone V MLABs support async reads in feed-through
+// mode, which avoids the 'uninferred due to async read' path that would put
+// all 65536 bits into LUT fabric (~1 k+ ALMs).
+(* ramstyle = "MLAB, no_rw_check" *) reg [7:0] ram[0:8191];
 always @(posedge clk) if (cen && ram_cs && !rw) ram[a[12:0]] <= dout;
 
 wire [7:0] es_dout;
