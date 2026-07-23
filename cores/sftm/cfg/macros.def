@@ -52,3 +52,7 @@ JTFRAME_BA3_START=0x23D0000
 [mister]
 # OSD extras for MiSTer
 JTFRAME_OSD_VOL
+# Disable HQ2x scandoubler (saves ~9.9k ALMs; hq2x_buf line buffers use FFs
+# not block RAM, making it disproportionately expensive on Cyclone V).
+# Replaced by simple 2x line doubler via jtframe_scan2x.v.
+JTFRAME_NOHQ2X
