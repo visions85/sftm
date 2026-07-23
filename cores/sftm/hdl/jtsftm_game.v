@@ -180,4 +180,8 @@ sftm_snd u_snd(
 );
 
 /* verilator lint_on WIDTH */
+
+// debug_view: show boot status and other CPU-side signals
+assign debug_view = debug_bus;   // echo debug_bus for now (placeholder)
+
 endmodule

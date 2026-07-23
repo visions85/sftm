@@ -107,11 +107,11 @@ reg  [ 7:0] cpu_xfer_wdata;
 reg  [ 1:0] cpu_xfer_plane_en;
 reg  [ 9:0] hcnt, vcnt;
 reg         blit_busy;           // set on blit_start, cleared on blit_done
-reg  [ 5:0] startup_cnt;         // counts vblanks; startup_phase = bit5 clear
+reg  [ 8:0] startup_cnt;         // counts vblanks; startup_phase = bit8 clear
 wire        blit_done;
 wire [16:0] cpu_xfer_addr;
 wire [ 7:0] fg_io_pix, bg_io_pix;
-wire        startup_phase = ~startup_cnt[5]; // first 32 frames: diagnostic raster
+wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnostic raster
 integer     i;
 
 function [15:0] merge16;
@@ -277,12 +277,12 @@ always @(posedge clk) begin
 end
 
 // Startup diagnostic frame counter: counts vblank pulses.
-// For the first 32 frames (startup_phase=1) we force a colour raster so the
-// user can immediately confirm the video pipeline is alive without touching
-// the OSD.  After 32 frames the core switches to normal game output.
+// For the first 256 frames (~4s, startup_phase=1) we force solid white so
+// the user can confirm the video pipeline is alive right after ROM download.
+// After 256 frames the core switches to normal game output.
 always @(posedge clk) begin
-    if( rst ) startup_cnt <= 6'd0;
-    else if( vblank_irq && startup_phase ) startup_cnt <= startup_cnt + 6'd1;
+    if( rst ) startup_cnt <= 9'd0;
+    else if( vblank_irq && startup_phase ) startup_cnt <= startup_cnt + 9'd1;
 end
 
 // ---------------------------------------------------------------------------
