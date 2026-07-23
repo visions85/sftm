@@ -102,7 +102,8 @@ sftm_main uut(
     .color_latch0(color_latch0), .color_latch1(color_latch1),
     .blit_irq(blit_irq), .scan_irq(scan_irq), .vblank_irq(vblank_irq),
     .snd_latch(snd_latch), .snd_latch_we(snd_latch_we),
-    .debug_bus(debug_bus)
+    .debug_bus(debug_bus),
+    .LVBL(1'b1)
 );
 
 // ---------------------------------------------------------------------------
