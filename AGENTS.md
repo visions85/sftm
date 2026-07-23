@@ -86,6 +86,23 @@ Generated output (`cores/sftm/mist/` or `mister/`) is written back to the host r
 
 Note: `run-synth.sh` copies `sftm.rbf` → `jtsftm.rbf` to match the `<rbf>jtsftm</rbf>` tag in the MRA.
 
+**If synthesis exits 1 (timing violation)**, the bitstream is still generated but NOT copied to `release/mister/`. Manually copy and deploy:
+
+```sh
+cp cores/sftm/mister/output_files/sftm.rbf release/mister/jtsftm.rbf
+scp -i ~/.ssh/david_key -o StrictHostKeyChecking=no \
+    release/mister/jtsftm.rbf \
+    root@10.10.10.98:/media/fat/_Arcade/cores/jtsftm.rbf
+```
+
+After a successful `run-synth.sh` (exit 0), deploy directly:
+
+```sh
+scp -i ~/.ssh/david_key -o StrictHostKeyChecking=no \
+    release/mister/jtsftm.rbf \
+    root@10.10.10.98:/media/fat/_Arcade/cores/jtsftm.rbf
+```
+
 ### MiSTer deployment paths
 
 After `./docker/run-synth.sh`, copy to MiSTer via scp:
