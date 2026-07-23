@@ -60,7 +60,11 @@ module sftm_main(
 
     // NVRAM is kept in on-chip BRAM (u_nvram); JTFRAME battery persistence
     // is deferred (see hdl/mem.yaml).
-    input       [ 7:0]  debug_bus
+    input       [ 7:0]  debug_bus,
+
+    // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
+    // active-low: 1=active display, 0=in vertical blank).
+    input               LVBL
 );
 
 // Memory map (verified against MAME itech32.cpp `itech020_map`).
@@ -232,45 +236,58 @@ always @(*) begin
         prot_cs:  inp_mux = { prot_byte, 8'hff };
         nopr_cs:  inp_mux = 16'h0000;
         inp_cs:   inp_mux = read_inputs(ahi);
-        sys_cs:   inp_mux = cpu_a[1] ? 16'h0000 : 16'h00FF;  // P4: all unused active-low
-        dip_cs:   inp_mux = cpu_a[1] ? 16'h0000             // bits[15:0] unused
-                                      : { 8'h00,
-                                          dipsw_a[7],    // bit23 service_mode dip  (active-high)
-                                          ~dipsw_a[6],   // bit22 freeze-screen dip (active-low)
-                                          ~dipsw_a[5],   // bit21 flip-screen dip   (active-low)
-                                          ~dipsw_a[4],   // bit20 video-sync dip    (active-low)
-                                          1'b1,          // bit19 special port      (tied inactive)
-                                          1'b1,          // bit18 vblank status     (tied inactive)
-                                          ~service,      // bit17 service coin
-                                          ~dip_test };   // bit16 test-mode switch
+        // P4 (0x200000): bits[7:0] active-low all unused (→ lower half, cpu_a[1]=1).
+        sys_cs:   inp_mux = cpu_a[1] ? 16'h00FF : 16'h0000;
+        // DIPS (0x280000): MAME itech32_base_020 PORT_BIT definitions, bits[7:0]
+        // live in the lower 16-bit half (cpu_a[1]=1, byte offsets +2/+3).
+        //   bit0 (0x01): test-mode switch     (active-low)
+        //   bit1 (0x02): service coin         (active-low)
+        //   bit2 (0x04): VBLANK from screen   (active-low: 1=active display, 0=vblank)
+        //   bit3 (0x08): special_port_r       (active-high, 0=idle)
+        //   bit4 (0x10): Video Sync DIP       (0=standard)
+        //   bit5 (0x20): Flip Screen DIP      (0=off)
+        //   bit6 (0x40): Unknown DIP          (0=on/default)
+        //   bit7 (0x80): Service Mode DIP     (active-high, 0=normal)
+        dip_cs:   inp_mux = cpu_a[1] ? { 8'h00,
+                                          dipsw_a[7],    // bit7 service-mode DIP (active-high)
+                                          dipsw_a[6],    // bit6 unknown DIP
+                                          dipsw_a[5],    // bit5 flip-screen DIP
+                                          dipsw_a[4],    // bit4 video-sync DIP
+                                          1'b0,          // bit3 special_port_r (idle)
+                                          LVBL,          // bit2 vblank (1=active disp, 0=vblank)
+                                          ~service,      // bit1 service coin
+                                          ~dip_test }    // bit0 test-mode switch
+                                       : 16'h0000;       // upper half unused
         default:  inp_mux = 16'hffff;
     endcase
 end
 assign cpu_din = inp_mux;
 
 // Input port reads.
-// itech32 32-bit ports carry data in bits[23:16] (the upper byte of the
-// upper 16-bit half); bits[31:24] are 0 and bits[15:0] are unused/unknown.
-// TG68K 16-bit bus: cpu_a[1]=0 → upper half { 8'h00, io_byte },
-//                   cpu_a[1]=1 → lower half 16'h0000.
-// All active-low inputs are inverted; JTFRAME joystick is active-high.
+// MAME itech32_base_020 PORT_BIT definitions place all input bits in bits[7:0]
+// of the 32-bit port value (= bytes +2/+3, i.e. the LOWER 16-bit half).
+// TG68K 16-bit bus: cpu_a[1]=0 → upper half 16'h0000 (unused),
+//                   cpu_a[1]=1 → lower half { 8'h00, io_byte }.
+// MAME bit layout for P1/P2 (all active-low):
+//   bit7=UP  bit6=DN  bit5=LT  bit4=RT  bit3=B2  bit2=B1  bit1=START  bit0=COIN
+// JTFRAME joystick convention: [0]=UP [1]=DN [2]=LT [3]=RT [4]=B1 [5]=B2
 function [15:0] read_inputs(input [7:0] sel);
     reg [7:0] io;
     begin
         case(sel)
             // P1 (0x080000): UP,DN,LT,RT,B2,B1,START1,COIN1  (all active-low)
-            REG_INP0: io = ~{ joystick1[3], joystick1[2], joystick1[1], joystick1[0],
+            REG_INP0: io = ~{ joystick1[0], joystick1[1], joystick1[2], joystick1[3],
                                joystick1[5], joystick1[4], cab_1p[0],   coin[0] };
             // P2 (0x100000): same layout for player 2
-            REG_INP1: io = ~{ joystick2[3], joystick2[2], joystick2[1], joystick2[0],
+            REG_INP1: io = ~{ joystick2[0], joystick2[1], joystick2[2], joystick2[3],
                                joystick2[5], joystick2[4], cab_1p[1],   coin[1] };
-            // P3 (0x180000): extra LP/MP/HP/LK/MK/HK buttons BTN3-6 both players
-            // bit layout: B6p2,B6p1,B5p2,B5p1,B4p2,B4p1,B3p2,B3p1
-            REG_INP2: io = ~{ joystick2[9], joystick1[9], joystick2[8], joystick1[8],
-                               joystick2[7], joystick1[7], joystick2[6], joystick1[6] };
+            // P3 (0x180000): all active-high unused per MAME itech32_base_020 P3.
+            // sftm extra punch/kick buttons (BTN3-6) may need PORT_MODIFY here
+            // once the exact mapping is confirmed against MAME.
+            REG_INP2: io = 8'h00;
             default:  io = 8'hFF;
         endcase
-        read_inputs = cpu_a[1] ? 16'h0000 : { 8'h00, io };
+        read_inputs = cpu_a[1] ? { 8'h00, io } : 16'h0000;
     end
 endfunction
 

@@ -99,7 +99,9 @@ sftm_main u_main(
     .snd_latch  ( snd_latch     ),
     .snd_latch_we(snd_latch_we  ),
     // NVRAM is on-chip BRAM inside sftm_main (persistence deferred)
-    .debug_bus  ( debug_bus     )
+    .debug_bus  ( debug_bus     ),
+    // vblank status for DIPS register bit 2 (active-low: 1=active display)
+    .LVBL       ( LVBL          )
 );
 
 // ---------------------------------------------------------------------------
