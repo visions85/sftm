@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **early scaffold** — the core does not yet boot a game. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), which is not yet vendored.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **early scaffold** — the core loads on a MiSTer (5CSEBA6U23I7, 22,903/41,910 ALMs, 55%) and shows a black screen with OSD visible; the game does not yet boot. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -77,12 +77,16 @@ The sftm repo is mounted at `/workspace` (= `$JTROOT`). The jtframe module lives
 persistent Docker volume `jtframe-module` at `/workspace/modules/jtframe`.
 Generated output (`cores/sftm/mist/` or `mister/`) is written back to the host repo.
 
-### Full build (requires Quartus, Linux)
+### Full build (requires Quartus, Linux x86-64)
 
 ```sh
 ./docker/run.sh jtframe mra sftm        # generate .mra and ROM download descriptor
-./docker/run.sh jtcore sftm -mister     # synthesise and build .rbf (needs Quartus)
+./docker/run-synth.sh                   # synthesise and build .rbf; output: release/mister/sftm.rbf
 ```
+
+`./docker/run-synth.sh` uses a separate Docker volume `jtframe-module-amd64` (not `jtframe-module`). Patches in `docker/jtframe-patches/` are applied automatically by `docker/entrypoint.sh` on every container start. Current patches:
+- `target/mister/hdl/sys/osd.sv` — replaces behavioral `osd_buffer` with `altsyncram #(.ram_block_type("M10K"))` to force M10K inference (prevents ~40k ALM blowup on Quartus 21.1)
+- `arcade_video.v` — GAMMA=0 (removes gamma LUT, saves ~2.2k ALMs)
 
 ### JTFRAME helper commands
 
@@ -116,7 +120,7 @@ The resulting `TG68KdotC_Kernel_conv.v` is not committed (generated artifact).
 ```
 sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 ├── sftm_main        — MC68EC020 CPU subsystem
-│   ├── TG68KdotC_Kernel  — 68020 CPU (VHDL, not yet vendored; hdl/tg68k/)
+│   ├── TG68KdotC_Kernel  — 68020 CPU (VHDL, vendored at hdl/tg68k/; ghdl synth conversion needed for iverilog sim)
 │   ├── sftm_ram     — byte-lane 16-bit BRAM (main RAM and NVRAM)
 │   └── sftm_prot    — protection byte snooper (0x680002)
 ├── sftm_video       — IT42 blitter + CRTC + VRAM + palette
@@ -159,6 +163,9 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 **Implemented:**
 - JTFRAME folder layout, config files (`cfg/macros.def`, `cfg/mem.yaml`, `cfg/mame2mra.toml`, `cfg/files.yaml`), game-top wiring
 - Docker Linux environment (`docker/`) — `./docker/run.sh jtframe mem sftm` generates `cores/sftm/mist/sftm_game_sdram.v` and `mem_ports.inc`
+- Quartus synthesis fits on 5CSEBA6U23I7: 22,903/41,910 ALMs (55%), 453/553 RAM Blocks (82%), 42/112 DSP Blocks; core loads on MiSTer hardware, OSD visible
+- ALM reduction: `JTFRAME_NOHQ2X` in `cfg/macros.def` (~9.7k ALMs saved), `JTFRAME_CHEAT` removed (~8k ALMs saved), `NVOICES` reduced 32→4 in `sftm5506.v` (~800 ALMs), filter arithmetic narrowed from 64-bit to 46-bit operands, MLAB annotation on 8KB snd RAM in `sftm_snd.v`
+- `docker/jtframe-patches/` patching mechanism: `osd.sv` altsyncram M10K fix + `arcade_video.v` GAMMA=0 applied by `docker/entrypoint.sh` on every `./docker/run-synth.sh` invocation
 - Boot vector FSM (copies first 0x80 bytes of prog ROM to RAM before releasing 68020)
 - Main RAM/NVRAM BRAM (`sftm_ram`), protection byte snooper (`sftm_prot`)
 - Full `itech020_map` address decode, sound latch, VIA null stub; mc6809i port map confirmed and wired (cen_E/cen_Q, nRESET, RnW, ADDR, D/DOut, nIRQ/nFIRQ/nNMI, nHALT, nDMABREQ)
@@ -170,20 +177,22 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 **Not yet implemented / validated:**
 - TG68K.C VHDL→Verilog conversion for iverilog sim (VHDL is vendored; use `ghdl synth` inside Docker — see above)
+- ROM download via OSD + first boot (game does not yet execute; black screen expected)
 - ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces); IRQV host_addr 0x38 overlaps K2[7:0] low-byte read (reading 0x38 returns IRQV per current design)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
 - MRA generation needs `doc/mame.xml` (run `mame -listxml sftm > doc/mame.xml` once MAME is installed; then `./docker/run.sh jtframe mra sftm`)
-- NVRAM SD-card persistence, grm3 plane usage, hardware build (Quartus)
+- NVRAM SD-card persistence, grm3 plane usage
 
 ## Validation plan
 
 1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe via `docker/run.sh`; TG68K.C VHDL vendored as submodule at `hdl/tg68k/`; ghdl synth conversion still needed for iverilog sim
 2. ~~Run `jtframe mem sftm`~~ — DONE: generated `cores/sftm/mist/sftm_game_sdram.v` and `mem_ports.inc`
-3. Convert TG68K.C for Verilator — run `ghdl synth` inside Docker (Dockerfile now uses `ghdl-llvm`; see the command above). Produces `TG68KdotC_Kernel_conv.v` for iverilog/Verilator sim.
-4. Run 68020 opcode tests before booting ROM code
-5. Log MAME blitter commands and replay into `sftm_blitter` (compare pixel-exact output)
-6. ~~ES5506 basic voice scheduler~~ — DONE. Still needed: compare `sftm5506` output against MAME `es5506.cpp` for a captured register/ROM trace
-7. Boot to self-test, then attract mode
+3. ~~Hardware build (Quartus)~~ — DONE: 22,903/41,910 ALMs (55%), core loads on MiSTer, OSD visible (2026-07-23)
+4. Convert TG68K.C for Verilator — run `ghdl synth` inside Docker (Dockerfile now uses `ghdl-llvm`; see the command above). Produces `TG68KdotC_Kernel_conv.v` for iverilog/Verilator sim.
+5. Run 68020 opcode tests before booting ROM code
+6. Log MAME blitter commands and replay into `sftm_blitter` (compare pixel-exact output)
+7. ~~ES5506 basic voice scheduler~~ — DONE. Still needed: compare `sftm5506` output against MAME `es5506.cpp` for a captured register/ROM trace
+8. Load ROM via OSD, boot to self-test, then attract mode
 
 ## Reference
 
