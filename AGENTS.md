@@ -93,6 +93,10 @@ cp cores/sftm/mister/output_files/sftm.rbf release/mister/jtsftm.rbf
 scp -i ~/.ssh/david_key -o StrictHostKeyChecking=no \
     release/mister/jtsftm.rbf \
     root@10.10.10.98:/media/fat/_Arcade/cores/jtsftm.rbf
+# Verify transfer
+md5sum release/mister/jtsftm.rbf
+ssh -i ~/.ssh/david_key -o StrictHostKeyChecking=no \
+    root@10.10.10.98 md5sum /media/fat/_Arcade/cores/jtsftm.rbf
 ```
 
 After a successful `run-synth.sh` (exit 0), deploy directly:
@@ -101,7 +105,13 @@ After a successful `run-synth.sh` (exit 0), deploy directly:
 scp -i ~/.ssh/david_key -o StrictHostKeyChecking=no \
     release/mister/jtsftm.rbf \
     root@10.10.10.98:/media/fat/_Arcade/cores/jtsftm.rbf
+# Verify transfer
+md5sum release/mister/jtsftm.rbf
+ssh -i ~/.ssh/david_key -o StrictHostKeyChecking=no \
+    root@10.10.10.98 md5sum /media/fat/_Arcade/cores/jtsftm.rbf
 ```
+
+Both `md5sum` outputs must match.
 
 ### MiSTer deployment paths
 
