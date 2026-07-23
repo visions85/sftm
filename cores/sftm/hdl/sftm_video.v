@@ -111,7 +111,10 @@ reg  [ 8:0] startup_cnt;         // counts vblanks; startup_phase = bit8 clear
 wire        blit_done;
 wire [16:0] cpu_xfer_addr;
 wire [ 7:0] fg_io_pix, bg_io_pix;
-wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnostic raster
+// DIAG: hardwire startup_phase so the white screen shows regardless of counter state.
+// If white is visible on hardware: video chain works, investigate counter logic.
+// If still black: issue is in LHBL/LVBL gating or upstream of arcade_video.
+wire        startup_phase = 1'b1; // was: ~startup_cnt[8]
 integer     i;
 
 function [15:0] merge16;
@@ -252,8 +255,8 @@ always @(posedge clk) begin
         vcnt <= 10'd0;
         HS   <= 1'b0;
         VS   <= 1'b0;
-        LHBL <= 1'b0;
-        LVBL <= 1'b0;
+        LHBL <= 1'b1;   // start active; avoids 1-frame blank window post-reset
+        LVBL <= 1'b1;   // start active
     end else if(pxl_cen) begin
         if( hcnt >= vregs[VR_HTOTAL][9:0] ) begin
             hcnt <= 0;
