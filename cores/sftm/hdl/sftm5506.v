@@ -69,14 +69,10 @@ localparam CTRL_BS1   = 15, CTRL_BS0 = 14, CTRL_CMPD = 13,
            CTRL_STOP0 = 0;
 
 // voice registers (logical 32-bit; not all bits used)
-// MLAB ramstyle: Cyclone V MLAB blocks (32-deep, up to 20-bit wide) support
-// async reads via feed-through mode.  Forcing MLAB inference avoids keeping
-// all 18 arrays as flip-flops (~11 800 FFs), which causes Quartus error 276003
-// when the full design is active (JTFRAME_PXLCLK=8 ends constant-folding).
-// 8 voices (reduced from 32 to fit Cyclone V register budget while
-// JTFRAME_PXLCLK=8 makes the full design active; restore once MLAB
-// inference or a restructured memory architecture is in place).
-localparam NVOICES = 8;
+// Reduced to 4 voices to fit within the Cyclone V 5CSEBA6U23I7 ALM budget.
+// The real ES5506 has 32 voices; restore once the design closes timing and
+// overall utilisation is comfortably under 100 %.
+localparam NVOICES = 4;
 reg [15:0] control [0:NVOICES-1];
 reg [16:0] fc      [0:NVOICES-1];
 reg [24:0] startp  [0:NVOICES-1];
@@ -114,11 +110,11 @@ integer i;
 // read a XOR-reduction of every voice's key registers here.  Excluded from
 // Quartus via translate_off since it uses static analysis and doesn't need this.
 // synthesis translate_off
-wire _sens_k2   = ^{k2[0],k2[1],k2[2],k2[3],k2[4],k2[5],k2[6],k2[7]};
-wire _sens_k1   = ^{k1[0],k1[1],k1[2],k1[3],k1[4],k1[5],k1[6],k1[7]};
-wire _sens_lvol = ^{lvol[0],lvol[1],lvol[2],lvol[3],lvol[4],lvol[5],lvol[6],lvol[7]};
-wire _sens_rvol = ^{rvol[0],rvol[1],rvol[2],rvol[3],rvol[4],rvol[5],rvol[6],rvol[7]};
-wire _sens_ecnt = ^{ecount[0],ecount[1],ecount[2],ecount[3],ecount[4],ecount[5],ecount[6],ecount[7]};
+wire _sens_k2   = ^{k2[0],k2[1],k2[2],k2[3]};
+wire _sens_k1   = ^{k1[0],k1[1],k1[2],k1[3]};
+wire _sens_lvol = ^{lvol[0],lvol[1],lvol[2],lvol[3]};
+wire _sens_rvol = ^{rvol[0],rvol[1],rvol[2],rvol[3]};
+wire _sens_ecnt = ^{ecount[0],ecount[1],ecount[2],ecount[3]};
 /* verilator lint_off UNUSED */
 wire _sens_all = _sens_k2 ^ _sens_k1 ^ _sens_lvol ^ _sens_rvol ^ _sens_ecnt;
 /* verilator lint_on UNUSED */
@@ -145,7 +141,7 @@ always @(*) begin
                     3'h7: host_dout = host_addr[1] ? k2[page[2:0]][15:8]       : k2[page[2:0]][7:0];
                     default: ;
                 endcase
-            end else if( page[5] ) begin  // high pages: bit 5 = 1 per OTTO spec (pages 32-63)
+            end else if( page[5] && page[2:0] < NVOICES ) begin  // high pages: bit 5 = 1 per OTTO spec (pages 32-63)
                 case(host_addr[5:3])
                     3'h1: host_dout = host_addr[1] ? startp[page[2:0]][23:16] : startp[page[2:0]][15:8];
                     3'h2: host_dout = host_addr[1] ? endp  [page[2:0]][23:16] : endp  [page[2:0]][15:8];
@@ -165,7 +161,7 @@ begin
     // global PAGE register (spec loc H78)
     if( addr==6'h3c ) page <= data[5:0];
     // ACTIVE register (spec loc H7C): voices-1 clamped to NVOICES-1
-    else if( addr==6'h3e ) active <= (data[4:0] >= NVOICES) ? 3'd7 : data[2:0];
+    else if( addr==6'h3e ) active <= (data[4:0] >= NVOICES) ? NVOICES-1 : data[2:0];
     else if( pg < NVOICES ) begin
         // Low pages 0-(NVOICES-1): voice per-sample registers.
         // Layout per OTTO spec §4 (byte offset H00..H38, addr[5:3] selects reg).
@@ -179,7 +175,7 @@ begin
             3'h6: ecount[pg][ (addr[1] ? 15:7) -: 8 ]   <= data; // H30 ECOUNT
             3'h7: k2[pg][ (addr[1] ? 15:7) -: 8 ]       <= data; // H38 K2
         endcase
-    end else if( pg[5] ) begin
+    end else if( pg[5] && pg[2:0] < NVOICES ) begin
         // High pages 32..63 per OTTO spec: address/accumulator + remaining coefficients.
         case(addr[5:3])
             3'h1: startp[pg[2:0]][ (addr[1] ? 23:15) -: 8 ] <= data; // H08 START
@@ -209,7 +205,7 @@ begin
             3'h7: read_reg = addr[1] ? k2[pg[2:0]][15:8]      : k2[pg[2:0]][7:0];
             default: ;
         endcase
-    end else if( pg[5] ) begin  // high pages: bit 5 set
+    end else if( pg[5] && pg[2:0] < NVOICES ) begin  // high pages: bit 5 set
         case(addr[5:3])
             3'h1: read_reg = addr[1] ? startp[pg[2:0]][23:16] : startp[pg[2:0]][15:8];
             3'h2: read_reg = addr[1] ? endp  [pg[2:0]][23:16] : endp  [pg[2:0]][15:8];
@@ -379,7 +375,7 @@ always @(posedge clk) begin
     if( rst ) begin
         // ---- reset everything (merged from both original always blocks) ----
         page   <= 6'd0;
-        active <= NVOICES - 1;  // NVOICES-1 = 7
+        active <= NVOICES - 1;  // NVOICES-1 = 3
         host_irqv_ack <= 1'b0;
         for(i=0;i<NVOICES;i=i+1) begin
             control[i] <= 16'h0003; // stopped
