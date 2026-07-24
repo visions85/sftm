@@ -212,6 +212,8 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 ## Current implementation status
 
+**Status: watchdog timer added + blit diagnostic deployed (2026-07-24)** — RED diagnostic confirmed; root cause = blank NVRAM causes game to initialise factory defaults then spin waiting for watchdog reset. Fixed by adding a 24-bit watchdog timer (16 M cycles / ~333 ms timeout) in `sftm_main.v`: soft-reset via `w_rst = rst | wdog_rst` resets CPU logic but not NVRAM BRAM (no rst pin on `sftm_ram`). On second boot NVRAM is valid; game should proceed to blitter. Awaiting hardware observation.
+
 **Implemented:**
 - JTFRAME folder layout, config files (`cfg/macros.def`, `cfg/mem.yaml`, `cfg/mame2mra.toml`, `cfg/files.yaml`), game-top wiring
 - Docker Linux environment (`docker/`) — `./docker/run.sh jtframe mem sftm` generates `cores/sftm/mist/sftm_game_sdram.v` and `mem_ports.inc`
@@ -232,6 +234,9 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 - **Black screen root cause found and fixed (2026-07-23)**: LHBL/LVBL were reset to `0` in `sftm_video.v`'s CRTC reset block. `arcade_video.v` latches `VBL` on the first falling edge of HBlank; with LVBL=0 at reset, the latch saw VBlank asserted immediately and held the scan doubler in VBlank forever → black screen. Fix: reset both LHBL and LVBL to `1'b1` (commit `19bd8a5`). Always initialise blanking signals to active (1) in the reset block.
 - **I/O port fixes (commit `e22f31e`, deployed 2026-07-24)**: Three bugs fixed in `sftm_main.v`: (1) All I/O bytes were in the wrong 16-bit half — itech32 `PORT_BIT` places bits 0-7 in the lower half (`cpu_a[1]=1`); our code returned them in the upper half so every input read returned 0x0000. (2) DIPS bit 2 (active-low vblank) was hardwired 0, causing the CPU to spin forever in the vblank-wait loop; fixed by wiring `LVBL` from `sftm_video` into `sftm_main`. (3) Joystick direction bits were transposed (UP↔RIGHT, DOWN↔LEFT); corrected to match MAME layout. `jtsftm_game.v` updated to wire `LVBL` output.
 - **CRTC shadow registers (commit `a83fc5b`, deployed 2026-07-24)**: `sftm_video.v` `r_htotal`/`r_vtotal`/`r_hbstart`/`r_vbstart` hold the last non-zero value written to the four CRTC timing registers. Guards `hblank_v`/`vblank_v` were optimised away by Quartus (registers start non-zero at reset); explicit flip-flops survive. Prevents LHBL/LVBL going to 0 when the CPU clears all video registers before reprogramming at boot — same `arcade_video` VBL-latch black-screen mechanism as the original LHBL/LVBL=0 reset bug.
+- **3-color blit diagnostic (commit `5a7dd76`, deployed 2026-07-24, md5 `d43c9e7a4e42cdfe07da2d63a791a913`)**: 300-frame post-startup window shows RED/YELLOW/GREEN: RED = blit_start never fired; YELLOW = blit_start fired, blit_done never; GREEN = blit completed.
+- **RED confirmed (2026-07-24)**: blit_start never fired in 300 frames; root cause = blank NVRAM causes game to initialise factory defaults then spin in a tight loop waiting for hardware watchdog reset (which was not implemented).
+- **Watchdog timer (commit `36a5972`, deployed 2026-07-24, md5 `06304d40c777bd445dd0746d39dcfa6c`)**: 24-bit counter in `sftm_main.v`; CPU must write 0x400000 (REG_WDOG) within 16M cycles (~333ms) or `wdog_rst` fires a 1-cycle soft-reset. `w_rst = rst | wdog_rst` resets all CPU-side logic (boot FSM, cpu_ipl, vint_latch, registers) but NOT NVRAM BRAM (`sftm_ram` has no rst pin). On second boot NVRAM is valid; game should reach blitter. Awaiting hardware observation.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
@@ -255,7 +260,8 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 8. ~~Load ROM via MRA~~ — DONE: ROM download progress bar confirmed on hardware (2026-07-23)
 9. ~~Verify 256-frame startup white~~ — DONE: white screen confirmed on hardware (2026-07-23); root cause of prior black screen was LHBL/LVBL reset to 0 (fixed in commit `19bd8a5`)
 10. ~~Boot past white screen~~ — DONE: light-blue background confirmed (2026-07-24); CPU running game code, palette RAM functional
-11. **grom_cs fix deployed** — observe green/red diagnostic after white startup; if green, blitter works and graphics should appear; if red, investigate further (NVRAM spin loop?)
+11. ~~grom_cs fix deployed~~ — RED confirmed: blit_start never fired; NVRAM spin loop identified
+11a. **Watchdog timer deployed** — observe diagnostic after white startup on second boot: GREEN = blitter works; YELLOW = blitter stuck (SDRAM issue); RED = still not reaching blitter
 12. Boot to self-test, then attract mode (blitter rendering graphics over blue background)
 
 ## Reference
