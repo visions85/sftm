@@ -65,6 +65,15 @@ docker run --rm --platform linux/amd64 \
 RC=$?
 set -e
 
+# jtcore expects the Quartus project to be named 'jtsftm' but ours is 'sftm',
+# so jtcore's own copy step silently fails (it looks for output_files/jtsftm.rbf
+# which does not exist).  Promote the Quartus assembler output explicitly.
+OUTRBF="${REPO_DIR}/cores/sftm/mister/output_files/sftm.rbf"
+if [[ -f "$OUTRBF" ]]; then
+    cp "$OUTRBF" "${REPO_DIR}/release/mister/sftm.rbf"
+    echo "[run-synth.sh] Promoted output_files/sftm.rbf -> release/mister/sftm.rbf"
+fi
+
 # Create the jtsftm.rbf alias expected by the MRA <rbf> tag.
 # The Quartus project is named 'sftm' so Quartus outputs sftm.rbf;
 # JTFRAME MRA generation uses the jt-prefix convention (jtsftm).
