@@ -105,6 +105,23 @@ localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
                  REG_PLANE= 8'h70;
 
 // ---------------------------------------------------------------------------
+// Watchdog timer: CPU must write to 0x400000 (REG_WDOG) at least once every
+// ~333 ms (16 M cycles @ 48 MHz) or the core issues a soft reset.
+// On real itech32 hardware the CMOS watchdog timer asserts nRESET if not
+// kicked; blank NVRAM causes the game to initialise defaults then stall in a
+// tight loop waiting for a watchdog-triggered reboot.  Without this timer the
+// CPU loops forever (blit_start never fires → RED diagnostic).
+//
+// w_rst: logically OR'd with the external rst so all CPU-side logic resets on
+// both hard reset (JTFRAME) and watchdog timeout.  The NVRAM BRAM (sftm_ram)
+// has no reset input, so its contents survive the soft reset — on the second
+// boot NVRAM is valid and the game proceeds normally.
+// ---------------------------------------------------------------------------
+reg  [23:0] wdog_cnt;
+reg         wdog_rst;
+wire        w_rst = rst | wdog_rst;
+
+// ---------------------------------------------------------------------------
 // TG68K.C kernel signals
 // ---------------------------------------------------------------------------
 wire [31:0] cpu_a;
@@ -291,6 +308,20 @@ function [15:0] read_inputs(input [7:0] sel);
     end
 endfunction
 
+always @(posedge clk) begin
+    wdog_rst <= 1'b0;                          // default: not firing
+    if( rst ) begin
+        wdog_cnt <= 24'd0;
+    end else if( cpu_write && ahi==REG_WDOG ) begin
+        wdog_cnt <= 24'd0;                     // kicked: reset timer
+    end else if( wdog_cnt == 24'd15_999_999 ) begin
+        wdog_rst <= 1'b1;                      // timeout ~333 ms @ 48 MHz
+        wdog_cnt <= 24'd0;
+    end else begin
+        wdog_cnt <= wdog_cnt + 24'd1;
+    end
+end
+
 // ---------------------------------------------------------------------------
 // Register writes: sound latch, colour latches, plane enable and GROM bank.
 // Byte writes:
@@ -301,7 +332,7 @@ endfunction
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     snd_latch_we <= 1'b0;
-    if( rst ) begin
+    if( w_rst ) begin
         plane_en    <= 2'b11;
         grom_bank   <= 2'b00;
         color_latch0<= 7'd0;
@@ -334,7 +365,7 @@ end
 // written; boot_half selects the high/low 16-bit half of each long-word.
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
-    if( rst ) begin
+    if( w_rst ) begin
         boot_lw   <= 5'd0;
         boot_half <= 1'b0;
         boot_done <= 1'b0;
@@ -359,7 +390,7 @@ end
 reg vint_latch;
 
 always @(posedge clk) begin
-    if( rst ) begin
+    if( w_rst ) begin
         vint_latch <= 1'b0;
     end else begin
         if( vblank_irq ) vint_latch <= 1'b1;
@@ -368,7 +399,7 @@ always @(posedge clk) begin
     end
 end
 always @(posedge clk) begin
-    if( rst ) cpu_ipl <= 3'b111;         // no IRQ (active low IPL)
+    if( w_rst ) cpu_ipl <= 3'b111;         // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
         if( vint_latch ) cpu_ipl <= 3'b110; // level 1 vblank
@@ -388,7 +419,7 @@ TG68KdotC_Kernel #(
 ) u_cpu (
     .CPU           ( 2'b11        ),   // 68020 mode
     .clk           ( clk          ),
-    .nReset        ( ~rst & boot_done ),
+    .nReset        ( ~w_rst & boot_done ),
     .clkena_in     ( clkena       ),
     .data_in       ( cpu_din      ),
     .IPL           ( cpu_ipl      ),
