@@ -143,17 +143,20 @@ reg  [ 2:0] cpu_ipl;
 // is RAM here. MAME's init_program_rom copies the first 0x80 bytes of program
 // ROM into main RAM; we do the same before releasing the CPU from reset.
 //
-// AUTOVECTOR PATCH: TG68K uses IPL_autovector=1, so level-1 VBlank dispatches
-// via vector 25 (0x64) instead of MAME's IACK vector 22 (0x58).  The ROM has:
-//   vector 22 (0x58) = 0x008008F0  ← real VBlank ISR (reads 0x080000, acks)
-//   vector 25 (0x64) = 0x00800918  ← different handler (does NOT ack)
-// Without the patch the CPU re-enters the wrong ISR on every vblank forever.
-// After copying lw[0..31], one extra step copies lw[22] → ram[lw[25]] so
-// the level-1 autovector at 0x64 now points to the correct VBlank handler.
+// IPL / AUTOVECTOR MAPPING (itech32 LINC chip → TG68K IPL_autovector=1):
+//   The LINC chip provides vectors via IACK; we cannot replicate this, but
+//   we CAN choose IPL levels so TG68K's autovectors land on the correct ISRs.
+//   ROM vector table:
+//     L1 autovector (0x64) = 0x00800918 → error-halt code 5 (unused/NMI stub)
+//     L2 autovector (0x68) = 0x00801380 → REAL VBlank ISR (MOVEM/frame counter)
+//     L3 autovector (0x6C) = 0x008012E0 → Scanline ISR
+//   Therefore: vblank + blitter share IPL2; scanline = IPL3.
+//   (In MAME, LINC maps vblank at IPL1→vector26, blitter at IPL2→vector26,
+//   scanline at IPL3→vector27; we collapse vblank+blitter to IPL2 since the
+//   ISR reads VIDEO_INTSTATE to differentiate, and IPL2 autovector = 26 = $00801380.)
 reg  [ 4:0] boot_lw;                     // 0..31 long-word index (32*4 = 0x80)
 reg         boot_half;                   // 0 = high word, 1 = low word
 reg         boot_done;                   // copy finished, CPU may run
-reg         boot_patch;                  // extra step: patch lw[25]=lw[22]
 
 assign cpu_addr = cpu_a[23:1];
 assign cpu_dout = cpu_do16;
@@ -188,11 +191,8 @@ end
 
 // The ROM port is driven by the boot-copy FSM until boot_done, then the CPU.
 assign rom_cs   = boot_done ? (prog_sel & bus_active) : 1'b1;
-// During the autovector patch step, re-read lw[22] (holds the real VBlank ISR
-// address 0x008008F0) and write it to the lw[25]/0x64 slot in RAM.
-assign rom_addr = boot_done  ? cpu_a[19:2]     // CPU access
-                : boot_patch ? 18'd22          // patch: read lw[22]=0x008008F0
-                             : { 13'd0, boot_lw };
+assign rom_addr = boot_done ? cpu_a[19:2]              // CPU access
+                            : { 13'd0, boot_lw };
 
 // 32-bit program ROM → 16-bit halves for TG68K (big-endian 68020).
 // cpu_a[1]=0: upper word (bits[31:16], MSW); cpu_a[1]=1: lower word (bits[15:0], LSW).
@@ -206,10 +206,7 @@ wire [15:0] ram_dout;
 wire [15:0] boot_word = boot_half ? rom_data[15:0] : rom_data[31:16];
 wire        boot_we   = ~boot_done & rom_ok;        // write both lanes
 
-// During the patch step, write to the lw[25] word slots (byte addresses 0x64–0x67).
-wire [13:0] ram_addr  = boot_done  ? cpu_a[14:1]
-                      : boot_patch ? { 8'd0, 5'd25, boot_half }  // → 0x64/0x66
-                                   : { 8'd0, boot_lw, boot_half };
+wire [13:0] ram_addr  = boot_done ? cpu_a[14:1] : { 8'd0, boot_lw, boot_half };
 wire [15:0] ram_din   = boot_done ? cpu_dout    : boot_word;
 wire        ram_we_lo = boot_done ? (cpu_write & ram_cs & low_byte_we ) : boot_we;
 wire        ram_we_hi = boot_done ? (cpu_write & ram_cs & high_byte_we) : boot_we;
@@ -393,50 +390,42 @@ end
 // main RAM. rom_cs is forced high while !boot_done (see decode), so rom_ok
 // pulses when the requested long-word is available. Both byte lanes are
 // written; boot_half selects the high/low 16-bit half of each long-word.
-// After the main copy, one extra patch step overwrites the level-1 autovector
-// slot (0x64, vector 25) with the real VBlank ISR address from slot 0x58
-// (vector 22) so TG68K's autovector dispatch lands at the correct handler.
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     if( w_rst ) begin
-        boot_lw    <= 5'd0;
-        boot_half  <= 1'b0;
-        boot_done  <= 1'b0;
-        boot_patch <= 1'b0;
+        boot_lw   <= 5'd0;
+        boot_half <= 1'b0;
+        boot_done <= 1'b0;
     end else if( !boot_done && rom_ok ) begin
         if( !boot_half ) begin
-            boot_half <= 1'b1;
+            boot_half <= 1'b1;                       // high word written now
         end else begin
-            boot_half <= 1'b0;
-            if( boot_patch ) begin
-                // Patch done: lw[22] copied to ram lw[25] (0x64-0x67).
-                boot_done <= 1'b1;
-            end else if( boot_lw == 5'd31 ) begin
-                // Main copy done; start autovector patch step.
-                boot_patch <= 1'b1;
-            end else begin
-                boot_lw <= boot_lw + 5'd1;
-            end
+            boot_half <= 1'b0;                       // low word written now
+            if( boot_lw == 5'd31 ) boot_done <= 1'b1;
+            else                   boot_lw    <= boot_lw + 5'd1;
         end
     end
 end
 
 // ---------------------------------------------------------------------------
-// Interrupt priority (confirmed from MAME itech32.cpp update_interrupts):
-//   vblank   → IPL 1 (active-low 3'b110); ack = read or write to 0x080000
-//   blitter  → IPL 2 (active-low 3'b101); ack = VIDEO_INTACK write
-//   scanline → IPL 3 (active-low 3'b100); ack = VIDEO_INTACK write
-// Higher IPL overrides lower in the priority encoder below.
+// Interrupt priority: mapped to match the LINC chip's IACK vector provision
+// via TG68K autovectors (IPL_autovector=1).
+//
+// LINC maps vblank→vector26, blitter→vector26, scanline→vector27 in real HW.
+// Autovector rule: IPL N → vector (24+N).  So:
+//   IPL2 autovector → vector 26 (0x68) → 0x00801380  (VBlank/blitter ISR)
+//   IPL3 autovector → vector 27 (0x6C) → 0x008012E0  (Scanline ISR)
+//
+// VBlank + blitter share IPL2; the ISR reads VIDEO_INTSTATE to differentiate.
+// Scanline → IPL3.
 // ---------------------------------------------------------------------------
 reg vint_latch;
 
-// int1_ack: any access (read or write) to 0x080000 clears the vblank latch.
-// In MAME, itech020_input_r (the READ handler) calls
-// maincpu->set_input_line(M68K_IRQ_1, CLEAR_LINE).  The game ISR reads
-// 0x080000 for joystick data — that same read acks the interrupt in MAME.
-// Without this the ISR never acks, vint_latch stays set, and the CPU
-// re-enters the ISR immediately on every RTE, looping forever.
-// itech020_int1_ack_w (the WRITE handler) also acks, so we fire on either.
+// vint_ack: any access (read or write) to 0x080000 (REG_INP0) clears the
+// vblank latch.  The VBlank ISR (0x00801380) reads player-1 input from
+// 0x080000 during frame processing; that same read acks the interrupt.
+// In MAME, itech020_input_r calls set_input_line(IRQ1, CLEAR_LINE), which
+// models the LINC chip deassert.  Our int1_ack mirrors this behaviour.
 wire int1_ack = cen & bus_active & (~cpu_uds_n | ~cpu_lds_n) & (ahi==REG_INP0);
 
 always @(posedge clk) begin
@@ -444,16 +433,16 @@ always @(posedge clk) begin
         vint_latch <= 1'b0;
     end else begin
         if( vblank_irq ) vint_latch <= 1'b1;
-        if( int1_ack   ) vint_latch <= 1'b0;  // ack on read or write
+        if( int1_ack   ) vint_latch <= 1'b0;  // ack on read or write to 0x080000
     end
 end
 always @(posedge clk) begin
-    if( w_rst ) cpu_ipl <= 3'b111;         // no IRQ (active low IPL)
+    if( w_rst ) cpu_ipl <= 3'b111;          // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
-        if( vint_latch ) cpu_ipl <= 3'b110; // level 1 vblank
-        if( blit_irq   ) cpu_ipl <= 3'b101; // level 2 blitter
-        if( scan_irq   ) cpu_ipl <= 3'b100; // level 3 scanline (highest priority)
+        if( vint_latch ) cpu_ipl <= 3'b101; // IPL2: vblank → autovector 26 → 0x00801380
+        if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter (same ISR, checks INTSTATE)
+        if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline → autovector 27 → 0x008012E0
     end
 end
 
