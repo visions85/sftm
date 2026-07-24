@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **light-blue screen reached (2026-07-24)** — 256-frame white startup diagnostic → light-blue background confirmed on hardware; CPU is running game code and writing palette RAM; blitter/sprite layer not yet rendering graphics. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **grom_cs fix + blit diagnostic deployed (2026-07-24)** — light-blue background confirmed; `jtframe_romrq_bcache` requires `addr_ok` to toggle low→high per new address request (blitter was keeping cs permanently high causing stale-data cache hits); fixed by de-asserting grom_cs in STEP, re-asserting in FETCH. Post-startup green/red blit diagnostic added. Awaiting hardware observation. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -236,7 +236,8 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
 - ~~ROM download via MRA confirmed working~~ — DONE; startup white diagnostic confirmed on hardware (2026-07-23)
-- **Light-blue screen confirmed (2026-07-24, md5 `73a9446b49a49730f779d1aee428e628`)**: After 256-frame white diagnostic, game transitions to solid light-blue background. CPU is executing game code, writing palette RAM (background colour visible), CRTC/blanking working. Blitter/sprite layer not yet rendering — no graphics drawn over background. Next: determine whether CPU is stuck in self-test/NVRAM-error loop, or actively issuing blitter commands that aren't producing visible output.
+- **Light-blue screen confirmed (2026-07-24, md5 `73a9446b49a49730f779d1aee428e628`)**: After 256-frame white diagnostic, game transitions to solid light-blue background. CPU is executing game code, writing palette RAM (background colour visible), CRTC/blanking working. Blitter/sprite layer not yet rendering — no graphics drawn over background.
+- **grom_cs toggle fix + blit diagnostic (commit `e0f72b7`, deployed 2026-07-24, md5 `c9e5a35e3ef76956005be6856b34ffae`)**: Root cause found — `jtframe_romrq_bcache` comment states `addr_ok` must go low→high for each new address request; blitter was keeping `grom_cs` permanently high throughout the entire blit, so the SDRAM cache never re-issued reads when `grom_addr` changed between pixels (returned stale cache data or no response). Fix: `grom_cs <= 0` in STEP state, `grom_cs <= 1` in FETCH state — clean rising edge on every pixel request. Post-startup diagnostic added: 60 frames of GREEN after the white startup = blitter completed ≥1 blit; RED = no blits completed. Awaiting hardware observation.
 - ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces); IRQV host_addr 0x38 overlaps K2[7:0] low-byte read (reading 0x38 returns IRQV per current design)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
 - MRA generation needs `doc/mame.xml` (run `mame -listxml sftm > doc/mame.xml` once MAME is installed; then `./docker/run.sh jtframe mra sftm`)
@@ -254,7 +255,8 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 8. ~~Load ROM via MRA~~ — DONE: ROM download progress bar confirmed on hardware (2026-07-23)
 9. ~~Verify 256-frame startup white~~ — DONE: white screen confirmed on hardware (2026-07-23); root cause of prior black screen was LHBL/LVBL reset to 0 (fixed in commit `19bd8a5`)
 10. ~~Boot past white screen~~ — DONE: light-blue background confirmed (2026-07-24); CPU running game code, palette RAM functional
-11. Boot to self-test, then attract mode (blitter rendering graphics over blue background)
+11. **grom_cs fix deployed** — observe green/red diagnostic after white startup; if green, blitter works and graphics should appear; if red, investigate further (NVRAM spin loop?)
+12. Boot to self-test, then attract mode (blitter rendering graphics over blue background)
 
 ## Reference
 
