@@ -84,7 +84,9 @@ Generated output (`cores/sftm/mist/` or `mister/`) is written back to the host r
 ./docker/run-synth.sh                   # synthesise and build .rbf; output: release/mister/jtsftm.rbf
 ```
 
-Note: `run-synth.sh` copies `sftm.rbf` → `jtsftm.rbf` regardless of Quartus exit code (timing violation or not). `release/mister/jtsftm.rbf` is always updated after synthesis completes. Use `;` (not `&&`) when chaining the deploy so it runs even on timing-violation exit 1:
+Note: `run-synth.sh` promotes `cores/sftm/mister/output_files/sftm.rbf` → `release/mister/sftm.rbf` → `jtsftm.rbf`. This explicit promotion step is necessary because jtcore looks for `output_files/jtsftm.rbf` (with `jt`-prefix) but our Quartus project is named `sftm`, so jtcore's own copy step silently fails.
+
+Use `;` (not `&&`) when chaining the deploy so it runs even on timing-violation exit 1:
 
 ```sh
 ./docker/run-synth.sh; \
@@ -228,12 +230,13 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 - Startup video diagnostic: `sftm_video.v` holds white output for 256 vblanks (~4.3s at 60 Hz) after `game_rst` deasserts post-download; confirms video pipeline alive before game init — **confirmed working on hardware (2026-07-23)**
 - `debug_view = debug_bus` wired in `jtsftm_game.v` (was undriven/floating)
 - **Black screen root cause found and fixed (2026-07-23)**: LHBL/LVBL were reset to `0` in `sftm_video.v`'s CRTC reset block. `arcade_video.v` latches `VBL` on the first falling edge of HBlank; with LVBL=0 at reset, the latch saw VBlank asserted immediately and held the scan doubler in VBlank forever → black screen. Fix: reset both LHBL and LVBL to `1'b1` (commit `19bd8a5`). Always initialise blanking signals to active (1) in the reset block.
-- **I/O port fixes (commit `e22f31e`, deployed 2026-07-23)**: Three bugs fixed in `sftm_main.v`: (1) All I/O bytes were in the wrong 16-bit half — itech32 `PORT_BIT` places bits 0-7 in the lower half (`cpu_a[1]=1`); our code returned them in the upper half so every input read returned 0x0000. (2) DIPS bit 2 (active-low vblank) was hardwired 0, causing the CPU to spin forever in the vblank-wait loop; fixed by wiring `LVBL` from `sftm_video` into `sftm_main`. (3) Joystick direction bits were transposed (UP↔RIGHT, DOWN↔LEFT); corrected to match MAME layout. `jtsftm_game.v` updated to wire `LVBL` output.
+- **I/O port fixes (commit `e22f31e`, deployed 2026-07-24)**: Three bugs fixed in `sftm_main.v`: (1) All I/O bytes were in the wrong 16-bit half — itech32 `PORT_BIT` places bits 0-7 in the lower half (`cpu_a[1]=1`); our code returned them in the upper half so every input read returned 0x0000. (2) DIPS bit 2 (active-low vblank) was hardwired 0, causing the CPU to spin forever in the vblank-wait loop; fixed by wiring `LVBL` from `sftm_video` into `sftm_main`. (3) Joystick direction bits were transposed (UP↔RIGHT, DOWN↔LEFT); corrected to match MAME layout. `jtsftm_game.v` updated to wire `LVBL` output.
+- **CRTC shadow registers (commit `a83fc5b`, deployed 2026-07-24)**: `sftm_video.v` `r_htotal`/`r_vtotal`/`r_hbstart`/`r_vbstart` hold the last non-zero value written to the four CRTC timing registers. Guards `hblank_v`/`vblank_v` were optimised away by Quartus (registers start non-zero at reset); explicit flip-flops survive. Prevents LHBL/LVBL going to 0 when the CPU clears all video registers before reprogramming at boot — same `arcade_video` VBL-latch black-screen mechanism as the original LHBL/LVBL=0 reset bug.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
 - ~~ROM download via MRA confirmed working~~ — DONE; startup white diagnostic confirmed on hardware (2026-07-23)
-- First boot: I/O port fix deployed (2026-07-23) — expected to unblock CPU from vblank-wait spin; observe behaviour on hardware next load
+- First boot: I/O fix + CRTC shadow registers deployed (2026-07-24, md5 `73a9446b49a49730f779d1aee428e628`) — CPU now exits vblank-wait; LHBL/LVBL survive game register-clear; observe behaviour on hardware
 - ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces); IRQV host_addr 0x38 overlaps K2[7:0] low-byte read (reading 0x38 returns IRQV per current design)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
 - MRA generation needs `doc/mame.xml` (run `mame -listxml sftm > doc/mame.xml` once MAME is installed; then `./docker/run.sh jtframe mra sftm`)
@@ -243,7 +246,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 1. ~~Vendor JTFRAME and TG68K.C~~ — jtframe via `docker/run.sh`; TG68K.C VHDL vendored as submodule at `hdl/tg68k/`; ghdl synth conversion still needed for iverilog sim
 2. ~~Run `jtframe mem sftm`~~ — DONE: generated `cores/sftm/mist/sftm_game_sdram.v` and `mem_ports.inc`
-3. ~~Hardware build (Quartus)~~ — DONE: 23,417/41,910 ALMs (56%), core loads on MiSTer, ROM downloads via MRA, OSD visible; timing slack −1.053 ns (all builds so far — bitstream functional); I/O port fix deployed 2026-07-23
+3. ~~Hardware build (Quartus)~~ — DONE: 23,417/41,910 ALMs (56%), core loads on MiSTer, ROM downloads via MRA, OSD visible; timing slack −1.281 ns (consistent — bitstream functional); I/O port fix + CRTC shadow registers deployed 2026-07-24 (md5 `73a9446b49a49730f779d1aee428e628`)
 4. ~~Convert TG68K.C for Verilator~~ — DONE: `ghdl synth --std=08 -fsynopsys -frelaxed-rules` produces `TG68KdotC_Kernel_conv.v` (35,339 lines); boot testbench PASS.
 5. Run 68020 opcode tests before booting ROM code
 6. Log MAME blitter commands and replay into `sftm_blitter` (compare pixel-exact output)
