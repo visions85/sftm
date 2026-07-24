@@ -224,7 +224,12 @@ always @(posedge clk) begin
     else if( nvram_we_lo | nvram_we_hi ) nvram_wr_ever <= 1'b1;
 end
 
-sftm_ram #(.AW(14)) u_nvram(
+// NVRAM pre-loaded from MAME: valid bookkeeping data so game skips factory
+// reset and goes directly to attract mode.  Paths are relative to the
+// Quartus project directory (cores/sftm/mister/) → reach into hdl/.
+sftm_ram #(.AW(14),
+           .INIT_FILE_HI("../hdl/nvram_hi.hex"),
+           .INIT_FILE_LO("../hdl/nvram_lo.hex")) u_nvram(
     .clk    ( clk         ),
     .addr   ( cpu_a[14:1] ),
     .din    ( cpu_dout    ),
@@ -392,20 +397,28 @@ end
 
 // ---------------------------------------------------------------------------
 // Interrupt priority (confirmed from MAME itech32.cpp update_interrupts):
-//   vblank   → IPL 1 (active-low 3'b110); ack = write to 0x080000
+//   vblank   → IPL 1 (active-low 3'b110); ack = read or write to 0x080000
 //   blitter  → IPL 2 (active-low 3'b101); ack = VIDEO_INTACK write
 //   scanline → IPL 3 (active-low 3'b100); ack = VIDEO_INTACK write
 // Higher IPL overrides lower in the priority encoder below.
 // ---------------------------------------------------------------------------
 reg vint_latch;
 
+// int1_ack: any access (read or write) to 0x080000 clears the vblank latch.
+// In MAME, itech020_input_r (the READ handler) calls
+// maincpu->set_input_line(M68K_IRQ_1, CLEAR_LINE).  The game ISR reads
+// 0x080000 for joystick data — that same read acks the interrupt in MAME.
+// Without this the ISR never acks, vint_latch stays set, and the CPU
+// re-enters the ISR immediately on every RTE, looping forever.
+// itech020_int1_ack_w (the WRITE handler) also acks, so we fire on either.
+wire int1_ack = cen & bus_active & (~cpu_uds_n | ~cpu_lds_n) & (ahi==REG_INP0);
+
 always @(posedge clk) begin
     if( w_rst ) begin
         vint_latch <= 1'b0;
     end else begin
         if( vblank_irq ) vint_latch <= 1'b1;
-        // Write to 0x080000 = itech020_int1_ack_w → clears vblank state
-        if( cpu_write && ahi==REG_INP0 ) vint_latch <= 1'b0;
+        if( int1_ack   ) vint_latch <= 1'b0;  // ack on read or write
     end
 end
 always @(posedge clk) begin
