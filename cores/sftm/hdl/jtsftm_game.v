@@ -45,6 +45,8 @@ wire [ 6:0] color_latch1;               // background palette bank
 
 // interrupts
 wire        blit_irq, scan_irq, vblank_irq;
+// diagnostics
+wire        nvram_wr_ever;   // latches first CPU NVRAM write (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -101,7 +103,9 @@ sftm_main u_main(
     // NVRAM is on-chip BRAM inside sftm_main (persistence deferred)
     .debug_bus  ( debug_bus     ),
     // vblank status for DIPS register bit 2 (active-low: 1=active display)
-    .LVBL       ( LVBL          )
+    .LVBL       ( LVBL          ),
+    // diagnostic: first NVRAM write ever
+    .nvram_wr_ever( nvram_wr_ever )
 );
 
 // ---------------------------------------------------------------------------
@@ -150,7 +154,8 @@ sftm_video u_video(
     .green      ( green         ),
     .blue       ( blue          ),
     .gfx_en     ( gfx_en        ),
-    .debug_bus  ( debug_bus     )
+    .debug_bus  ( debug_bus     ),
+    .nvram_wr_ever( nvram_wr_ever )
 );
 
 // ---------------------------------------------------------------------------
