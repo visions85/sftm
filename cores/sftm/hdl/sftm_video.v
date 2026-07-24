@@ -59,7 +59,18 @@ module sftm_video(
     output      [ 4:0]  green,
     output      [ 4:0]  blue,
     input       [ 3:0]  gfx_en,
-    input       [ 7:0]  debug_bus
+    input       [ 7:0]  debug_bus,
+
+    // Diagnostic: latched in sftm_main when CPU first writes NVRAM.
+    // Encodes into B channel of post-startup diagnostic:
+    //   R=!blit_start_ever  G=blit_done_ever  B=nvram_wr_ever
+    //   RED     = no blit, no NVRAM write  → stuck before NVRAM init
+    //   MAGENTA = no blit, NVRAM written   → stuck after NVRAM init
+    //   YELLOW  = blit fired, stuck, no NVRAM write
+    //   WHITE   = blit fired, stuck, NVRAM written
+    //   GREEN   = blit done, no NVRAM write (NVRAM was already valid)
+    //   CYAN    = blit done, NVRAM written (full success path)
+    input               nvram_wr_ever
 );
 
 localparam VRAM_W = 512, VRAM_H = 256;   // TODO: confirm plane height vs HW
@@ -428,7 +439,7 @@ assign green = startup_phase ? 5'h1F
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? 5'h00                          // always off during diag
+             : diag_phase    ? (nvram_wr_ever ? 5'h1F : 5'h00) // B=nvram_wr_ever
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 

@@ -63,7 +63,8 @@ module tb_sftm_video;
         .blit_irq(blit_irq), .vblank_irq(vblank_irq),
         .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
         .red(red), .green(green), .blue(blue),
-        .gfx_en(4'hf), .debug_bus(8'h00)
+        .gfx_en(4'hf), .debug_bus(8'h00),
+        .nvram_wr_ever(1'b0)   // diagnostic input: tie low in bench
     );
 
     task idle_bus;

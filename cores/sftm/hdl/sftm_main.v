@@ -62,6 +62,11 @@ module sftm_main(
     // is deferred (see hdl/mem.yaml).
     input       [ 7:0]  debug_bus,
 
+    // Diagnostic: goes high on the first CPU write to NVRAM space and stays
+    // high. Used by sftm_video to distinguish "stuck before NVRAM init" (RED)
+    // from "stuck after NVRAM init" (MAGENTA) in the post-startup diagnostic.
+    output reg          nvram_wr_ever,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -213,6 +218,11 @@ sftm_ram #(.AW(14)) u_ram(
 wire [15:0] nvram_dout;
 wire        nvram_we_lo = cpu_write & nvram_cs & low_byte_we;
 wire        nvram_we_hi = cpu_write & nvram_cs & high_byte_we;
+
+always @(posedge clk) begin
+    if( rst ) nvram_wr_ever <= 1'b0;
+    else if( nvram_we_lo | nvram_we_hi ) nvram_wr_ever <= 1'b1;
+end
 
 sftm_ram #(.AW(14)) u_nvram(
     .clk    ( clk         ),
