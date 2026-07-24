@@ -116,13 +116,16 @@ wire [ 7:0] fg_io_pix, bg_io_pix;
 // causing arcade_video to latch VBL=1 on the very first frame edge.  Fixed by
 // initialising LHBL/LVBL to 1 (active) in the CRTC reset block below.
 wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnostic raster
-// Post-startup blit diagnostic: after the white startup phase ends, show 60 frames of
-// GREEN (blit_done fired = blitter completed at least one blit) or RED (no blits
-// ever completed = blitter stuck or not called).  This gives definitive hardware
-// evidence without needing a logic analyser.
+// Post-startup blit diagnostic (300 frames after white ends):
+//   RED    = blit_start never fired  → CPU never called the blitter
+//   YELLOW = blit_start fired, blit_done never fired  → blitter stuck (SDRAM?)
+//   GREEN  = blit_done fired  → blitter works
+// blit_start_ever: latches the first blit_start pulse
+// blit_done_ever:  latches the first blit_done pulse
+reg         blit_start_ever;     // latches the first blit_start forever
 reg         blit_done_ever;      // latches the first blit_done forever
-reg  [ 7:0] diag_cnt;           // counts vblanks during the diagnostic window
-wire        diag_phase = (diag_cnt < 8'd60) && !startup_phase;
+reg  [ 9:0] diag_cnt;           // counts vblanks during the diagnostic window
+wire        diag_phase = (diag_cnt < 10'd300) && !startup_phase;
 integer     i;
 
 function [15:0] merge16;
@@ -322,15 +325,19 @@ always @(posedge clk) begin
     if( rst ) startup_cnt <= 9'd0;
     else if( vblank_irq && startup_phase ) startup_cnt <= startup_cnt + 9'd1;
 end
-// blit_done_ever: latches the first blit_done pulse and never resets.
+// blit_start_ever / blit_done_ever: latch first occurrence, never reset.
+always @(posedge clk) begin
+    if( rst )            blit_start_ever <= 1'b0;
+    else if( blit_start ) blit_start_ever <= 1'b1;
+end
 always @(posedge clk) begin
     if( rst )           blit_done_ever <= 1'b0;
     else if( blit_done ) blit_done_ever <= 1'b1;
 end
-// diag_cnt: counts 60 vblanks after startup_phase ends (the diagnostic window).
+// diag_cnt: counts 300 vblanks after startup_phase ends (the diagnostic window).
 always @(posedge clk) begin
-    if( rst )                                         diag_cnt <= 8'd0;
-    else if( vblank_irq && diag_phase )               diag_cnt <= diag_cnt + 8'd1;
+    if( rst )                                         diag_cnt <= 10'd0;
+    else if( vblank_irq && diag_phase )               diag_cnt <= diag_cnt + 10'd1;
 end
 
 // ---------------------------------------------------------------------------
@@ -397,28 +404,32 @@ sftm_pal u_pal(
 // screen.  After the startup window the normal game output appears.
 // gfx_en[3]=0 in the OSD restores the hcnt/vcnt gradient at any time.
 //
-// Post-startup blit diagnostic (diag_phase = 60 frames after white ends):
-//   GREEN = blit_done fired at least once (blitter worked)
-//   RED   = blit_done never fired (blitter stuck or not called by game)
+// Post-startup blit diagnostic (diag_phase = 300 frames after white ends):
+//   RED    = blit_start never fired  (CPU never called blitter; NVRAM loop?)
+//   YELLOW = blit_start fired, blit_done never fired  (blitter stuck; SDRAM issue?)
+//   GREEN  = blit_done fired  (blitter completed at least one blit; works!)
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
-// During startup_phase force solid white; during diag_phase force green/red.
-assign red   = startup_phase                   ? 5'h1F
-             : (diag_phase && !blit_done_ever) ? 5'h1F  // RED: no blits
-             : (diag_phase &&  blit_done_ever) ? 5'h00  // GREEN: blits ok
-             : show_raster                     ? dbg_r
+// Diagnostic colour encoding:
+//   blit_done_ever=1               → GREEN  (R=0 G=31 B=0)
+//   blit_start_ever=1, done=0      → YELLOW (R=31 G=31 B=0)
+//   neither started nor done       → RED    (R=31 G=0  B=0)
+wire diag_green  =  blit_done_ever;
+wire diag_yellow =  blit_start_ever && !blit_done_ever;
+wire diag_red    = !blit_start_ever;
+assign red   = startup_phase ? 5'h1F
+             : diag_phase    ? (diag_green ? 5'h00 : 5'h1F)  // green=off, yellow/red=on
+             : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
-assign green = startup_phase                   ? 5'h1F
-             : (diag_phase && !blit_done_ever) ? 5'h00  // RED: no blits
-             : (diag_phase &&  blit_done_ever) ? 5'h1F  // GREEN: blits ok
-             : show_raster                     ? dbg_g
+assign green = startup_phase ? 5'h1F
+             : diag_phase    ? (diag_red   ? 5'h00 : 5'h1F)  // red=off, green/yellow=on
+             : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
-assign blue  = startup_phase                   ? 5'h1F
-             : (diag_phase && !blit_done_ever) ? 5'h00  // RED: no blits
-             : (diag_phase &&  blit_done_ever) ? 5'h00  // GREEN: blits ok
-             : show_raster                     ? dbg_b
+assign blue  = startup_phase ? 5'h1F
+             : diag_phase    ? 5'h00                          // always off during diag
+             : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
 // ---------------------------------------------------------------------------
