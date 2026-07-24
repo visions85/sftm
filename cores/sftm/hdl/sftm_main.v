@@ -420,15 +420,22 @@ end
 // Scanline → IPL3.
 // ---------------------------------------------------------------------------
 reg vint_latch;
-reg [6:0] vint_timer;   // counts down in cen cycles after vblank_irq
+reg [6:0] vint_timer;   // counts down in clkena (CPU-active) cycles after vblank_irq
 
 // The VBlank ISR at 0x00801380 does NOT read 0x080000; it acks via the LINC
 // chip's IACK cycle in real hardware (hardware-automatic ack).
 // With IPL_autovector=1 there is no IACK bus cycle, so we simulate the LINC
-// ack with a timer: hold vint_latch high for exactly 100 CPU (cen) cycles.
-//   > 88 cycles (longest 68020 instruction) → TG68K always commits within window
-//   < 162 cycles (shortest ISR path to RTE) → latch clears before RTE, no re-entry
-// int1_ack is kept as a fast-path in case future ISR code reads 0x080000.
+// ack with a timer: hold vint_latch high for 100 CPU-ACTIVE (clkena) cycles.
+//
+// IMPORTANT: count clkena (= cen & ~bus_busy), NOT cen.
+// When the CPU stalls on SDRAM reads, cen still ticks but clkena=0; counting
+// cen gives ~25 real CPU advances instead of the required ~100, so TG68K
+// never reaches an instruction boundary and misses the interrupt entirely.
+//
+// With clkena counting:
+//   > 88 clkena (longest 68020 instruction) → TG68K always commits
+//   < 162 clkena (shortest ISR path A/B to RTE) → latch clears before RTE
+// int1_ack is kept as a fast-path in case a future ISR reads 0x080000.
 wire int1_ack = cen & bus_active & (~cpu_uds_n | ~cpu_lds_n) & (ahi==REG_INP0);
 
 always @(posedge clk) begin
@@ -438,11 +445,11 @@ always @(posedge clk) begin
     end else begin
         if( vblank_irq ) begin
             vint_latch <= 1'b1;
-            vint_timer <= 7'd100;           // arm 100-cycle window
+            vint_timer <= 7'd100;              // arm 100-clkena window
         end else begin
-            if( int1_ack ) vint_latch <= 1'b0;          // fast-path ack
-            if( cen && vint_timer != 7'd0 ) vint_timer <= vint_timer - 7'd1;
-            if( vint_latch && vint_timer == 7'd1 && cen ) vint_latch <= 1'b0; // auto-clear
+            if( int1_ack ) vint_latch <= 1'b0;           // fast-path ack
+            if( clkena && vint_timer != 7'd0 ) vint_timer <= vint_timer - 7'd1;
+            if( vint_latch && vint_timer==7'd1 && clkena ) vint_latch <= 1'b0;
         end
     end
 end
