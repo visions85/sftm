@@ -212,7 +212,10 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 ## Current implementation status
 
-**Status: VBlank ISR fixes deployed (2026-07-24, commit `ef70dd5`)** — three root causes for stuck RED identified via 68020 ROM disassembly and fixed: (1) VR_XFER reads returned last-written value, trapping VBlank ISR in infinite poll loop; (2) scan_irq/blit_irq gated by VR_INTEN=0 (never written), suppressing Scanline ISR forever; (3) VR_COMMAND 0xFF (the IT42 blit/fill command) did not trigger blit_start. Awaiting hardware observation.
+**Status: diagnostic extended + vreg_cmd_ever added (2026-07-24)** — deep 68020 ROM disassembly revealed the game uses cooperative multitasking (`$829908` main task, scheduler at `$8006BA`). The first VR_COMMAND=0xFF write happens at `$8027A0` (screen-clear DBRA loop) reached via `$8012D6→$801096→$8026F0→$802764→$8027A0`. The cooperative task goes through many coroutine yields before the first screen-clear, taking **>300 frames** from power-on. Fixes deployed:
+- Diagnostic window extended 300→**1200 frames** (~20 s after the 256-frame white startup = ~24 s total)
+- Blue channel changed from `nvram_wr_ever` to `vreg_cmd_ever` (any VR_COMMAND write). Color key: **RED** = VR_COMMAND never written (game hasn't called blitter yet); **MAGENTA** = VR_COMMAND written but blit_start didn't fire (hardware bug!); **YELLOW** = blit_start fired, blit_done never (SDRAM?); **GREEN** = blit completed.
+Awaiting hardware observation.
 
 **Implemented:**
 - JTFRAME folder layout, config files (`cfg/macros.def`, `cfg/mem.yaml`, `cfg/mame2mra.toml`, `cfg/files.yaml`), game-top wiring
