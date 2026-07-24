@@ -420,20 +420,30 @@ end
 // Scanline → IPL3.
 // ---------------------------------------------------------------------------
 reg vint_latch;
+reg [6:0] vint_timer;   // counts down in cen cycles after vblank_irq
 
-// vint_ack: any access (read or write) to 0x080000 (REG_INP0) clears the
-// vblank latch.  The VBlank ISR (0x00801380) reads player-1 input from
-// 0x080000 during frame processing; that same read acks the interrupt.
-// In MAME, itech020_input_r calls set_input_line(IRQ1, CLEAR_LINE), which
-// models the LINC chip deassert.  Our int1_ack mirrors this behaviour.
+// The VBlank ISR at 0x00801380 does NOT read 0x080000; it acks via the LINC
+// chip's IACK cycle in real hardware (hardware-automatic ack).
+// With IPL_autovector=1 there is no IACK bus cycle, so we simulate the LINC
+// ack with a timer: hold vint_latch high for exactly 100 CPU (cen) cycles.
+//   > 88 cycles (longest 68020 instruction) → TG68K always commits within window
+//   < 162 cycles (shortest ISR path to RTE) → latch clears before RTE, no re-entry
+// int1_ack is kept as a fast-path in case future ISR code reads 0x080000.
 wire int1_ack = cen & bus_active & (~cpu_uds_n | ~cpu_lds_n) & (ahi==REG_INP0);
 
 always @(posedge clk) begin
     if( w_rst ) begin
-        vint_latch <= 1'b0;
+        vint_latch  <= 1'b0;
+        vint_timer  <= 7'd0;
     end else begin
-        if( vblank_irq ) vint_latch <= 1'b1;
-        if( int1_ack   ) vint_latch <= 1'b0;  // ack on read or write to 0x080000
+        if( vblank_irq ) begin
+            vint_latch <= 1'b1;
+            vint_timer <= 7'd100;           // arm 100-cycle window
+        end else begin
+            if( int1_ack ) vint_latch <= 1'b0;          // fast-path ack
+            if( cen && vint_timer != 7'd0 ) vint_timer <= vint_timer - 7'd1;
+            if( vint_latch && vint_timer == 7'd1 && cen ) vint_latch <= 1'b0; // auto-clear
+        end
     end
 end
 always @(posedge clk) begin
