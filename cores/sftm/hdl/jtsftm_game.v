@@ -45,6 +45,8 @@ wire [ 6:0] color_latch1;               // background palette bank
 
 // interrupts
 wire        blit_irq, scan_irq, vblank_irq;
+// VBlank active latch: main -> video for correct VR_XFER bit 6 reads
+wire        vint_latch_w;
 // diagnostics
 wire        nvram_wr_ever;   // latches first CPU NVRAM write (sftm_main → sftm_video)
 
@@ -97,6 +99,8 @@ sftm_main u_main(
     .blit_irq   ( blit_irq      ),
     .scan_irq   ( scan_irq      ),
     .vblank_irq ( vblank_irq    ),
+    // VBlank active latch exported to sftm_video for correct VR_XFER reads
+    .vint_latch_out( vint_latch_w ),
     // sound latch
     .snd_latch  ( snd_latch     ),
     .snd_latch_we(snd_latch_we  ),
@@ -155,7 +159,9 @@ sftm_video u_video(
     .blue       ( blue          ),
     .gfx_en     ( gfx_en        ),
     .debug_bus  ( debug_bus     ),
-    .nvram_wr_ever( nvram_wr_ever )
+    .nvram_wr_ever( nvram_wr_ever ),
+    // VBlank active latch for correct VR_XFER bit 6 behaviour
+    .vint_latch ( vint_latch_w  )
 );
 
 // ---------------------------------------------------------------------------
