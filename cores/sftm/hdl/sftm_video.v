@@ -250,6 +250,19 @@ end
 // ---------------------------------------------------------------------------
 // CRTC counters (run on pxl_cen). Generate sync/blank + interrupts.
 // ---------------------------------------------------------------------------
+// Guard: use itech32 hardware defaults when total/blank-start registers are 0.
+// The CPU clears all video registers before reprogramming at boot; zero HTOTAL/
+// VTOTAL would pin the counters, and zero HBSTART/VBSTART forces LHBL/LVBL=0
+// permanently — the same arcade_video VBL-latch black-screen failure as the
+// original reset-initialisation bug.  When a register is 0 we substitute the
+// hardware default so the CRTC keeps running and blanking stays inactive.
+wire [9:0] htotal_v = (vregs[VR_HTOTAL][9:0] == 10'd0) ? 10'd507 : vregs[VR_HTOTAL][9:0];
+wire [9:0] vtotal_v = (vregs[VR_VTOTAL][9:0] == 10'd0) ? 10'd261 : vregs[VR_VTOTAL][9:0];
+wire       hblank_v = (vregs[VR_HBSTART][9:0] != 10'd0) &&
+                      (hcnt >= vregs[VR_HBSTART][9:0] || hcnt < vregs[VR_HBEND][9:0]);
+wire       vblank_v = (vregs[VR_VBSTART][9:0] != 10'd0) &&
+                      (vcnt >= vregs[VR_VBSTART][9:0] || vcnt < vregs[VR_VBEND][9:0]);
+
 always @(posedge clk) begin
     if( rst ) begin
         hcnt <= 10'd0;
@@ -259,15 +272,15 @@ always @(posedge clk) begin
         LHBL <= 1'b1;   // start active; avoids 1-frame blank window post-reset
         LVBL <= 1'b1;   // start active
     end else if(pxl_cen) begin
-        if( hcnt >= vregs[VR_HTOTAL][9:0] ) begin
+        if( hcnt >= htotal_v ) begin
             hcnt <= 0;
-            vcnt <= (vcnt >= vregs[VR_VTOTAL][9:0]) ? 10'd0 : vcnt + 10'd1;
+            vcnt <= (vcnt >= vtotal_v) ? 10'd0 : vcnt + 10'd1;
         end else hcnt <= hcnt + 10'd1;
 
         HS   <= hcnt >= vregs[VR_HSYNC][9:0];
         VS   <= vcnt >= vregs[VR_VSYNC][9:0];
-        LHBL <= ~(hcnt>=vregs[VR_HBSTART][9:0] || hcnt<vregs[VR_HBEND][9:0]);
-        LVBL <= ~(vcnt>=vregs[VR_VBSTART][9:0] || vcnt<vregs[VR_VBEND][9:0]);
+        LHBL <= ~hblank_v;
+        LVBL <= ~vblank_v;
     end
 end
 
