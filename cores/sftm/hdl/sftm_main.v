@@ -67,6 +67,11 @@ module sftm_main(
     // from "stuck after NVRAM init" (MAGENTA) in the post-startup diagnostic.
     output reg          nvram_wr_ever,
 
+    // VBlank active latch (set on vblank_irq, cleared by timer). Exported to
+    // sftm_video so VR_XFER reads can return bit 6 = vint_latch: the VBlank
+    // ISR polls this bit to know when the vblank window has ended.
+    output              vint_latch_out,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -158,9 +163,10 @@ reg  [ 4:0] boot_lw;                     // 0..31 long-word index (32*4 = 0x80)
 reg         boot_half;                   // 0 = high word, 1 = low word
 reg         boot_done;                   // copy finished, CPU may run
 
-assign cpu_addr = cpu_a[23:1];
-assign cpu_dout = cpu_do16;
-assign cpu_rnw  = cpu_wr_n;
+assign cpu_addr     = cpu_a[23:1];
+assign cpu_dout     = cpu_do16;
+assign cpu_rnw      = cpu_wr_n;
+assign vint_latch_out = vint_latch;
 
 // clock enable is gated by "bus ready": on ROM accesses wait for rom_ok, and
 // the CPU stays held until the boot vector copy has finished.

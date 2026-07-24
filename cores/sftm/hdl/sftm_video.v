@@ -70,7 +70,13 @@ module sftm_video(
     //   WHITE   = blit fired, stuck, NVRAM written
     //   GREEN   = blit done, no NVRAM write (NVRAM was already valid)
     //   CYAN    = blit done, NVRAM written (full success path)
-    input               nvram_wr_ever
+    input               nvram_wr_ever,
+
+    // VBlank active latch from sftm_main: held high for ~100 CPU-active cycles
+    // after each VBlank. Drives bit 6 of VR_XFER reads so the VBlank ISR at
+    // $801380 can poll for end-of-vblank (it loops writing $0040 to VR_XFER
+    // and reading $500005 bit 6 until the window expires).
+    input               vint_latch
 );
 
 localparam VRAM_W = 512, VRAM_H = 256;   // TODO: confirm plane height vs HW
@@ -161,7 +167,11 @@ always @(*) begin
     int_state_n = int_state;
     if( blit_done || cmd_done ) int_state_n = int_state_n | VIDEOINT_BLITTER;
     if( scanline_hit )          int_state_n = int_state_n | VIDEOINT_SCANLINE;
-    if( vreg_we && vreg_a==VR_INT ) int_state_n = int_state_n & ~(cpu_dout & cpu_mask);
+    // VR_INT writes clear bits; VR_XFER writes also clear int_state bits
+    // (the VBlank ISR writes $0004/$0040/$003A to VR_XFER to ack interrupts;
+    //  without this, VIDEOINT_SCANLINE accumulates and scan_irq stays asserted).
+    if( vreg_we && (vreg_a==VR_INT || vreg_a==VR_XFER) )
+        int_state_n = int_state_n & ~(cpu_dout & cpu_mask);
 end
 
 // CPU register read/write and transfer-port side effects.
@@ -245,8 +255,12 @@ always @(posedge clk) begin
                         xfer_xcur   <= vregs[VR_XFERX] & 16'h0fff;
                         xfer_ycur   <= vregs[VR_XFERY] & 16'h0fff;
                         cmd_done    <= 1'b1;
-                    end else if( vreg_wr_val==16'd1 || vreg_wr_val==16'd2 || vreg_wr_val==16'd6 ) begin
-                        blit_start  <= 1'b1;
+                    end else if( vreg_wr_val==16'd1 || vreg_wr_val==16'd2 ||
+                                 vreg_wr_val==16'd6 || vreg_wr_val==16'hff ) begin
+                        // Command 0xFF is the IT42 "blit/fill" command used by
+                        // the SFTM ROM for screen clears and sprite drawing.
+                        if( ~blit_busy ) blit_start <= 1'b1;
+                        else             cmd_done   <= 1'b1;   // busy: ack only
                     end else begin
                         cmd_done    <= 1'b1;
                     end
@@ -259,9 +273,20 @@ always @(posedge clk) begin
         end
 
         case( vreg_a )
-            // bit3 = blitter busy; bits 2,0 always set per MAME itech32_v.cpp.
-            VR_STATUS:  vreg_dout <= (vregs[VR_STATUS] & 16'hFFF0) | {12'd0, blit_busy, 3'b101};
+            // VR_STATUS: bit7 set when vregs[VR_STATUS][7]=1 (game writes $8F
+            // in JSR#0); bit3 = blit busy; bits 2,0 always 1. Bit 6 from int_state
+            // so VR_STATUS bit 6 reflects blitter/transfer completion for the
+            // render-queue polling loop at $8019E6 (MOVE.W $500000, D0 / BTST #6).
+            VR_STATUS:  vreg_dout <= (vregs[VR_STATUS] & 16'hFFF0)
+                                   | (int_state & VIDEOINT_BLITTER)
+                                   | {12'd0, blit_busy, 3'b101};
             VR_INT:     vreg_dout <= int_state;
+            // VR_XFER reads: bit 6 = vint_latch (VBlank active window from the
+            // LINC chip) OR any blitter/cmd pending in int_state.  The VBlank ISR
+            // polls this bit to detect end-of-vblank; the VR_XFER write value
+            // must NOT be reflected here (the IT42 controls the readback).
+            VR_XFER:    vreg_dout <= int_state
+                                   | (vint_latch ? VIDEOINT_BLITTER : 16'd0);
             VR_XFERFLG: vreg_dout <= 16'h00ef; // MAME returns current scanline-1 here
             default:    vreg_dout <= vregs[vreg_a];
         endcase
@@ -483,11 +508,16 @@ sftm_blitter u_blitter(
     .done       ( blit_done     )
 );
 
+// scan_irq and blit_irq are driven directly from int_state without VR_INTEN
+// gating. On real itech32 hardware, interrupt routing is handled by the LINC
+// chip (external to the IT42). The IT42's VR_INTEN register is NOT what gates
+// the CPU interrupts; the LINC chip always enables them. Without this fix,
+// VR_INTEN = 0 (never written) would suppress both IRQs forever.
 always @(posedge clk) begin
     if( rst ) begin blit_irq <= 1'b0; scan_irq <= 1'b0; end
     else begin
-        blit_irq <= |(int_state_n & vregs[VR_INTEN] & VIDEOINT_BLITTER);
-        scan_irq <= |(int_state_n & vregs[VR_INTEN] & VIDEOINT_SCANLINE);
+        blit_irq <= |(int_state_n & VIDEOINT_BLITTER);
+        scan_irq <= |(int_state_n & VIDEOINT_SCANLINE);
     end
 end
 
