@@ -212,7 +212,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 ## Current implementation status
 
-**Status: watchdog timer added + blit diagnostic deployed (2026-07-24)** — RED diagnostic confirmed; root cause = blank NVRAM causes game to initialise factory defaults then spin waiting for watchdog reset. Fixed by adding a 24-bit watchdog timer (16 M cycles / ~333 ms timeout) in `sftm_main.v`: soft-reset via `w_rst = rst | wdog_rst` resets CPU logic but not NVRAM BRAM (no rst pin on `sftm_ram`). On second boot NVRAM is valid; game should proceed to blitter. Awaiting hardware observation.
+**Status: VBlank ISR fixes deployed (2026-07-24, commit `ef70dd5`)** — three root causes for stuck RED identified via 68020 ROM disassembly and fixed: (1) VR_XFER reads returned last-written value, trapping VBlank ISR in infinite poll loop; (2) scan_irq/blit_irq gated by VR_INTEN=0 (never written), suppressing Scanline ISR forever; (3) VR_COMMAND 0xFF (the IT42 blit/fill command) did not trigger blit_start. Awaiting hardware observation.
 
 **Implemented:**
 - JTFRAME folder layout, config files (`cfg/macros.def`, `cfg/mem.yaml`, `cfg/mame2mra.toml`, `cfg/files.yaml`), game-top wiring
@@ -261,7 +261,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 9. ~~Verify 256-frame startup white~~ — DONE: white screen confirmed on hardware (2026-07-23); root cause of prior black screen was LHBL/LVBL reset to 0 (fixed in commit `19bd8a5`)
 10. ~~Boot past white screen~~ — DONE: light-blue background confirmed (2026-07-24); CPU running game code, palette RAM functional
 11. ~~grom_cs fix deployed~~ — RED confirmed: blit_start never fired; NVRAM spin loop identified
-11a. **Watchdog timer deployed** — observe diagnostic after white startup on second boot: GREEN = blitter works; YELLOW = blitter stuck (SDRAM issue); RED = still not reaching blitter
+11a. **VBlank ISR fixes deployed (commit `ef70dd5`, 2026-07-24)** — observe diagnostic: GREEN = blitter works; YELLOW = blit_start fired but SDRAM issue; RED = still stuck.
 12. Boot to self-test, then attract mode (blitter rendering graphics over blue background)
 
 ## Reference
