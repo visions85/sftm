@@ -62,14 +62,6 @@ module sftm_video(
     input       [ 7:0]  debug_bus,
 
     // Diagnostic: latched in sftm_main when CPU first writes NVRAM.
-    // Encodes into B channel of post-startup diagnostic:
-    //   R=!blit_start_ever  G=blit_done_ever  B=nvram_wr_ever
-    //   RED     = no blit, no NVRAM write  → stuck before NVRAM init
-    //   MAGENTA = no blit, NVRAM written   → stuck after NVRAM init
-    //   YELLOW  = blit fired, stuck, no NVRAM write
-    //   WHITE   = blit fired, stuck, NVRAM written
-    //   GREEN   = blit done, no NVRAM write (NVRAM was already valid)
-    //   CYAN    = blit done, NVRAM written (full success path)
     input               nvram_wr_ever,
 
     // VBlank active latch from sftm_main: held high for ~100 CPU-active cycles
@@ -141,8 +133,13 @@ wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnost
 // blit_done_ever:  latches the first blit_done pulse
 reg         blit_start_ever;     // latches the first blit_start forever
 reg         blit_done_ever;      // latches the first blit_done forever
-reg  [ 9:0] diag_cnt;           // counts vblanks during the diagnostic window
-wire        diag_phase = (diag_cnt < 10'd300) && !startup_phase;
+reg         vreg_cmd_ever;      // latches first VR_COMMAND write (any value)
+reg  [10:0] diag_cnt;           // counts vblanks during the diagnostic window
+// Diagnostic window: 1200 frames (~20 s) after the 256-frame white startup.
+// This long window accommodates the game's cooperative-multitasking boot
+// sequence — ROM disassembly shows the task at $829908 goes through many
+// coroutine yields before the first screen-clear (VR_COMMAND=0xFF at $8027A0).
+wire        diag_phase = (diag_cnt < 11'd1200) && !startup_phase;
 integer     i;
 
 function [15:0] merge16;
@@ -370,10 +367,17 @@ always @(posedge clk) begin
     if( rst )           blit_done_ever <= 1'b0;
     else if( blit_done ) blit_done_ever <= 1'b1;
 end
-// diag_cnt: counts 300 vblanks after startup_phase ends (the diagnostic window).
+// vreg_cmd_ever: set on any CPU write to VR_COMMAND (regardless of value).
+// Distinguishes "VR_COMMAND never written" (RED, no blue) from "VR_COMMAND
+// written but blit_start didn't fire" (MAGENTA = hardware bug).
 always @(posedge clk) begin
-    if( rst )                                         diag_cnt <= 10'd0;
-    else if( vblank_irq && diag_phase )               diag_cnt <= diag_cnt + 10'd1;
+    if( rst )                                  vreg_cmd_ever <= 1'b0;
+    else if( vreg_we && vreg_a==VR_COMMAND )   vreg_cmd_ever <= 1'b1;
+end
+// diag_cnt: counts 1200 vblanks after startup_phase ends (diagnostic window).
+always @(posedge clk) begin
+    if( rst )                                         diag_cnt <= 11'd0;
+    else if( vblank_irq && diag_phase )               diag_cnt <= diag_cnt + 11'd1;
 end
 
 // ---------------------------------------------------------------------------
@@ -440,18 +444,18 @@ sftm_pal u_pal(
 // screen.  After the startup window the normal game output appears.
 // gfx_en[3]=0 in the OSD restores the hcnt/vcnt gradient at any time.
 //
-// Post-startup blit diagnostic (diag_phase = 300 frames after white ends):
-//   RED    = blit_start never fired  (CPU never called blitter; NVRAM loop?)
-//   YELLOW = blit_start fired, blit_done never fired  (blitter stuck; SDRAM issue?)
-//   GREEN  = blit_done fired  (blitter completed at least one blit; works!)
+// Post-startup blit diagnostic (diag_phase = 1200 frames after white ends):
+//   R=!blit_start_ever  G=blit_done_ever  B=vreg_cmd_ever (any VR_COMMAND write)
+//   RED     = VR_COMMAND never written    → game hasn't called blitter yet
+//   MAGENTA = VR_COMMAND written, blit_start didn't fire → hardware bug!
+//   YELLOW  = blit_start fired, blit_done never fired → blitter stuck (SDRAM?)
+//   WHITE   = blit_start fired, stuck, VR_COMMAND written
+//   GREEN   = blit_done fired, VR_COMMAND written (NVRAM was already valid)
+//   CYAN    = blit_done fired, no VR_COMMAND
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
-// Diagnostic colour encoding:
-//   blit_done_ever=1               → GREEN  (R=0 G=31 B=0)
-//   blit_start_ever=1, done=0      → YELLOW (R=31 G=31 B=0)
-//   neither started nor done       → RED    (R=31 G=0  B=0)
 wire diag_green  =  blit_done_ever;
 wire diag_yellow =  blit_start_ever && !blit_done_ever;
 wire diag_red    = !blit_start_ever;
@@ -464,7 +468,7 @@ assign green = startup_phase ? 5'h1F
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (nvram_wr_ever ? 5'h1F : 5'h00) // B=nvram_wr_ever
+             : diag_phase    ? (vreg_cmd_ever ? 5'h1F : 5'h00) // B=vreg_cmd_ever
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
