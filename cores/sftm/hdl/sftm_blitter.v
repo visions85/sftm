@@ -67,6 +67,9 @@ module sftm_blitter(
     input       [ 1:0]  grom_bank,
 
     // GROM read (16-bit, 2 pixels/word)
+    // grom_cs is toggled (0->1) at every FETCH entry per jtframe_romrq best practice:
+    // addr_ok must go low then high for each new address request, otherwise the
+    // bcache will not re-issue a read when the address changes while cs stays high.
     output reg  [23:0]  grom_addr,
     input       [15:0]  grom_data,
     output reg          grom_cs,
@@ -128,10 +131,12 @@ always @(posedge clk) begin
                 curx      <= r_x;
                 cury      <= r_y;
                 vram_plane<= plane_sel;
-                grom_cs   <= 1;
+                // grom_cs NOT asserted here; FETCH will produce a clean 0->1
+                // rising edge that jtframe_romrq_bcache requires to issue a read.
                 st        <= FETCH;
             end
             FETCH: begin
+                grom_cs   <= 1;          // (re-)assert: arbiter sees 0->1 on FETCH entry
                 grom_addr <= src[24:1];
                 if( grom_ok ) st <= WRITE;
             end
@@ -144,6 +149,11 @@ always @(posedge clk) begin
                 st <= STEP;
             end
             STEP: begin
+                // De-assert grom_cs so the next FETCH produces a clean 0->1 rising
+                // edge.  jtframe_romrq_bcache only re-issues a SDRAM read when it
+                // sees addr_ok (=grom_cs) transition low->high; keeping cs permanently
+                // high causes the cache to return stale data when the address changes.
+                grom_cs <= 0;
                 // Advance source by SRC_XSTEP (8.8 fixed-point):
                 //   integer part  r_srcxstep[15:8] always increments src;
                 //   fractional part accumulates in src_xfrac; overflow = +1 extra.
@@ -158,7 +168,6 @@ always @(posedge clk) begin
                     // Advance Y by DST_YSTEP (8.8 fp); YFLIP negates direction.
                     cury <= r_flags[F_YFLIP] ? cury - dst_y_int : cury + dst_y_int;
                     if( ycnt >= r_height ) begin
-                        grom_cs <= 0;
                         done    <= 1;
                         st      <= IDLE;
                     end else begin
