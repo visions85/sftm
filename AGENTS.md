@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **I/O port fix deployed (2026-07-23)** — ROM downloads via MRA, 256-frame white startup diagnostic confirmed, I/O byte lane and vblank-poll bugs fixed, game expected to progress past static screen. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **light-blue screen reached (2026-07-24)** — 256-frame white startup diagnostic → light-blue background confirmed on hardware; CPU is running game code and writing palette RAM; blitter/sprite layer not yet rendering graphics. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -236,7 +236,7 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
 - ~~ROM download via MRA confirmed working~~ — DONE; startup white diagnostic confirmed on hardware (2026-07-23)
-- First boot: I/O fix + CRTC shadow registers deployed (2026-07-24, md5 `73a9446b49a49730f779d1aee428e628`) — CPU now exits vblank-wait; LHBL/LVBL survive game register-clear; observe behaviour on hardware
+- **Light-blue screen confirmed (2026-07-24, md5 `73a9446b49a49730f779d1aee428e628`)**: After 256-frame white diagnostic, game transitions to solid light-blue background. CPU is executing game code, writing palette RAM (background colour visible), CRTC/blanking working. Blitter/sprite layer not yet rendering — no graphics drawn over background. Next: determine whether CPU is stuck in self-test/NVRAM-error loop, or actively issuing blitter commands that aren't producing visible output.
 - ES5506: compressed/u-law sample mode; K1/K2 ramp exact byte-lane scheme (simplified addresses used; validate against MAME register traces); IRQV host_addr 0x38 overlaps K2[7:0] low-byte read (reading 0x38 returns IRQV per current design)
 - IT42: YSTEP_PER_X polygon shear, WIDTHPIX source-count-limited row mode
 - MRA generation needs `doc/mame.xml` (run `mame -listxml sftm > doc/mame.xml` once MAME is installed; then `./docker/run.sh jtframe mra sftm`)
@@ -253,7 +253,8 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 7. ~~ES5506 basic voice scheduler~~ — DONE. Still needed: compare `sftm5506` output against MAME `es5506.cpp` for a captured register/ROM trace
 8. ~~Load ROM via MRA~~ — DONE: ROM download progress bar confirmed on hardware (2026-07-23)
 9. ~~Verify 256-frame startup white~~ — DONE: white screen confirmed on hardware (2026-07-23); root cause of prior black screen was LHBL/LVBL reset to 0 (fixed in commit `19bd8a5`)
-10. Boot to self-test, then attract mode
+10. ~~Boot past white screen~~ — DONE: light-blue background confirmed (2026-07-24); CPU running game code, palette RAM functional
+11. Boot to self-test, then attract mode (blitter rendering graphics over blue background)
 
 ## Reference
 
