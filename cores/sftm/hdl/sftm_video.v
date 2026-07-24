@@ -248,21 +248,35 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// CRTC counters (run on pxl_cen). Generate sync/blank + interrupts.
+// CRTC shadow registers: hold the last *non-zero* value written to the four
+// timing registers that feed the counter wraps and blanking logic.
+//
+// Why:  The CPU clears all 128 video registers to 0 before reprogramming them
+// at boot.  With VR_VBSTART=0 the expression ~(vcnt>=0 || vcnt<0) evaluates
+// to 0 permanently (same failure as the original LHBL/LVBL=0 reset bug);
+// arcade_video latches VBL=1 on the first HBLANK falling edge and outputs
+// black forever.  Guard combinational wires are optimised away by Quartus
+// because the registers start non-zero after reset — the only way to survive
+// the CPU clear-then-reprogram sequence is to use separate registered copies
+// that ignore zero writes.
 // ---------------------------------------------------------------------------
-// Guard: use itech32 hardware defaults when total/blank-start registers are 0.
-// The CPU clears all video registers before reprogramming at boot; zero HTOTAL/
-// VTOTAL would pin the counters, and zero HBSTART/VBSTART forces LHBL/LVBL=0
-// permanently — the same arcade_video VBL-latch black-screen failure as the
-// original reset-initialisation bug.  When a register is 0 we substitute the
-// hardware default so the CRTC keeps running and blanking stays inactive.
-wire [9:0] htotal_v = (vregs[VR_HTOTAL][9:0] == 10'd0) ? 10'd507 : vregs[VR_HTOTAL][9:0];
-wire [9:0] vtotal_v = (vregs[VR_VTOTAL][9:0] == 10'd0) ? 10'd261 : vregs[VR_VTOTAL][9:0];
-wire       hblank_v = (vregs[VR_HBSTART][9:0] != 10'd0) &&
-                      (hcnt >= vregs[VR_HBSTART][9:0] || hcnt < vregs[VR_HBEND][9:0]);
-wire       vblank_v = (vregs[VR_VBSTART][9:0] != 10'd0) &&
-                      (vcnt >= vregs[VR_VBSTART][9:0] || vcnt < vregs[VR_VBEND][9:0]);
+reg [9:0] r_htotal, r_vtotal, r_hbstart, r_vbstart;
 
+always @(posedge clk) begin
+    if( rst ) begin
+        r_htotal  <= 10'd507;
+        r_vtotal  <= 10'd261;
+        r_hbstart <= 10'd384;
+        r_vbstart <= 10'd240;
+    end else if( vreg_we ) begin
+        if( vreg_a==VR_HTOTAL  && vreg_wr_val[9:0]!=10'd0 ) r_htotal  <= vreg_wr_val[9:0];
+        if( vreg_a==VR_VTOTAL  && vreg_wr_val[9:0]!=10'd0 ) r_vtotal  <= vreg_wr_val[9:0];
+        if( vreg_a==VR_HBSTART && vreg_wr_val[9:0]!=10'd0 ) r_hbstart <= vreg_wr_val[9:0];
+        if( vreg_a==VR_VBSTART && vreg_wr_val[9:0]!=10'd0 ) r_vbstart <= vreg_wr_val[9:0];
+    end
+end
+
+// CRTC counters (run on pxl_cen). Generate sync/blank + interrupts.
 always @(posedge clk) begin
     if( rst ) begin
         hcnt <= 10'd0;
@@ -272,15 +286,15 @@ always @(posedge clk) begin
         LHBL <= 1'b1;   // start active; avoids 1-frame blank window post-reset
         LVBL <= 1'b1;   // start active
     end else if(pxl_cen) begin
-        if( hcnt >= htotal_v ) begin
+        if( hcnt >= r_htotal ) begin
             hcnt <= 0;
-            vcnt <= (vcnt >= vtotal_v) ? 10'd0 : vcnt + 10'd1;
+            vcnt <= (vcnt >= r_vtotal) ? 10'd0 : vcnt + 10'd1;
         end else hcnt <= hcnt + 10'd1;
 
         HS   <= hcnt >= vregs[VR_HSYNC][9:0];
         VS   <= vcnt >= vregs[VR_VSYNC][9:0];
-        LHBL <= ~hblank_v;
-        LVBL <= ~vblank_v;
+        LHBL <= ~(hcnt >= r_hbstart || hcnt < vregs[VR_HBEND][9:0]);
+        LVBL <= ~(vcnt >= r_vbstart || vcnt < vregs[VR_VBEND][9:0]);
     end
 end
 
