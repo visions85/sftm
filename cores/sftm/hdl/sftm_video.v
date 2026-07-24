@@ -125,21 +125,19 @@ wire [ 7:0] fg_io_pix, bg_io_pix;
 // causing arcade_video to latch VBL=1 on the very first frame edge.  Fixed by
 // initialising LHBL/LVBL to 1 (active) in the CRTC reset block below.
 wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnostic raster
-// Post-startup blit diagnostic (300 frames after white ends):
-//   RED    = blit_start never fired  → CPU never called the blitter
-//   YELLOW = blit_start fired, blit_done never fired  → blitter stuck (SDRAM?)
-//   GREEN  = blit_done fired  → blitter works
 // blit_start_ever: latches the first blit_start pulse
 // blit_done_ever:  latches the first blit_done pulse
 reg         blit_start_ever;     // latches the first blit_start forever
 reg         blit_done_ever;      // latches the first blit_done forever
 reg         vreg_cmd_ever;      // latches first VR_COMMAND write (any value)
-reg  [10:0] diag_cnt;           // counts vblanks during the diagnostic window
-// Diagnostic window: 1200 frames (~20 s) after the 256-frame white startup.
-// This long window accommodates the game's cooperative-multitasking boot
-// sequence — ROM disassembly shows the task at $829908 goes through many
-// coroutine yields before the first screen-clear (VR_COMMAND=0xFF at $8027A0).
-wire        diag_phase = (diag_cnt < 11'd1200) && !startup_phase;
+// Diagnostic: show until first blit_done, then switch to game output.
+// No fixed time window — the cooperative-multitasking boot sequence takes an
+// unpredictable number of frames (ROM analysis: task $829908 goes through
+// many coroutine yields before first screen-clear at $8027A0; the attract
+// mode intro can take 1000+ frames before any blitting starts).
+// Colours: RED=blit_start never fired; MAGENTA=cmd written no blit_start;
+//          YELLOW=blit_start fired, done never; GREEN=blit done (OK).
+wire        diag_phase = !blit_done_ever && !startup_phase;
 integer     i;
 
 function [15:0] merge16;
@@ -374,11 +372,7 @@ always @(posedge clk) begin
     if( rst )                                  vreg_cmd_ever <= 1'b0;
     else if( vreg_we && vreg_a==VR_COMMAND )   vreg_cmd_ever <= 1'b1;
 end
-// diag_cnt: counts 1200 vblanks after startup_phase ends (diagnostic window).
-always @(posedge clk) begin
-    if( rst )                                         diag_cnt <= 11'd0;
-    else if( vblank_irq && diag_phase )               diag_cnt <= diag_cnt + 11'd1;
-end
+// diag_cnt removed (diagnostic window is now open-ended until blit_done_ever).
 
 // ---------------------------------------------------------------------------
 // VRAM: two planes, 8-bit indexed pixels, 512 wide. Dual port: blitter writes
@@ -444,14 +438,12 @@ sftm_pal u_pal(
 // screen.  After the startup window the normal game output appears.
 // gfx_en[3]=0 in the OSD restores the hcnt/vcnt gradient at any time.
 //
-// Post-startup blit diagnostic (diag_phase = 1200 frames after white ends):
+// Post-startup blit diagnostic (diag_phase = active until first blit_done):
 //   R=!blit_start_ever  G=blit_done_ever  B=vreg_cmd_ever (any VR_COMMAND write)
 //   RED     = VR_COMMAND never written    → game hasn't called blitter yet
 //   MAGENTA = VR_COMMAND written, blit_start didn't fire → hardware bug!
 //   YELLOW  = blit_start fired, blit_done never fired → blitter stuck (SDRAM?)
-//   WHITE   = blit_start fired, stuck, VR_COMMAND written
-//   GREEN   = blit_done fired, VR_COMMAND written (NVRAM was already valid)
-//   CYAN    = blit_done fired, no VR_COMMAND
+//   GREEN   = blit_done fired → blitter works; switches to game output
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
