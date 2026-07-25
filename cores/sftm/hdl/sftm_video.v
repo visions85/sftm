@@ -134,7 +134,7 @@ wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnost
 reg         blit_start_ever;     // latches the first blit_start forever
 reg         blit_done_ever;      // latches the first blit_done forever
 reg         vreg_cmd_ever;       // latches first VR_COMMAND write (any value)
-reg         vreg_xfer_wr_ever;   // latches first CPU write to VR_XFER (VBlank ISR poll loop)
+reg         pal_wr_ever;          // latches first CPU write to palette RAM ($580000-$59FFFF)
 // Diagnostic: show until first blit_done, then switch to game output.
 // No fixed time window — the cooperative-multitasking boot sequence takes an
 // unpredictable number of frames (ROM analysis: task $829908 goes through
@@ -378,12 +378,13 @@ always @(posedge clk) begin
     else if( vreg_we && vreg_a==VR_COMMAND )   vreg_cmd_ever <= 1'b1;
 end
 // diag_cnt removed (diagnostic window is now open-ended until blit_done_ever).
-// vreg_xfer_wr_ever: set the first time the CPU writes to VR_XFER.
-// The VBlank ISR poll loop at $801380 loops writing 0x0040 to VR_XFER;
-// if vreg_xfer_wr_ever is never set, the VBlank ISR has never run.
+// pal_wr_ever: set the first time the CPU writes to palette RAM.
+// Palette writes happen during early display init, long before the first blit.
+// If pal_wr_ever=1 but wdog_kick_ever=0 the CPU IS running but the wdog
+// detection is broken (or the watchdog address decode is wrong).
 always @(posedge clk) begin
-    if( rst )                                   vreg_xfer_wr_ever <= 1'b0;
-    else if( vreg_we && vreg_a==VR_XFER )       vreg_xfer_wr_ever <= 1'b1;
+    if( rst )                                       pal_wr_ever <= 1'b0;
+    else if( pal_cs & ~cpu_rnw & (~cpu_uds_n | ~cpu_lds_n) ) pal_wr_ever <= 1'b1;
 end
 
 // ---------------------------------------------------------------------------
@@ -452,19 +453,19 @@ sftm_pal u_pal(
 //
 // Post-startup progress diagnostic (diag_phase = active until first blit_done).
 // Encodes two orthogonal progress flags as RGB:
-//   R = !wdog_kick_ever    (outer main loop has NOT kicked the watchdog yet)
-//   G =  wdog_kick_ever    (outer main loop IS running)
-//   B =  vreg_xfer_wr_ever (CPU wrote to VR_XFER = VBlank ISR poll loop ran)
+//   R = !wdog_kick_ever  (outer main loop has NOT kicked the watchdog yet)
+//   G =  wdog_kick_ever  (outer main loop IS running)
+//   B =  pal_wr_ever     (CPU wrote to palette RAM = game IS running)
 //
 // Resulting colours:
-//   RED     (G=0,B=0): main loop never ran, VBlank ISR never ran
-//                      → CPU stuck very early (before or inside init/coroutine)
-//   GREEN   (G=1,B=0): main loop IS running but VBlank ISR never wrote VR_XFER
-//                      → VBlank interrupts not reaching CPU; cooperative
-//                         scheduler cannot advance → game stuck in yield loop
-//   MAGENTA (G=0,B=1): VBlank ISR ran but main loop never ran (unusual)
-//   CYAN    (G=1,B=1): both running → cooperative scheduler advancing;
-//                      game just hasn't reached VR_COMMAND write yet
+//   RED     (G=0,B=0): no wdog, no palette write
+//                      → CPU stuck early (RAM test or boot copy not done)
+//   GREEN   (G=1,B=0): wdog kicked (startup running), no palette write yet
+//                      → init/RAM test running; palette write comes later
+//   MAGENTA (G=0,B=1): palette written (game running!) but wdog NOT detected
+//                      → wdog_kick_ever broken, or $400000 decode wrong!
+//   CYAN    (G=1,B=1): both → game fully initialized, cooperative
+//                      scheduler advancing toward blitter
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
@@ -478,7 +479,7 @@ assign green = startup_phase ? 5'h1F
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? ( vreg_xfer_wr_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? ( pal_wr_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
