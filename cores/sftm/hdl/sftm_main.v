@@ -74,6 +74,11 @@ module sftm_main(
     // (w_rst) — persists until hard rst so diagnostic is cumulative.
     output reg          wdog_kick_ever,
 
+    // Diagnostic: goes high the first time boot_done fires and never clears
+    // until hard rst.  B=0 after startup → boot copy stuck (SDRAM issue).
+    // B=1 but G=0 → boot copy OK but CPU crashes before first wdog kick.
+    output reg          boot_done_ever,
+
     // VBlank active latch (set on vblank_irq, cleared by timer). Exported to
     // sftm_video so VR_XFER reads can return bit 6 = vint_latch: the VBlank
     // ISR polls this bit to know when the vblank window has ended.
@@ -359,6 +364,10 @@ endfunction
 always @(posedge clk) begin
     if( rst ) wdog_kick_ever <= 1'b0;
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
+end
+always @(posedge clk) begin
+    if( rst )       boot_done_ever <= 1'b0;
+    else if( boot_done ) boot_done_ever <= 1'b1;
 end
 
 // wdog_armed: latches on first CPU kick; persists through soft resets so

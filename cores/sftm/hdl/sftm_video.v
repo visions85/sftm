@@ -71,8 +71,11 @@ module sftm_video(
     input               vint_latch,
 
     // Diagnostic: first watchdog kick by the main CPU outer loop.
-    // Combined with vreg_xfer_wr_ever to distinguish four stuck stages.
-    input               wdog_kick_ever
+    input               wdog_kick_ever,
+
+    // Diagnostic: boot copy completed at least once.
+    // B=0 → boot copy stuck (SDRAM issue); B=1+G=0 → CPU crashes after boot.
+    input               boot_done_ever
 );
 
 localparam VRAM_W = 512, VRAM_H = 256;   // TODO: confirm plane height vs HW
@@ -453,19 +456,17 @@ sftm_pal u_pal(
 //
 // Post-startup progress diagnostic (diag_phase = active until first blit_done).
 // Encodes two orthogonal progress flags as RGB:
-//   R = !wdog_kick_ever  (outer main loop has NOT kicked the watchdog yet)
-//   G =  wdog_kick_ever  (outer main loop IS running)
-//   B =  pal_wr_ever     (CPU wrote to palette RAM = game IS running)
+//   R = !wdog_kick_ever   (watchdog NOT yet kicked)
+//   G =  wdog_kick_ever   (watchdog kicked = CPU reached main init code)
+//   B =  boot_done_ever   (boot copy completed = SDRAM is serving ROM data)
 //
 // Resulting colours:
-//   RED     (G=0,B=0): no wdog, no palette write
-//                      → CPU stuck early (RAM test or boot copy not done)
-//   GREEN   (G=1,B=0): wdog kicked (startup running), no palette write yet
-//                      → init/RAM test running; palette write comes later
-//   MAGENTA (G=0,B=1): palette written (game running!) but wdog NOT detected
-//                      → wdog_kick_ever broken, or $400000 decode wrong!
-//   CYAN    (G=1,B=1): both → game fully initialized, cooperative
-//                      scheduler advancing toward blitter
+//   RED     (G=0,B=0): no wdog, no boot done
+//                      → boot copy stuck (SDRAM not responding?)
+//   MAGENTA (G=0,B=1): boot done but wdog never kicked
+//                      → CPU crashes right after boot (exception handler loop)
+//   GREEN   (G=1,B=0): wdog kicked but boot_done_ever=0? (should be impossible)
+//   CYAN    (G=1,B=1): both → CPU running normally, heading toward blitter
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
@@ -479,7 +480,7 @@ assign green = startup_phase ? 5'h1F
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? ( pal_wr_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? ( boot_done_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
