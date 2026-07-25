@@ -68,7 +68,11 @@ module sftm_video(
     // after each VBlank. Drives bit 6 of VR_XFER reads so the VBlank ISR at
     // $801380 can poll for end-of-vblank (it loops writing $0040 to VR_XFER
     // and reading $500005 bit 6 until the window expires).
-    input               vint_latch
+    input               vint_latch,
+
+    // Diagnostic: first watchdog kick by the main CPU outer loop.
+    // Combined with vreg_xfer_wr_ever to distinguish four stuck stages.
+    input               wdog_kick_ever
 );
 
 localparam VRAM_W = 512, VRAM_H = 256;   // TODO: confirm plane height vs HW
@@ -129,7 +133,8 @@ wire        startup_phase = ~startup_cnt[8]; // first 256 frames (~4s): diagnost
 // blit_done_ever:  latches the first blit_done pulse
 reg         blit_start_ever;     // latches the first blit_start forever
 reg         blit_done_ever;      // latches the first blit_done forever
-reg         vreg_cmd_ever;      // latches first VR_COMMAND write (any value)
+reg         vreg_cmd_ever;       // latches first VR_COMMAND write (any value)
+reg         vreg_xfer_wr_ever;   // latches first CPU write to VR_XFER (VBlank ISR poll loop)
 // Diagnostic: show until first blit_done, then switch to game output.
 // No fixed time window — the cooperative-multitasking boot sequence takes an
 // unpredictable number of frames (ROM analysis: task $829908 goes through
@@ -373,6 +378,13 @@ always @(posedge clk) begin
     else if( vreg_we && vreg_a==VR_COMMAND )   vreg_cmd_ever <= 1'b1;
 end
 // diag_cnt removed (diagnostic window is now open-ended until blit_done_ever).
+// vreg_xfer_wr_ever: set the first time the CPU writes to VR_XFER.
+// The VBlank ISR poll loop at $801380 loops writing 0x0040 to VR_XFER;
+// if vreg_xfer_wr_ever is never set, the VBlank ISR has never run.
+always @(posedge clk) begin
+    if( rst )                                   vreg_xfer_wr_ever <= 1'b0;
+    else if( vreg_we && vreg_a==VR_XFER )       vreg_xfer_wr_ever <= 1'b1;
+end
 
 // ---------------------------------------------------------------------------
 // VRAM: two planes, 8-bit indexed pixels, 512 wide. Dual port: blitter writes
@@ -438,29 +450,35 @@ sftm_pal u_pal(
 // screen.  After the startup window the normal game output appears.
 // gfx_en[3]=0 in the OSD restores the hcnt/vcnt gradient at any time.
 //
-// Post-startup blit diagnostic (diag_phase = active until first blit_done):
-//   R=!blit_start_ever  G=blit_done_ever  B=vreg_cmd_ever (any VR_COMMAND write)
-//   RED     = VR_COMMAND never written    → game hasn't called blitter yet
-//   MAGENTA = VR_COMMAND written, blit_start didn't fire → hardware bug!
-//   YELLOW  = blit_start fired, blit_done never fired → blitter stuck (SDRAM?)
-//   GREEN   = blit_done fired → blitter works; switches to game output
+// Post-startup progress diagnostic (diag_phase = active until first blit_done).
+// Encodes two orthogonal progress flags as RGB:
+//   R = !wdog_kick_ever    (outer main loop has NOT kicked the watchdog yet)
+//   G =  wdog_kick_ever    (outer main loop IS running)
+//   B =  vreg_xfer_wr_ever (CPU wrote to VR_XFER = VBlank ISR poll loop ran)
+//
+// Resulting colours:
+//   RED     (G=0,B=0): main loop never ran, VBlank ISR never ran
+//                      → CPU stuck very early (before or inside init/coroutine)
+//   GREEN   (G=1,B=0): main loop IS running but VBlank ISR never wrote VR_XFER
+//                      → VBlank interrupts not reaching CPU; cooperative
+//                         scheduler cannot advance → game stuck in yield loop
+//   MAGENTA (G=0,B=1): VBlank ISR ran but main loop never ran (unusual)
+//   CYAN    (G=1,B=1): both running → cooperative scheduler advancing;
+//                      game just hasn't reached VR_COMMAND write yet
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
-wire diag_green  =  blit_done_ever;
-wire diag_yellow =  blit_start_ever && !blit_done_ever;
-wire diag_red    = !blit_start_ever;
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? (diag_green ? 5'h00 : 5'h1F)  // green=off, yellow/red=on
+             : diag_phase    ? (!wdog_kick_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? (diag_red   ? 5'h00 : 5'h1F)  // red=off, green/yellow=on
+             : diag_phase    ? ( wdog_kick_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (vreg_cmd_ever ? 5'h1F : 5'h00) // B=vreg_cmd_ever
+             : diag_phase    ? ( vreg_xfer_wr_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 

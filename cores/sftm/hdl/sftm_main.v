@@ -67,6 +67,13 @@ module sftm_main(
     // from "stuck after NVRAM init" (MAGENTA) in the post-startup diagnostic.
     output reg          nvram_wr_ever,
 
+    // Diagnostic: goes high the first time the CPU writes to the watchdog
+    // register (0x400000 = REG_WDOG).  This happens inside the outer main
+    // loop (jsr $8006BA + wdog kick + loop), so wdog_kick_ever=1 means the
+    // outer game loop ran at least once.  Never cleared by watchdog resets
+    // (w_rst) — persists until hard rst so diagnostic is cumulative.
+    output reg          wdog_kick_ever,
+
     // VBlank active latch (set on vblank_irq, cleared by timer). Exported to
     // sftm_video so VR_XFER reads can return bit 6 = vint_latch: the VBlank
     // ISR polls this bit to know when the vblank window has ended.
@@ -340,6 +347,11 @@ function [15:0] read_inputs(input [7:0] sel);
         read_inputs = cpu_a[1] ? { 8'h00, io } : 16'h0000;
     end
 endfunction
+
+always @(posedge clk) begin
+    if( rst ) wdog_kick_ever <= 1'b0;
+    else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
+end
 
 always @(posedge clk) begin
     wdog_rst <= 1'b0;                          // default: not firing
