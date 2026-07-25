@@ -49,6 +49,7 @@ wire        blit_irq, scan_irq, vblank_irq;
 wire        vint_latch_w;
 // diagnostics
 wire        nvram_wr_ever;   // latches first CPU NVRAM write (sftm_main → sftm_video)
+wire        wdog_kick_ever;  // latches first watchdog kick (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -109,7 +110,9 @@ sftm_main u_main(
     // vblank status for DIPS register bit 2 (active-low: 1=active display)
     .LVBL       ( LVBL          ),
     // diagnostic: first NVRAM write ever
-    .nvram_wr_ever( nvram_wr_ever )
+    .nvram_wr_ever( nvram_wr_ever ),
+    // diagnostic: first watchdog kick
+    .wdog_kick_ever( wdog_kick_ever )
 );
 
 // ---------------------------------------------------------------------------
@@ -160,6 +163,8 @@ sftm_video u_video(
     .gfx_en     ( gfx_en        ),
     .debug_bus  ( debug_bus     ),
     .nvram_wr_ever( nvram_wr_ever ),
+    // diagnostic: first watchdog kick (outer main loop ran)
+    .wdog_kick_ever( wdog_kick_ever ),
     // VBlank active latch for correct VR_XFER bit 6 behaviour
     .vint_latch ( vint_latch_w  )
 );
