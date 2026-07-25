@@ -169,6 +169,7 @@ reg  [ 2:0] cpu_ipl;
 reg  [ 4:0] boot_lw;                     // 0..31 long-word index (32*4 = 0x80)
 reg         boot_half;                   // 0 = high word, 1 = low word
 reg         boot_done;                   // copy finished, CPU may run
+reg         boot_cs;                     // rom_cs during boot (toggled per LW)
 
 assign cpu_addr     = cpu_a[23:1];
 assign cpu_dout     = cpu_do16;
@@ -203,7 +204,9 @@ always @(*) begin
 end
 
 // The ROM port is driven by the boot-copy FSM until boot_done, then the CPU.
-assign rom_cs   = boot_done ? (prog_sel & bus_active) : 1'b1;
+// boot_cs pulses low for one cycle between each new boot_lw to give
+// jtframe_romrq_bcache the low→high edge it requires to re-fetch a new address.
+assign rom_cs   = boot_done ? (prog_sel & bus_active) : boot_cs;
 assign rom_addr = boot_done ? cpu_a[19:2]              // CPU access
                             : { 13'd0, boot_lw };
 
@@ -411,22 +414,35 @@ end
 
 // ---------------------------------------------------------------------------
 // Boot vector copy FSM: walk 32 long-words (0x80 bytes) of program ROM into
-// main RAM. rom_cs is forced high while !boot_done (see decode), so rom_ok
-// pulses when the requested long-word is available. Both byte lanes are
-// written; boot_half selects the high/low 16-bit half of each long-word.
+// main RAM before releasing the CPU from reset.
+//
+// jtframe_romrq_bcache requires a low→high edge on cs to re-fetch a new
+// address (same root cause as the grom_cs stale-cache bug).  boot_cs pulses
+// low for exactly one clock cycle whenever boot_lw advances, then re-asserts
+// high to trigger the next SDRAM fetch.  Both 16-bit halves of the same LW
+// share the same rom_addr so the second half hits the cache without a pulse.
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     if( w_rst ) begin
         boot_lw   <= 5'd0;
         boot_half <= 1'b0;
         boot_done <= 1'b0;
-    end else if( !boot_done && rom_ok ) begin
-        if( !boot_half ) begin
-            boot_half <= 1'b1;                       // high word written now
-        end else begin
-            boot_half <= 1'b0;                       // low word written now
-            if( boot_lw == 5'd31 ) boot_done <= 1'b1;
-            else                   boot_lw    <= boot_lw + 5'd1;
+        boot_cs   <= 1'b1;                           // start fetching addr 0
+    end else if( !boot_done ) begin
+        if( !boot_cs ) begin
+            boot_cs <= 1'b1;                         // re-assert after 1-cycle gap
+        end else if( rom_ok ) begin
+            if( !boot_half ) begin
+                boot_half <= 1'b1;                   // high word latched; same addr
+            end else begin
+                boot_half <= 1'b0;                   // low word latched
+                if( boot_lw == 5'd31 ) begin
+                    boot_done <= 1'b1;
+                end else begin
+                    boot_lw <= boot_lw + 5'd1;
+                    boot_cs <= 1'b0;                 // 1-cycle gap → cache re-fetches
+                end
+            end
         end
     end
 end
