@@ -123,19 +123,24 @@ localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
 
 // ---------------------------------------------------------------------------
 // Watchdog timer: CPU must write to 0x400000 (REG_WDOG) at least once every
-// ~333 ms (16 M cycles @ 48 MHz) or the core issues a soft reset.
-// On real itech32 hardware the CMOS watchdog timer asserts nRESET if not
-// kicked; blank NVRAM causes the game to initialise defaults then stall in a
-// tight loop waiting for a watchdog-triggered reboot.  Without this timer the
-// CPU loops forever (blit_start never fires → RED diagnostic).
+// ~30 s or the core issues a soft reset.
 //
-// w_rst: logically OR'd with the external rst so all CPU-side logic resets on
-// both hard reset (JTFRAME) and watchdog timeout.  The NVRAM BRAM (sftm_ram)
-// has no reset input, so its contents survive the soft reset — on the second
-// boot NVRAM is valid and the game proceeds normally.
+// Two-phase design:
+//   wdog_armed = 0  (before first CPU kick): watchdog never fires.
+//     The itech32 startup RAM/VRAM test takes many seconds before reaching
+//     the main loop's first watchdog kick.  Any fixed pre-kick timeout would
+//     fire during the test and trap the CPU in an infinite restart loop.
+//   wdog_armed = 1  (after first kick): 30 s timeout.
+//     Once the game is running, 30 s is enough to cover the startup test on
+//     any subsequent reboot (e.g. after a crash).  wdog_armed persists
+//     through soft resets (w_rst) so it is never lost during normal play.
+//
+// w_rst: OR'd with rst; resets all CPU-side logic (boot FSM, cpu_ipl, etc.)
+// but NOT the NVRAM BRAM (sftm_ram has no rst pin), so NVRAM survives.
 // ---------------------------------------------------------------------------
-reg  [26:0] wdog_cnt;   // 27-bit: 120M-cycle timeout = ~2.5 s @ 48 MHz
+reg  [30:0] wdog_cnt;   // 31-bit: 1440M-cycle timeout = ~30 s @ 48 MHz
 reg         wdog_rst;
+reg         wdog_armed; // gates watchdog; set on first kick; persists through w_rst
 wire        w_rst = rst | wdog_rst;
 
 // ---------------------------------------------------------------------------
@@ -356,23 +361,24 @@ always @(posedge clk) begin
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
 end
 
-// Watchdog timeout extended from 333ms (16M cycles) to 2.5s (120M cycles).
-// Root cause: startup RAM test at $80158A (D3=8192 outer iterations, large D2
-// counts per entry) takes several seconds before its first kick at $8015AA or
-// $800420.  The 333ms watchdog fired before the test finished, restarting the
-// CPU in an infinite reset loop (wdog_kick_ever always 0).
-// 27-bit counter: max ~2.8 s; timeout at 120M cycles (~2.5 s).
+// wdog_armed: latches on first CPU kick; persists through soft resets so
+// the watchdog remains active after the first successful boot.
+always @(posedge clk) begin
+    if( rst )                              wdog_armed <= 1'b0;
+    else if( cpu_write && ahi==REG_WDOG )  wdog_armed <= 1'b1;
+end
+
 always @(posedge clk) begin
     wdog_rst <= 1'b0;                          // default: not firing
     if( rst ) begin
-        wdog_cnt <= 27'd0;
+        wdog_cnt <= 31'd0;
     end else if( cpu_write && ahi==REG_WDOG ) begin
-        wdog_cnt <= 27'd0;                     // kicked: reset timer
-    end else if( wdog_cnt == 27'd119_999_999 ) begin
-        wdog_rst <= 1'b1;                      // timeout ~2.5 s @ 48 MHz
-        wdog_cnt <= 27'd0;
+        wdog_cnt <= 31'd0;                     // kicked: reset timer
+    end else if( wdog_armed && wdog_cnt == 31'd1_439_999_999 ) begin
+        wdog_rst <= 1'b1;                      // timeout ~30 s @ 48 MHz
+        wdog_cnt <= 31'd0;
     end else begin
-        wdog_cnt <= wdog_cnt + 27'd1;
+        wdog_cnt <= wdog_cnt + 31'd1;
     end
 end
 
