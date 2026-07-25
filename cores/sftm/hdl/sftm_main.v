@@ -134,7 +134,7 @@ localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
 // has no reset input, so its contents survive the soft reset — on the second
 // boot NVRAM is valid and the game proceeds normally.
 // ---------------------------------------------------------------------------
-reg  [23:0] wdog_cnt;
+reg  [26:0] wdog_cnt;   // 27-bit: 120M-cycle timeout = ~2.5 s @ 48 MHz
 reg         wdog_rst;
 wire        w_rst = rst | wdog_rst;
 
@@ -353,17 +353,23 @@ always @(posedge clk) begin
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
 end
 
+// Watchdog timeout extended from 333ms (16M cycles) to 2.5s (120M cycles).
+// Root cause: startup RAM test at $80158A (D3=8192 outer iterations, large D2
+// counts per entry) takes several seconds before its first kick at $8015AA or
+// $800420.  The 333ms watchdog fired before the test finished, restarting the
+// CPU in an infinite reset loop (wdog_kick_ever always 0).
+// 27-bit counter: max ~2.8 s; timeout at 120M cycles (~2.5 s).
 always @(posedge clk) begin
     wdog_rst <= 1'b0;                          // default: not firing
     if( rst ) begin
-        wdog_cnt <= 24'd0;
+        wdog_cnt <= 27'd0;
     end else if( cpu_write && ahi==REG_WDOG ) begin
-        wdog_cnt <= 24'd0;                     // kicked: reset timer
-    end else if( wdog_cnt == 24'd15_999_999 ) begin
-        wdog_rst <= 1'b1;                      // timeout ~333 ms @ 48 MHz
-        wdog_cnt <= 24'd0;
+        wdog_cnt <= 27'd0;                     // kicked: reset timer
+    end else if( wdog_cnt == 27'd119_999_999 ) begin
+        wdog_rst <= 1'b1;                      // timeout ~2.5 s @ 48 MHz
+        wdog_cnt <= 27'd0;
     end else begin
-        wdog_cnt <= wdog_cnt + 24'd1;
+        wdog_cnt <= wdog_cnt + 27'd1;
     end
 end
 
