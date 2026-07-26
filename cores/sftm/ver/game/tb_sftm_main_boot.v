@@ -54,11 +54,25 @@ reg  [31:0]  rom_data;
 
 // ROM contents.  boot FSM drives rom_addr = {13'd0, boot_lw} so LW[0]=SSP,
 // LW[1]=PC.  After boot the CPU drives rom_addr = cpu_a[19:2] so LW[2+]=code.
+//
+// jtframe_romrq_bcache assembles a 32-bit word as {SDRAM_word1, SDRAM_word0},
+// i.e. [31:16] = second (lower-address, HIGH half) SDRAM burst word,
+//      [15:0]  = first  (higher-address, LOW  half) SDRAM burst word.
+// Equivalently, for a big-endian ROM value {B0,B1,B2,B3}:
+//   rom_data[31:16] = {B2,B3}  (low 16-bit half)
+//   rom_data[15:0]  = {B0,B1}  (high 16-bit half)
+// The testbench drives rom_data directly (no cache), so we must supply it
+// in this format so that sftm_main's corrected rom_half/boot_word logic
+// reconstructs the right value.
+//
+// SSP = 0x0000_7FFE  → rom_data = { low16=0x7FFE, high16=0x0000 } = 32'h7FFE_0000
+// PC  = 0x0080_0008  → rom_data = { low16=0x0008, high16=0x0080 } = 32'h0008_0080
+// NOP = 0x4E71_4E71  → rom_data = 32'h4E71_4E71 (symmetric — unchanged)
 always @(*) begin
     case (rom_addr)
-        18'd0:   rom_data = 32'h0000_7FFE;   // SSP = 0x0000_7FFE
-        18'd1:   rom_data = 32'h0080_0008;   // PC  = 0x0080_0008
-        default: rom_data = 32'h4E71_4E71;   // NOP NOP
+        18'd0:   rom_data = 32'h7FFE_0000;   // SSP = 0x0000_7FFE  (bcache format)
+        18'd1:   rom_data = 32'h0008_0080;   // PC  = 0x0080_0008  (bcache format)
+        default: rom_data = 32'h4E71_4E71;   // NOP NOP (symmetric)
     endcase
 end
 
