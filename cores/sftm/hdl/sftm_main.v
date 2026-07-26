@@ -281,7 +281,10 @@ wire        nvram_we_hi = cpu_write & nvram_cs & high_byte_we;
 
 always @(posedge clk) begin
     if( rst ) nvram_wr_ever <= 1'b0;
-    else if( nvram_we_lo | nvram_we_hi ) nvram_wr_ever <= 1'b1;
+    // Repurposed as ram_wr_ever: latches first CPU write to main RAM after boot.
+    // The game init code clears RAM immediately after boot, so this fires as soon
+    // as the CPU is executing real code (not stalled on first ROM fetch).
+    else if( boot_done && cpu_write && ram_cs ) nvram_wr_ever <= 1'b1;
 end
 
 // NVRAM pre-loaded from MAME: valid bookkeeping data so game skips factory
@@ -387,15 +390,14 @@ always @(posedge clk) begin
     if( rst ) wdog_kick_ever <= 1'b0;
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
 end
-// B diagnostic = "rom_cs_ever": latches the first time rom_cs=1 while boot_done=1.
-// rom_cs = prog_sel & bus_active (after boot_done), so this fires as soon as
-// the CPU presents any ROM-range address with an active bus cycle.
-// This does NOT require rom_ok to fire -- it only checks that the CPU tried.
-//   B=0 (RED):     CPU never entered ROM address space after boot → PC is wrong
-//   B=1 (MAGENTA): CPU entered ROM space but SDRAM didn't respond (or crashed after)
+// G diagnostic = "rom_ok_ever": latches the first time rom_ok fires while
+// boot_done=1 and rom_cs=1.  This requires the SDRAM cache to actually respond
+// to a CPU instruction fetch (not just the CPU presenting the address).
+//   G=0: SDRAM stall — bcache never served ROM data to CPU after boot
+//   G=1: SDRAM responded; CPU advanced past its first ROM wait state
 always @(posedge clk) begin
-    if( rst )                       boot_done_ever <= 1'b0;
-    else if( boot_done && rom_cs )  boot_done_ever <= 1'b1;
+    if( rst )                                   boot_done_ever <= 1'b0;
+    else if( boot_done && rom_cs && rom_ok )    boot_done_ever <= 1'b1;
 end
 
 always @(posedge clk) begin

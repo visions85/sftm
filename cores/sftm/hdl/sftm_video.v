@@ -456,15 +456,16 @@ sftm_pal u_pal(
 // Post-startup progress diagnostic (diag_phase = active until first blit_done).
 // Encodes three progress flags as RGB:
 //   R = !wdog_kick_ever  (watchdog NOT yet kicked)
-//   G =  boot_done_ever  (CPU entered ROM after boot vector copy)
-//   B =  nvram_wr_ever   (CPU wrote to NVRAM → factory reset ran)
+//   G =  boot_done_ever  = rom_ok_ever: SDRAM served ROM data to CPU post-boot
+//   B =  nvram_wr_ever   = ram_wr_ever: CPU wrote to main RAM ($000000-$007FFF)
+//                          (repurposed names kept to avoid port churn)
 //
 // Resulting colours:
-//   RED    (G=0,B=0): CPU not accessing ROM → bad reset vector or SDRAM stall
-//   YELLOW (G=1,B=0): CPU in ROM, no NVRAM write → early crash before factory reset
-//   WHITE  (G=1,B=1): factory reset ran, spinning for watchdog reset
-//                     (expected while NVRAM was blank; wdog fires after 30 s)
-//   CYAN   (R→0): wdog kicked → CPU reached outer main loop → game running!
+//   RED    (G=0,B=0): SDRAM stall — rom_ok never fired after boot copy
+//   YELLOW (G=1,B=0): SDRAM responded but CPU never wrote RAM → crashes within
+//                     first 1-2 instructions before any stack push or RAM clear
+//   WHITE  (G=1,B=1): CPU executing real code (wrote RAM), crashes before wdog
+//   CYAN   (R→0): wdog kicked → outer main loop running → game running!
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
