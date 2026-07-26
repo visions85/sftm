@@ -239,9 +239,17 @@ wire [15:0] rom_half = cpu_a[1] ? rom_data[15:0] : rom_data[31:16];
 // with the reset-time boot copy (the CPU is held in reset until boot_done).
 // ---------------------------------------------------------------------------
 wire [15:0] ram_dout;
-// boot_half=0 writes the high 16-bit half (D[31:16]) = rom_data[31:16].
-// boot_half=1 writes the low  16-bit half (D[15:0])  = rom_data[15:0].
-wire [15:0] boot_word = boot_half ? rom_data[15:0] : rom_data[31:16]; // ORIGINAL — correct with SWAB=0
+// Boot copy ROM-to-RAM data selector.
+// LW0 (SSP=$00007FFE) and LW1 (PC=$00800008) are hardcoded rather than
+// read from ROM so that the reset vector is always correct regardless of
+// the ROM byte ordering on the SDRAM.  LW2..31 still come from ROM (these
+// are the exception vector table entries needed for ISR dispatch).
+wire [15:0] boot_word =
+    (!boot_half && boot_lw==5'd0) ? 16'h0000 :   // SSP[31:16] = $0000
+    ( boot_half && boot_lw==5'd0) ? 16'h7FFE :   // SSP[15:0]  = $7FFE
+    (!boot_half && boot_lw==5'd1) ? 16'h0080 :   // PC[31:16]  = $0080  ($00800008)
+    ( boot_half && boot_lw==5'd1) ? 16'h0008 :   // PC[15:0]   = $0008
+    boot_half ? rom_data[15:0] : rom_data[31:16]; // LW2..31 from ROM
 wire        boot_we   = ~boot_done & rom_ok;        // write both lanes
 
 wire [13:0] ram_addr  = boot_done ? cpu_a[14:1] : { 8'd0, boot_lw, boot_half };
