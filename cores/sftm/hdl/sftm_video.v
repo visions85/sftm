@@ -71,7 +71,12 @@ module sftm_video(
     input               vint_latch,
 
     // Diagnostic: first watchdog kick by the main CPU outer loop.
-    input               wdog_kick_ever
+    input               wdog_kick_ever,
+
+    // Diagnostic: boot copy completed at least once.
+    // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
+    // G=1 → CPU entered ROM address space.
+    input               boot_done_ever
 );
 
 localparam VRAM_W = 512, VRAM_H = 256;   // TODO: confirm plane height vs HW
@@ -449,19 +454,17 @@ sftm_pal u_pal(
 // gfx_en[3]=0 in the OSD restores the hcnt/vcnt gradient at any time.
 //
 // Post-startup progress diagnostic (diag_phase = active until first blit_done).
-// Encodes two orthogonal progress flags as RGB:
+// Encodes three progress flags as RGB:
 //   R = !wdog_kick_ever  (watchdog NOT yet kicked)
-//   G =  wdog_kick_ever  (watchdog kicked = CPU outer main loop ran)
-//   B =  pal_wr_ever     (any CPU write to palette RAM; happens during
-//                         display init, well before the first wdog kick)
+//   G =  boot_done_ever  (CPU entered ROM after boot vector copy)
+//   B =  nvram_wr_ever   (CPU wrote to NVRAM → factory reset ran)
 //
 // Resulting colours:
-//   RED     (G=0,B=0): no pal writes, no wdog → factory-reset spin loop
-//                      (NVRAM invalid) or early crash before display init
-//   MAGENTA (G=0,B=1): palette written but no wdog kick yet → CPU past
-//                      display init but stuck before the outer main loop
-//   GREEN   (G=1,B=0): wdog kicked before any pal write → should not happen
-//   CYAN    (G=1,B=1): both → CPU running normally in outer main loop
+//   RED    (G=0,B=0): CPU not accessing ROM → bad reset vector or SDRAM stall
+//   YELLOW (G=1,B=0): CPU in ROM, no NVRAM write → early crash before factory reset
+//   WHITE  (G=1,B=1): factory reset ran, spinning for watchdog reset
+//                     (expected while NVRAM was blank; wdog fires after 30 s)
+//   CYAN   (R→0): wdog kicked → CPU reached outer main loop → game running!
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
@@ -471,11 +474,11 @@ assign red   = startup_phase ? 5'h1F
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? ( wdog_kick_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? ( boot_done_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? ( pal_wr_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? ( nvram_wr_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
