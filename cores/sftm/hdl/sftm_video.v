@@ -71,11 +71,7 @@ module sftm_video(
     input               vint_latch,
 
     // Diagnostic: first watchdog kick by the main CPU outer loop.
-    input               wdog_kick_ever,
-
-    // Diagnostic: boot copy completed at least once.
-    // B=0 → boot copy stuck (SDRAM issue); B=1+G=0 → CPU crashes after boot.
-    input               boot_done_ever
+    input               wdog_kick_ever
 );
 
 localparam VRAM_W = 512, VRAM_H = 256;   // TODO: confirm plane height vs HW
@@ -454,19 +450,18 @@ sftm_pal u_pal(
 //
 // Post-startup progress diagnostic (diag_phase = active until first blit_done).
 // Encodes two orthogonal progress flags as RGB:
-//   R = !wdog_kick_ever   (watchdog NOT yet kicked)
-//   G =  wdog_kick_ever   (watchdog kicked = CPU reached main init code)
-//   B =  boot_done_ever   (repurposed = rom_ok_ever: SDRAM served CPU ROM fetch)
-//                         latches on first rom_ok during prog_sel+bus_active
+//   R = !wdog_kick_ever  (watchdog NOT yet kicked)
+//   G =  wdog_kick_ever  (watchdog kicked = CPU outer main loop ran)
+//   B =  pal_wr_ever     (any CPU write to palette RAM; happens during
+//                         display init, well before the first wdog kick)
 //
 // Resulting colours:
-//   RED     (G=0,B=0): no wdog, SDRAM never responded to CPU ROM fetch
-//                      → cache/SDRAM hung after boot copy
-//   MAGENTA (G=0,B=1): SDRAM served ROM data but CPU never kicked watchdog
-//                      → CPU got ROM data but crashed before $8015AA
-//                        (wrong instructions? exception? RAM test fail?)
-//   GREEN   (G=1,B=0): wdog kicked, no ROM ok? (should be impossible)
-//   CYAN    (G=1,B=1): both → CPU running normally, heading toward blitter
+//   RED     (G=0,B=0): no pal writes, no wdog → factory-reset spin loop
+//                      (NVRAM invalid) or early crash before display init
+//   MAGENTA (G=0,B=1): palette written but no wdog kick yet → CPU past
+//                      display init but stuck before the outer main loop
+//   GREEN   (G=1,B=0): wdog kicked before any pal write → should not happen
+//   CYAN    (G=1,B=1): both → CPU running normally in outer main loop
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
@@ -480,7 +475,7 @@ assign green = startup_phase ? 5'h1F
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? ( boot_done_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? ( pal_wr_ever ? 5'h1F : 5'h00)
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 

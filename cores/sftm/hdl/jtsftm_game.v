@@ -168,8 +168,6 @@ sftm_video u_video(
     .nvram_wr_ever( nvram_wr_ever ),
     // diagnostic: first watchdog kick (outer main loop ran)
     .wdog_kick_ever( wdog_kick_ever ),
-    // diagnostic: boot copy ever done
-    .boot_done_ever( boot_done_ever ),
     // VBlank active latch for correct VR_XFER bit 6 behaviour
     .vint_latch ( vint_latch_w  )
 );
