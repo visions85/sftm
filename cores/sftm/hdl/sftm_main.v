@@ -128,25 +128,24 @@ localparam [7:0] REG_INP0 = 8'h08, // >>16 of 0x080000
                  REG_PLANE= 8'h70;
 
 // ---------------------------------------------------------------------------
-// Watchdog timer: CPU must write to 0x400000 (REG_WDOG) at least once every
-// ~30 s or the core issues a soft reset.
+// Watchdog timer: fires unconditionally 30 s after every reset.
 //
-// Two-phase design:
-//   wdog_armed = 0  (before first CPU kick): watchdog never fires.
-//     The itech32 startup RAM/VRAM test takes many seconds before reaching
-//     the main loop's first watchdog kick.  Any fixed pre-kick timeout would
-//     fire during the test and trap the CPU in an infinite restart loop.
-//   wdog_armed = 1  (after first kick): 30 s timeout.
-//     Once the game is running, 30 s is enough to cover the startup test on
-//     any subsequent reboot (e.g. after a crash).  wdog_armed persists
-//     through soft resets (w_rst) so it is never lost during normal play.
+// Design rationale: the itech32 factory-reset path writes NVRAM defaults then
+// deliberately spins WITHOUT kicking the watchdog — it expects a forced reset
+// from the watchdog chip so the game can re-boot with valid NVRAM.  An
+// arm-after-first-kick design would never fire in that path, leaving the CPU
+// stuck forever.  The 30 s window covers the longest expected startup time:
+//   - boot-vector FSM:   < 1 ms
+//   - ROM init/RAM test: ~ 5 s  (300 frames @ 60 fps)
+//   - factory reset:     < 5 s  (NVRAM default writes)
+// After the first legitimate main-loop kick the counter resets and any
+// subsequent 30 s silence triggers another soft reset (hung-game safety net).
 //
 // w_rst: OR'd with rst; resets all CPU-side logic (boot FSM, cpu_ipl, etc.)
 // but NOT the NVRAM BRAM (sftm_ram has no rst pin), so NVRAM survives.
 // ---------------------------------------------------------------------------
 reg  [30:0] wdog_cnt;   // 31-bit: 1440M-cycle timeout = ~30 s @ 48 MHz
 reg         wdog_rst;
-reg         wdog_armed; // gates watchdog; set on first kick; persists through w_rst
 wire        w_rst = rst | wdog_rst;
 
 // ---------------------------------------------------------------------------
@@ -399,20 +398,13 @@ always @(posedge clk) begin
     else if( boot_done && rom_cs )  boot_done_ever <= 1'b1;
 end
 
-// wdog_armed: latches on first CPU kick; persists through soft resets so
-// the watchdog remains active after the first successful boot.
-always @(posedge clk) begin
-    if( rst )                              wdog_armed <= 1'b0;
-    else if( cpu_write && ahi==REG_WDOG )  wdog_armed <= 1'b1;
-end
-
 always @(posedge clk) begin
     wdog_rst <= 1'b0;                          // default: not firing
     if( rst ) begin
         wdog_cnt <= 31'd0;
     end else if( cpu_write && ahi==REG_WDOG ) begin
         wdog_cnt <= 31'd0;                     // kicked: reset timer
-    end else if( wdog_armed && wdog_cnt == 31'd1_439_999_999 ) begin
+    end else if( wdog_cnt == 31'd1_439_999_999 ) begin
         wdog_rst <= 1'b1;                      // timeout ~30 s @ 48 MHz
         wdog_cnt <= 31'd0;
     end else begin
