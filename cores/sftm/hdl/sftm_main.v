@@ -74,9 +74,11 @@ module sftm_main(
     // (w_rst) — persists until hard rst so diagnostic is cumulative.
     output reg          wdog_kick_ever,
 
-    // Diagnostic: goes high the first time boot_done fires and never clears
-    // until hard rst.  B=0 after startup → boot copy stuck (SDRAM issue).
-    // B=1 but G=0 → boot copy OK but CPU crashes before first wdog kick.
+    // Diagnostic: goes high the first time the CPU writes to main RAM and never
+    // clears until hard rst.  B=0 → CPU crashed before executing MOVE.L #0,$100C
+    // (i.e. during SSP/PC read from RAM or first ROM fetch).  B=1 but G=0 →
+    // CPU started executing (reached first RAM write) but crashed before the
+    // watchdog kick at $8015AA (most likely: RAM test write-readback failure).
     output reg          boot_done_ever,
 
     // VBlank active latch (set on vblank_irq, cleared by timer). Exported to
@@ -160,6 +162,11 @@ wire        cpu_write  = cen & bus_active & ~cpu_wr_n & (~cpu_uds_n | ~cpu_lds_n
 wire        low_byte_we  = ~cpu_lds_n;
 wire        high_byte_we = ~cpu_uds_n;
 reg  [ 2:0] cpu_ipl;
+
+// Interrupt latch and timer — declared here to avoid iverilog forward-reference
+// errors from the `assign vint_latch_out = vint_latch` on the next line.
+reg         vint_latch;
+reg  [ 6:0] vint_timer;  // counts down in clkena cycles after vblank_irq
 
 // Reset-time boot copy: the 020 fetches its reset SSP/PC from 0x000000, which
 // is RAM here. MAME's init_program_rom copies the first 0x80 bytes of program
@@ -365,9 +372,11 @@ always @(posedge clk) begin
     if( rst ) wdog_kick_ever <= 1'b0;
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
 end
+// Now repurposed as "cpu_ram_wr_ever": latches the first time the CPU writes
+// to main RAM after the boot copy is done (e.g. MOVE.L #0,$100C at $800404).
 always @(posedge clk) begin
-    if( rst )       boot_done_ever <= 1'b0;
-    else if( boot_done ) boot_done_ever <= 1'b1;
+    if( rst )                               boot_done_ever <= 1'b0;
+    else if( cpu_write && ram_cs && boot_done ) boot_done_ever <= 1'b1;
 end
 
 // wdog_armed: latches on first CPU kick; persists through soft resets so
@@ -474,8 +483,8 @@ end
 // VBlank + blitter share IPL2; the ISR reads VIDEO_INTSTATE to differentiate.
 // Scanline → IPL3.
 // ---------------------------------------------------------------------------
-reg vint_latch;
-reg [6:0] vint_timer;   // counts down in clkena (CPU-active) cycles after vblank_irq
+// (vint_latch and vint_timer are declared earlier, near cpu_ipl, to avoid
+// iverilog forward-reference errors from the assign vint_latch_out statement.)
 
 // The VBlank ISR at 0x00801380 does NOT read 0x080000; it acks via the LINC
 // chip's IACK cycle in real hardware (hardware-automatic ack).
