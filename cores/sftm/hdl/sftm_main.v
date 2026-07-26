@@ -227,23 +227,21 @@ assign rom_addr = boot_done ? cpu_a[19:2]              // CPU access
                             : { 13'd0, boot_lw };
 
 // 32-bit program ROM → 16-bit halves for TG68K (big-endian 68020).
-// jtframe_romrq_bcache assembles a 32-bit word from two 16-bit SDRAM bursts:
-//   [31:16] = second burst word (= SDRAM word at higher address = low 16-bit half of ROM word)
-//   [15:0]  = first  burst word (= SDRAM word at lower  address = high 16-bit half of ROM word)
-// So the 16-bit halves are SWAPPED relative to a naive [31:16]/[15:0] split.
-// cpu_a[1]=0: upper word (MSW, high bytes) → comes from rom_data[15:0] (first SDRAM word).
-// cpu_a[1]=1: lower word (LSW, low  bytes) → comes from rom_data[31:16] (second SDRAM word).
-wire [15:0] rom_half = cpu_a[1] ? rom_data[31:16] : rom_data[15:0];
+// jtframe_dwnld SWAB=0 stores the ROM little-endian (prom0=D[7:0] first):
+//   SDRAM[N]   = {D[15:8], D[7:0]}  (burst word 0 → bcache [15:0])
+//   SDRAM[N+1] = {D[31:24], D[23:16]} (burst word 1 → bcache [31:16])
+// So rom_data = {D[31:16], D[15:0]}: the full big-endian 32-bit ROM value.
+// cpu_a[1]=0: upper word (MSW) = rom_data[31:16]; cpu_a[1]=1: lower = [15:0].
+wire [15:0] rom_half = cpu_a[1] ? rom_data[15:0] : rom_data[31:16];
 
 // ---------------------------------------------------------------------------
 // Main RAM: 0x000000-0x007fff = 32 KB (16K x 16). The write port is shared
 // with the reset-time boot copy (the CPU is held in reset until boot_done).
 // ---------------------------------------------------------------------------
 wire [15:0] ram_dout;
-// Same swap as rom_half: first SDRAM word (high bytes) = rom_data[15:0],
-// second SDRAM word (low bytes) = rom_data[31:16].
-// boot_half=0 writes the high 16-bit half; boot_half=1 writes the low 16-bit half.
-wire [15:0] boot_word = boot_half ? rom_data[31:16] : rom_data[15:0];
+// boot_half=0 writes the high 16-bit half (D[31:16]) = rom_data[31:16].
+// boot_half=1 writes the low  16-bit half (D[15:0])  = rom_data[15:0].
+wire [15:0] boot_word = boot_half ? rom_data[15:0] : rom_data[31:16]; // ORIGINAL — correct with SWAB=0
 wire        boot_we   = ~boot_done & rom_ok;        // write both lanes
 
 wire [13:0] ram_addr  = boot_done ? cpu_a[14:1] : { 8'd0, boot_lw, boot_half };
