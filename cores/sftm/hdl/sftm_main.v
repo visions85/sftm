@@ -379,14 +379,15 @@ always @(posedge clk) begin
     if( rst ) wdog_kick_ever <= 1'b0;
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
 end
-// Repurposed as "rom_ok_ever": latches the first time rom_ok fires during a
-// CPU ROM fetch (prog_sel && bus_active) after boot_done. This distinguishes
-// "SDRAM never responded after boot" (B=0, RED) from "SDRAM OK, CPU crashed
-// before wdog kick" (B=1, MAGENTA). The prog_sel+bus_active guard prevents
-// a false latch when rom_ok is still high from the last boot-copy fetch.
+// B diagnostic = "rom_cs_ever": latches the first time rom_cs=1 while boot_done=1.
+// rom_cs = prog_sel & bus_active (after boot_done), so this fires as soon as
+// the CPU presents any ROM-range address with an active bus cycle.
+// This does NOT require rom_ok to fire -- it only checks that the CPU tried.
+//   B=0 (RED):     CPU never entered ROM address space after boot → PC is wrong
+//   B=1 (MAGENTA): CPU entered ROM space but SDRAM didn't respond (or crashed after)
 always @(posedge clk) begin
-    if( rst )                                              boot_done_ever <= 1'b0;
-    else if( rom_ok && boot_done && prog_sel && bus_active ) boot_done_ever <= 1'b1;
+    if( rst )                       boot_done_ever <= 1'b0;
+    else if( boot_done && rom_cs )  boot_done_ever <= 1'b1;
 end
 
 // wdog_armed: latches on first CPU kick; persists through soft resets so
