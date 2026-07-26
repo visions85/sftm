@@ -126,7 +126,6 @@ reg         blit_busy;           // set on blit_start, cleared on blit_done
 reg  [ 8:0] startup_cnt;         // counts vblanks; startup_phase = bit8 clear
 wire        blit_done;
 wire [16:0] cpu_xfer_addr;
-wire [ 7:0] fg_io_pix, bg_io_pix;
 // startup_phase=1 for the first 256 vblanks (~4s) after game_rst deasserts.
 // Root cause of original black screen: LHBL/LVBL were reset to 0 (blanked),
 // causing arcade_video to latch VBL=1 on the very first frame edge.  Fixed by
@@ -232,7 +231,7 @@ always @(posedge clk) begin
                         cpu_xfer_waddr  <= cpu_xfer_addr;
                         cpu_xfer_wdata  <= cpu_dout[7:0];
                         cpu_xfer_plane_en <= plane_en;
-                        vregs[VR_XFER]  <= { 8'h00, plane_en[1] ? bg_io_pix : fg_io_pix };
+                vregs[VR_XFER]  <= 16'h0000;  // pixel readback removed (io_data port removed)
                         if( xfer_xcount > 16'd1 ) begin
                             xfer_xcount <= xfer_xcount - 16'd1;
                             xfer_xcur   <= xfer_xcur + 16'd1;
@@ -410,16 +409,15 @@ assign bg_vram_we    = (blt_we &  blt_plane) | (cpu_xfer_we & cpu_xfer_plane_en[
 sftm_vram #(.AW(17)) u_fg(
     .clk(clk), .we( fg_vram_we ),
     .waddr(vram_waddr), .wdata(vram_wdata),
-    .raddr(fg_scan_addr), .rdata(fg_pix),
-    .io_addr(cpu_xfer_addr), .io_data(fg_io_pix) );
+    .raddr(fg_scan_addr), .rdata(fg_pix) );
 
 sftm_vram #(.AW(17)) u_bg(
     .clk(clk), .we( bg_vram_we ),
     .waddr(vram_waddr), .wdata(vram_wdata),
-    .raddr(bg_scan_addr), .rdata(bg_pix),
-    .io_addr(cpu_xfer_addr), .io_data(bg_io_pix) );
+    .raddr(bg_scan_addr), .rdata(bg_pix) );
 
-assign vram_dout = { 8'h00, plane_en[1] ? bg_io_pix : fg_io_pix };
+// vram_dout: vram_cs is hardwired 0 in sftm_main so this is never read by CPU.
+assign vram_dout = 16'h0000;
 
 wire [8:0] fg_scan_x = hcnt[8:0] + vregs[VR_DXORG1][8:0];
 wire [7:0] fg_scan_y = vcnt[7:0] + vregs[VR_DYORG1][7:0];
