@@ -74,11 +74,10 @@ module sftm_main(
     // (w_rst) — persists until hard rst so diagnostic is cumulative.
     output reg          wdog_kick_ever,
 
-    // Diagnostic: goes high the first time the CPU writes to main RAM and never
-    // clears until hard rst.  B=0 → CPU crashed before executing MOVE.L #0,$100C
-    // (i.e. during SSP/PC read from RAM or first ROM fetch).  B=1 but G=0 →
-    // CPU started executing (reached first RAM write) but crashed before the
-    // watchdog kick at $8015AA (most likely: RAM test write-readback failure).
+    // Diagnostic: goes high the first time rom_ok fires while boot_done=1 (i.e.
+    // the SDRAM served ROM data to the CPU after boot).  B=0 → SDRAM never
+    // responded to first CPU ROM fetch (stall/hang in cache module).  B=1 but
+    // G=0 → SDRAM OK, CPU got ROM data but crashed before watchdog kick.
     output reg          boot_done_ever,
 
     // VBlank active latch (set on vblank_irq, cleared by timer). Exported to
@@ -372,11 +371,14 @@ always @(posedge clk) begin
     if( rst ) wdog_kick_ever <= 1'b0;
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
 end
-// Now repurposed as "cpu_ram_wr_ever": latches the first time the CPU writes
-// to main RAM after the boot copy is done (e.g. MOVE.L #0,$100C at $800404).
+// Repurposed as "rom_ok_ever": latches the first time rom_ok fires during a
+// CPU ROM fetch (prog_sel && bus_active) after boot_done. This distinguishes
+// "SDRAM never responded after boot" (B=0, RED) from "SDRAM OK, CPU crashed
+// before wdog kick" (B=1, MAGENTA). The prog_sel+bus_active guard prevents
+// a false latch when rom_ok is still high from the last boot-copy fetch.
 always @(posedge clk) begin
-    if( rst )                               boot_done_ever <= 1'b0;
-    else if( cpu_write && ram_cs && boot_done ) boot_done_ever <= 1'b1;
+    if( rst )                                              boot_done_ever <= 1'b0;
+    else if( rom_ok && boot_done && prog_sel && bus_active ) boot_done_ever <= 1'b1;
 end
 
 // wdog_armed: latches on first CPU kick; persists through soft resets so

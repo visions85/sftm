@@ -458,16 +458,16 @@ sftm_pal u_pal(
 // Encodes two orthogonal progress flags as RGB:
 //   R = !wdog_kick_ever   (watchdog NOT yet kicked)
 //   G =  wdog_kick_ever   (watchdog kicked = CPU reached main init code)
-//   B =  boot_done_ever   (repurposed = first CPU write to main RAM after boot)
-//                         e.g. MOVE.L #0,$100C at $800404 is the first write
+//   B =  boot_done_ever   (repurposed = rom_ok_ever: SDRAM served CPU ROM fetch)
+//                         latches on first rom_ok during prog_sel+bus_active
 //
 // Resulting colours:
-//   RED     (G=0,B=0): no wdog, no RAM write
-//                      → CPU crashed before MOVE.L #0,$100C
-//                        (SSP/PC read wrong, or first ROM fetch failed)
-//   MAGENTA (G=0,B=1): CPU wrote to RAM but never kicked watchdog
-//                      → crash in RAM test ($80158A area, compare failure?)
-//   GREEN   (G=1,B=0): wdog kicked, no RAM write (impossible per flow)
+//   RED     (G=0,B=0): no wdog, SDRAM never responded to CPU ROM fetch
+//                      → cache/SDRAM hung after boot copy
+//   MAGENTA (G=0,B=1): SDRAM served ROM data but CPU never kicked watchdog
+//                      → CPU got ROM data but crashed before $8015AA
+//                        (wrong instructions? exception? RAM test fail?)
+//   GREEN   (G=1,B=0): wdog kicked, no ROM ok? (should be impossible)
 //   CYAN    (G=1,B=1): both → CPU running normally, heading toward blitter
 wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
