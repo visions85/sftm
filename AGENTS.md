@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **unconditional watchdog deployed (2026-07-26)** — prior arm-after-first-kick design meant the itech32 factory-reset spin-loop (game spins without kicking wdog, expecting a hardware reset) could never break out; CPU stuck in MAGENTA forever. Fixed by removing `wdog_armed` gate; wdog now fires unconditionally after 30 s. Diagnostic updated: R=`!wdog_kick_ever`, G=`wdog_kick_ever`, B=`pal_wr_ever` (palette writes during display init). Expected: RED→MAGENTA→CYAN (wdog kick = main loop running). md5 `d89ce5a3925566a9cd36f7016311e270`. **Must load via MRA** to use correct SWAB=0 ROM layout. Awaiting hardware observation. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **CPU executing and writing RAM — WHITE confirmed (2026-07-27)** — root cause of all prior stuck-CPU symptoms found and fixed: `bus_active` excluded TG68K write cycles (`busstate=11`), silently dropping every CPU write. Fix: `bus_active = (busstate != 2'b01)`. Diagnostic: R=`!wdog_kick_ever`, G=`boot_done_ever` (rom_ok), B=`ram_wr_ever`. Current build md5 `01f3fa2c16a7f89dd8c352ea702d8915`. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: watch for CYAN (wdog kick = outer main loop). All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -212,11 +212,18 @@ sftm_game            (cores/sftm/hdl/sftm_game.v)  — JTFRAME game top
 
 ## Current implementation status
 
-**Status: open-ended blit diagnostic deployed (2026-07-24)** — deep 68020 ROM disassembly revealed the game uses cooperative multitasking (`$829908` main task, scheduler at `$8006BA`). The first VR_COMMAND=0xFF write happens at `$8027A0` (screen-clear DBRA loop) reached via `$8012D6→$801096→$8026F0→$802764→$8027A0`. The cooperative task goes through many coroutine yields before the first screen-clear, taking **>300 frames** from power-on. Fixes deployed:
-- Diagnostic window extended 300→**1200 frames** (~20 s after the 256-frame white startup = ~24 s total)
-- Blue channel changed from `nvram_wr_ever` to `vreg_cmd_ever` (any VR_COMMAND write). Color key: **RED** = VR_COMMAND never written (game hasn't called blitter yet); **MAGENTA** = VR_COMMAND written but blit_start didn't fire (hardware bug!); **YELLOW** = blit_start fired, blit_done never (SDRAM?); **GREEN** = blit completed.
-Awaiting hardware observation.
-- **Open-ended blit diagnostic (commit `0d6fa4d`, deployed 2026-07-24, md5 `d824575ef635338f09c8d9c71777ebf8`)**: Removed fixed 1200-frame cap from `diag_phase`. Previous builds showed RED (no VR_COMMAND) for 1200 frames then switched to blue game output — the cooperative-task boot sequence takes >1456 frames before the first blit. New logic: `diag_phase = !blit_done_ever && !startup_phase`. Diagnostic holds RED/MAGENTA/YELLOW until `blit_done` fires; then switches directly to game output. Awaiting hardware observation.
+**Status: WHITE confirmed on hardware (2026-07-27)** — CPU is executing real code and writing main RAM. Watchdog kick not yet observed; game is still in init/boot phase. Next target: CYAN (wdog_kick_ever=1 = outer main loop running).
+
+Current diagnostic (sftm_video.v post-startup window):
+- **R** = `!wdog_kick_ever` (watchdog register never written)
+- **G** = `boot_done_ever` = rom_ok after boot copy — SDRAM served ROM to CPU
+- **B** = `nvram_wr_ever` (repurposed) = `ram_wr_ever` — CPU wrote main RAM ($000000–$007FFF)
+
+Color meanings:
+- **RED** (G=0,B=0): SDRAM stall — ROM never fetched after boot copy
+- **YELLOW** (G=1,B=0): ROM fetch OK but CPU never wrote RAM → crashed within first instructions
+- **WHITE** (G=1,B=1,R=1): CPU executing and writing RAM — not yet in outer main loop ← **current hardware state**
+- **CYAN** (R→0): wdog kicked → outer main loop running → game booted
 
 **Implemented:**
 - JTFRAME folder layout, config files (`cfg/macros.def`, `cfg/mem.yaml`, `cfg/mame2mra.toml`, `cfg/files.yaml`), game-top wiring
@@ -241,7 +248,9 @@ Awaiting hardware observation.
 - **3-color blit diagnostic (commit `5a7dd76`, deployed 2026-07-24, md5 `d43c9e7a4e42cdfe07da2d63a791a913`)**: 300-frame post-startup window shows RED/YELLOW/GREEN: RED = blit_start never fired; YELLOW = blit_start fired, blit_done never; GREEN = blit completed.
 - **RED confirmed (2026-07-24)**: blit_start never fired in 300 frames; root cause = blank NVRAM causes game to initialise factory defaults then spin in a tight loop waiting for hardware watchdog reset (which was not implemented).
 - **Watchdog timer (commit `36a5972`)**: 31-bit counter in `sftm_main.v`; wdog fires after 30 s (`1_439_999_999` cycles @ 48 MHz). `w_rst = rst | wdog_rst` resets all CPU-side logic but NOT NVRAM BRAM (`sftm_ram` has no rst pin). Originally arm-after-first-kick (`wdog_armed` gate) — this was wrong: the itech32 factory-reset path spins without kicking wdog, expecting a hardware reset; with `wdog_armed`, the wdog never fired and the CPU was stuck in MAGENTA forever.
-- **Unconditional watchdog (commit `f7259d5`, deployed 2026-07-26, md5 `d89ce5a3925566a9cd36f7016311e270`)**: Removed `wdog_armed` gate; wdog fires after 30 s from every reset regardless of first kick. Diagnostic: R=`!wdog_kick_ever`, G=`wdog_kick_ever`, B=`pal_wr_ever`. Expected progression: RED (factory-reset spin) → after 30 s wdog → RED → MAGENTA (pal init) → CYAN (main loop). Awaiting hardware observation.
+- **Unconditional watchdog (commit `f7259d5`, deployed 2026-07-26, md5 `d89ce5a3925566a9cd36f7016311e270`)**: Removed `wdog_armed` gate; wdog fires after 30 s from every reset regardless of first kick.
+- **CPU ROM bcache gap + correct reset vectors (commit `4010b17`, deployed 2026-07-26, md5 `49091add20504fb384770658f9be6a61`)**: Fixed `cpu_rom_gap` (1-cycle rom_cs low pulse on each new ROM LW address change) to prevent bcache stale-data on sequential instruction fetches. Hardcoded reset vectors bypassing SDRAM uncertainty: SSP=`$00008000`, PC=`$00800400` (derived from actual prom chip data). Diagnostic: R=`!wdog_kick_ever`, G=`boot_done_ever` (rom_ok_ever), B=`ram_wr_ever`. Observed: **YELLOW** (G=1, B=0) — ROM fetched but no RAM write.
+- **Root cause found — bus_active excluded write cycles (commit `1aca3c8`, deployed 2026-07-27, md5 `01f3fa2c16a7f89dd8c352ea702d8915`)**: TG68K busstate encoding (from VHDL source): `00`=fetch code, `10`=read data, `11`=**write data**, `01`=idle. `nWr <= '0' WHEN state="11"`. Previous `bus_active = (busstate==2'b00 || busstate==2'b10)` excluded write cycles (`busstate=11`), silently dropping **every CPU write**: RAM write-enables always 0 (stack/data writes failed), vreg_cs/pal_cs=0 during writes (no blitter/palette writes), wdog kick writes never detected. This was the root cause of all prior stuck-CPU symptoms — RED/YELLOW persisted because the CPU was running but its writes were invisible. Fix: `bus_active = (busstate != 2'b01)` (any memory access); `bus_rd = (busstate==2'b00 || busstate==2'b10)` used for ROM-only read gating. **WHITE confirmed on hardware (2026-07-27)**: CPU writing RAM.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
