@@ -93,6 +93,13 @@ module sftm_video(
     input               ipl7_pulse_ever,
     input               isr_ipl7_fetch_ever,
 
+    // Diagnostic: sftm_main's own watchdog counter has timed out and forced
+    // a soft reboot at least once. Distinguishes "stuck on the very first
+    // boot attempt" from "the CPU HAS already been soft-rebooted at least
+    // once and still ends up in the identical stuck state" -- see
+    // sftm_main port comment for the full rationale.
+    input               wdog_fired_ever,
+
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
     // G=1 → CPU entered ROM address space.
@@ -513,25 +520,37 @@ wire       show_raster = startup_phase | ~gfx_en[3];
 //             was NEVER taken by the CPU. This rules out the ROM's SR mask
 //             entirely -- it proves the CPU itself (or the cpu_ipl /
 //             IPL_autovector wiring to the vendored core) is not
-//             functioning on real hardware. Takes priority over MAGENTA.
+//             functioning on real hardware. Takes priority over ORANGE/MAGENTA.
+//   ORANGE  : same condition as MAGENTA (IPL7 proven taken, real interrupt
+//             never taken) but ALSO wdog_fired_ever is set -- our own
+//             watchdog has ALREADY forced at least one soft reboot during
+//             this session, and the CPU still ended up back in the exact
+//             same stuck state on a subsequent boot attempt. This rules out
+//             "just needs one NVRAM-factory-init retry" as the explanation,
+//             since that retry has demonstrably already happened.
+//   MAGENTA : IPL7 proven taken, real interrupt never taken, and
+//             wdog_fired_ever is NOT set -- still on the very first boot
+//             attempt (our own watchdog hasn't fired even once yet).
 //   GREEN   : isr_vec_fetch_ever set -- CPU actually took a real (IPL1/2/3)
 //             autovectored interrupt at least once (best outcome, takes
-//             priority over both BLUE and MAGENTA)
+//             priority over BLUE/ORANGE/MAGENTA)
 wire white_now     = !wdog_kick_ever & boot_done_ever & nvram_wr_ever;
 wire show_green    = white_now & isr_vec_fetch_ever;
 wire show_blue      = white_now & ~show_green & ipl7_pulse_ever & ~isr_ipl7_fetch_ever;
-wire show_magenta   = white_now & ~show_green & ~show_blue & ipl_asserted_ever & ~isr_vec_fetch_ever;
+wire show_stuck     = white_now & ~show_green & ~show_blue & ipl_asserted_ever & ~isr_vec_fetch_ever;
+wire show_orange    = show_stuck & wdog_fired_ever;
+wire show_magenta   = show_stuck & ~wdog_fired_ever;
 
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h00 : show_magenta ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h00 : show_orange ? 5'h1F : show_magenta ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h1F : show_blue ? 5'h00 : show_magenta ? 5'h00 : ( boot_done_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h1F : show_blue ? 5'h00 : show_orange ? 5'h0A : show_magenta ? 5'h00 : ( boot_done_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h1F : show_magenta ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h1F : show_orange ? 5'h00 : show_magenta ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 

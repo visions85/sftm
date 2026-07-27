@@ -129,6 +129,16 @@ module sftm_main #(
     output reg          ipl7_pulse_ever,
     output reg          isr_ipl7_fetch_ever,
 
+    // Diagnostic: goes high the first time our own watchdog counter times
+    // out and forces a soft reboot (wdog_rst). Never cleared by w_rst
+    // (only by hard rst), so it distinguishes "stuck on the very first boot
+    // attempt, watchdog hasn't fired yet" from "the watchdog HAS fired at
+    // least once (a soft reboot happened) and the CPU still ended up back
+    // in the exact same stuck state" -- the latter rules out a one-time
+    // NVRAM-factory-init retry as the explanation, since the retry itself
+    // is proven to have already happened.
+    output reg          wdog_fired_ever,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -563,6 +573,15 @@ always @(posedge clk) begin
     end else begin
         wdog_cnt <= wdog_cnt + 31'd1;
     end
+end
+
+// wdog_fired_ever: latches the first time our own watchdog counter above
+// actually times out and forces a soft reboot (wdog_rst pulses). Reset only
+// by hard rst (not w_rst) so it survives across any number of subsequent
+// soft reboots -- see port comment for why this matters.
+always @(posedge clk) begin
+    if( rst )              wdog_fired_ever <= 1'b0;
+    else if( wdog_rst )     wdog_fired_ever <= 1'b1;
 end
 
 // CPU ROM bcache gap generator.
