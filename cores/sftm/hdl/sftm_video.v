@@ -113,6 +113,15 @@ module sftm_video(
     input               prot_wr_ever,
     input               prot_rd_ever,
 
+    // Diagnostic: saturating count (0..3) of DISTINCT protection-port read
+    // accesses -- see sftm_main.v port comment. Drives the flash-count
+    // overlay below (superseding the older prot_wr_ever/prot_rd_ever pair,
+    // which already answered "did it write/read at all" -- N=3 confirmed
+    // wr=0,rd=1 on hardware -- and is now a settled, documented fact. This
+    // counter answers the NEW live question: is the CPU actively spinning
+    // on this exact read (many repeats) or did it pass through once/twice?
+    input      [ 1:0]   prot_rd_count,
+
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
     // G=1 → CPU entered ROM address space.
@@ -578,35 +587,45 @@ wire show_maroon    = show_stuck &  wdog_fired_ever &  nvram_region_wr_ever;
 wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 
 // ---------------------------------------------------------------------------
-// Counted-flash overlay: encodes prot_wr_ever/prot_rd_ever as a COUNT of
-// distinct WHITE flashes against the stuck-state colour, instead of yet
-// another same-hue-family colour swap. Both blink RATE and subtle partial-
-// channel hue swaps (ORANGE vs MAROON/LILAC) have proven unreliable for the
-// user to judge by eye -- counting a small number of clearly separated
-// flashes, each with a distinct steady-colour gap before/after, is far more
-// robust. Timed off vblank_irq (~60 Hz):
-//   N = 1 + {prot_wr_ever, prot_rd_ever}   (1..4 flashes per cycle)
+// Counted-flash overlay: encodes prot_rd_count as a COUNT of distinct WHITE
+// flashes against the stuck-state colour, instead of yet another same-hue-
+// family colour swap. Both blink RATE and subtle partial-channel hue swaps
+// (ORANGE vs MAROON/LILAC) have proven unreliable for the user to judge by
+// eye -- counting a small number of clearly separated flashes, each with a
+// distinct steady-colour gap before/after, is far more robust. Timed off
+// vblank_irq (~60 Hz):
+//   N = 1 + prot_rd_count   (1..4 flashes per cycle)
 //   Each flash: 30 frames (~0.5s) WHITE ON, then 30 frames back to the base
 //   stuck colour. After N flashes: 90 frames (~1.5s) steady at the base
 //   stuck colour as a clear "reset" gap before the next counting cycle.
-//     N=1: protection port NEVER written and NEVER read -- CPU hasn't
-//          reached the protection check in code at all; the hang is
-//          earlier in boot and unrelated to protection.
-//     N=2: written but never read back afterwards -- unexpected; the RAM
-//          write happened but the 0x680002 port read never followed.
-//     N=3: read but the RAM byte was never written first -- also
-//          unexpected; the port would be polled without ever supplying it
-//          a value to echo back.
-//     N=4: BOTH write and read observed at least once -- the protection
-//          hand-off completed successfully at least once. If still stuck
-//          despite this, the loop needs more than a single pass (e.g.
-//          comparing against a moving/incrementing target) or the true
-//          hang is elsewhere entirely.
+//
+// HISTORY: earlier committed builds used N = 1 + {prot_wr_ever, prot_rd_ever}
+// (1..4, meaning write/read hit-or-miss). Hardware reported N=3 (wr=0,rd=1):
+// the CPU DOES read the protection port 0x680002, but the RAM byte at 0x7A6A
+// it should echo back was NEVER written first -- an unexpected, now-settled
+// fact (see AGENTS.md). That boolean pair has served its purpose and is now
+// fully answered, so the flash count has been REPURPOSED for the next, more
+// decisive question raised by that finding: is the CPU actively SPINNING on
+// this exact read (a tight poll loop, which at CPU clock speed would
+// saturate a small counter within microseconds), or did it read once/twice
+// and move on to hang somewhere else downstream? prot_rd_count answers this
+// directly (see sftm_main.v port comment for the full 0..3 meaning table):
+//     N=1: prot_rd_count==0 -- never read (shouldn't occur; prot_rd_ever
+//          already confirmed 1 on hardware -- kept for completeness).
+//     N=2: prot_rd_count==1 -- read EXACTLY ONCE, then moved on. Protection
+//          check likely PASSED (or was a one-shot probe); the CPU is stuck
+//          somewhere else entirely -- protection is NOT the live blocker.
+//     N=3: prot_rd_count==2 -- read exactly twice. Ambiguous; the check may
+//          have retried once before proceeding or before hanging elsewhere.
+//     N=4: prot_rd_count==3 (saturated, meaning "3 or more") -- if this is
+//          the steady-state reading while the display is stuck, the CPU is
+//          almost certainly ACTIVELY SPINNING on this exact read in a tight
+//          poll loop, confirming protection as the live, direct blocker.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + {1'b0, prot_wr_ever, prot_rd_ever};
+wire [2:0] flash_count = 3'd1 + {1'b0, prot_rd_count};
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment

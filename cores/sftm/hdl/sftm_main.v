@@ -172,6 +172,27 @@ module sftm_main #(
     // cleared by w_rst (only by hard rst).
     output reg          prot_rd_ever,
 
+    // Diagnostic: saturating count (0..3) of DISTINCT protection-port read
+    // ACCESSES since hard reset -- NOT a raw pulse count. prot_word_rd (the
+    // qualifying condition below) is a LEVEL, true for as long as cen &
+    // bus_rd & prot_cs hold across a single CPU access (which can span
+    // several cen ticks); counting that level directly would wildly
+    // over-count a single instruction's read as if it were many. This
+    // counter instead increments once per RISING EDGE of that level (see
+    // prot_rd_lvl_d below), so it reflects actual distinct read
+    // instructions executed, saturating at 3 ("3 or more").
+    //   0 = never read (shouldn't occur given prot_rd_ever is already
+    //       confirmed 1 on hardware; kept for completeness)
+    //   1 = read exactly once, then moved on -- protection check likely
+    //       PASSED (or was a one-shot probe), CPU is stuck elsewhere
+    //   2 = read exactly twice -- ambiguous, check may have retried once
+    //   3 = read 3+ times -- if genuinely spinning in a tight poll loop at
+    //       CPU clock speed, this saturates in microseconds; a steady-state
+    //       reading of 3 while stuck strongly confirms an ACTIVE spin loop
+    //       on this exact read, i.e. protection IS the live blocker.
+    // Never cleared by w_rst (only by hard rst).
+    output reg [1:0]    prot_rd_count,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -462,6 +483,24 @@ end
 always @(posedge clk) begin
     if( rst )                  prot_rd_ever <= 1'b0;
     else if( prot_word_rd )    prot_rd_ever <= 1'b1;
+end
+
+// prot_rd_count: edge-detected saturating counter. prot_word_rd is a LEVEL
+// (holds true across every cen tick for the duration of one CPU access), so
+// we sample it into prot_rd_lvl_d each clk and only count RISING edges --
+// exactly one count per distinct read access, regardless of how many clk/cen
+// ticks that access internally spans. See port comment above for the 0..3
+// saturating meaning.
+reg prot_rd_lvl_d;
+always @(posedge clk) begin
+    if( rst ) prot_rd_lvl_d <= 1'b0;
+    else      prot_rd_lvl_d <= prot_word_rd;
+end
+wire prot_rd_edge = prot_word_rd & ~prot_rd_lvl_d;
+
+always @(posedge clk) begin
+    if( rst )                                      prot_rd_count <= 2'd0;
+    else if( prot_rd_edge && prot_rd_count != 2'd3 ) prot_rd_count <= prot_rd_count + 2'd1;
 end
 
 // ---------------------------------------------------------------------------
