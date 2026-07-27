@@ -73,6 +73,12 @@ module sftm_video(
     // Diagnostic: first watchdog kick by the main CPU outer loop.
     input               wdog_kick_ever,
 
+    // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
+    // ($68-$6F). Blinks the diag-phase colour when set, independent of
+    // ROM-content knowledge -- proves whether the interrupt path itself
+    // was ever taken by the CPU.
+    input               isr_vec_fetch_ever,
+
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
     // G=1 → CPU entered ROM address space.
@@ -470,16 +476,28 @@ wire [4:0] dbg_r = hcnt[6:2];
 wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
+
+// isr_vec_fetch_ever blink: once the CPU has ever read the IPL2/IPL3
+// autovector table entry, blink the diag-phase colour at ~1Hz (toggle to
+// black and back) on top of whatever RGB combination is currently shown.
+// Solid colour (no blink)  = CPU has NEVER taken an interrupt.
+// Blinking colour          = CPU DID take at least one autovectored
+//                            interrupt at some point (proves the IPL /
+//                            vint_latch / SR-mask path works at least once).
+reg [22:0] isr_blink_cnt;
+always @(posedge clk) if( pxl_cen ) isr_blink_cnt <= isr_blink_cnt + 23'd1;
+wire       isr_blink_off = isr_vec_fetch_ever & isr_blink_cnt[22];
+
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? (!wdog_kick_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? ((!wdog_kick_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? ( boot_done_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? (( boot_done_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? ( nvram_wr_ever ? 5'h1F : 5'h00)
+             : diag_phase    ? (( nvram_wr_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
