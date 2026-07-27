@@ -118,7 +118,9 @@ sftm_main u_main(
     // diagnostic: boot copy completed at least once
     .boot_done_ever( boot_done_ever ),
     // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
-    .isr_vec_fetch_ever( isr_vec_fetch_ever )
+    .isr_vec_fetch_ever( isr_vec_fetch_ever ),
+    // diagnostic: FPGA ever asserted IPL2/IPL3 to the CPU (regardless of whether it was taken)
+    .ipl_asserted_ever( ipl_asserted_ever )
 );
 
 // ---------------------------------------------------------------------------
@@ -176,7 +178,9 @@ sftm_video u_video(
     // VBlank active latch for correct VR_XFER bit 6 behaviour
     .vint_latch ( vint_latch_w  ),
     // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
-    .isr_vec_fetch_ever( isr_vec_fetch_ever )
+    .isr_vec_fetch_ever( isr_vec_fetch_ever ),
+    // diagnostic: FPGA ever asserted IPL2/IPL3 to the CPU (regardless of whether it was taken)
+    .ipl_asserted_ever( ipl_asserted_ever )
 );
 
 // ---------------------------------------------------------------------------
