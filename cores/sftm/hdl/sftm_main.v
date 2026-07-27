@@ -185,6 +185,8 @@ reg  [ 4:0] boot_lw;                     // 0..31 long-word index (32*4 = 0x80)
 reg         boot_half;                   // 0 = high word, 1 = low word
 reg         boot_done;                   // copy finished, CPU may run
 reg         boot_cs;                     // rom_cs during boot (toggled per LW)
+reg         cpu_rom_gap;                 // 1-cycle rom_cs low gap on CPU ROM addr change
+reg  [17:0] cpu_rom_addr_last;           // last CPU ROM long-word address presented to bcache
 
 assign cpu_addr     = cpu_a[23:1];
 assign cpu_dout     = cpu_do16;
@@ -193,7 +195,9 @@ assign vint_latch_out = vint_latch;
 
 // clock enable is gated by "bus ready": on ROM accesses wait for rom_ok, and
 // the CPU stays held until the boot vector copy has finished.
-wire   bus_busy = rom_cs & ~rom_ok;
+// cpu_rom_gap also stalls: when we force rom_cs low for the bcache edge, we
+// must keep clkena=0 so the CPU does not advance with stale rom_data.
+wire   bus_busy = (rom_cs & ~rom_ok) | cpu_rom_gap;
 wire   clkena   = cen & ~bus_busy & boot_done;
 
 // ---------------------------------------------------------------------------
@@ -219,9 +223,12 @@ always @(*) begin
 end
 
 // The ROM port is driven by the boot-copy FSM until boot_done, then the CPU.
-// boot_cs pulses low for one cycle between each new boot_lw to give
-// jtframe_romrq_bcache the low→high edge it requires to re-fetch a new address.
-assign rom_cs   = boot_done ? (prog_sel & bus_active) : boot_cs;
+// jtframe_romrq_bcache works best when addr_ok/CS goes low→high for every new
+// address.  The boot FSM pulses boot_cs between long-words.  The CPU path also
+// forces a 1-cycle low gap when the CPU changes the ROM long-word address while
+// remaining in ROM space; otherwise sequential instruction fetches can reuse
+// stale cached data from the previous address and execute garbage.
+assign rom_cs   = boot_done ? ((prog_sel & bus_active) & ~cpu_rom_gap) : boot_cs;
 assign rom_addr = boot_done ? cpu_a[19:2]              // CPU access
                             : { 13'd0, boot_lw };
 
@@ -416,6 +423,31 @@ always @(posedge clk) begin
         wdog_cnt <= 31'd0;
     end else begin
         wdog_cnt <= wdog_cnt + 31'd1;
+    end
+end
+
+// CPU ROM bcache gap generator.
+//
+// When the CPU performs consecutive ROM fetches at different long-word
+// addresses, keep clkena low for one cycle and drop rom_cs.  The following
+// cycle re-asserts rom_cs with the new address, creating the bcache-required
+// low→high edge.  Same long-word high/low half fetches do not gap.
+wire [17:0] cpu_rom_addr_cur = cpu_a[19:2];
+wire        cpu_rom_req      = boot_done && prog_sel && bus_active;
+
+always @(posedge clk) begin
+    if( w_rst ) begin
+        cpu_rom_gap       <= 1'b0;
+        cpu_rom_addr_last <= 18'h3ffff;      // impossible first match
+    end else if( !boot_done ) begin
+        cpu_rom_gap       <= 1'b0;
+        cpu_rom_addr_last <= 18'h3ffff;
+    end else begin
+        cpu_rom_gap <= 1'b0;
+        if( cpu_rom_req && cpu_rom_addr_cur != cpu_rom_addr_last ) begin
+            cpu_rom_gap       <= 1'b1;       // one clock with rom_cs=0
+            cpu_rom_addr_last <= cpu_rom_addr_cur;
+        end
     end
 end
 
