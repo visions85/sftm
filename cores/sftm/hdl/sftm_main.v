@@ -239,18 +239,23 @@ wire [15:0] rom_half = cpu_a[1] ? rom_data[15:0] : rom_data[31:16];
 // ---------------------------------------------------------------------------
 wire [15:0] ram_dout;
 // Boot copy ROM-to-RAM data selector.
-// LW0 (SSP=$00007FFE) and LW1 (PC=$00800008) are hardcoded so that the
-// reset vector is correct regardless of SDRAM byte ordering.
-// LW2..31 still come from ROM (exception vector table for ISR dispatch).
-// Three-level mux: (1) rom half, (2) hardcoded 4-way on {lw[0],half},
-// (3) select between hardcoded and ROM based on lw[4:1]==0.
-// This is faster than a 5-level priority chain.
+//
+// LW0 (SSP=$00008000) and LW1 (PC=$00800400) are hardcoded to bypass any
+// SDRAM byte-ordering uncertainty for the critical reset vectors.
+// Values derived from the actual SFTM v1.12 ROM chip contents:
+//   SSP = $00008000 — top of 32 KB main RAM (first push → $7FFE)
+//   PC  = $00800400 — first real code instruction, just past the 1 KB
+//                    exception vector table at $800000-$8003FF
+//
+// LW2..31 still come from ROM (exception vectors for ISR dispatch).
+// The condition boot_lw[4:1]==0 covers LW0 and LW1; all other LWs use
+// the ROM-sourced word.
 wire [15:0] boot_word_rom = boot_half ? rom_data[15:0] : rom_data[31:16];
 wire [15:0] boot_word_hc  =
-    ({boot_lw[0],boot_half} == 2'b00) ? 16'h0000 :  // SSP[31:16]
-    ({boot_lw[0],boot_half} == 2'b01) ? 16'h7FFE :  // SSP[15:0]
-    ({boot_lw[0],boot_half} == 2'b10) ? 16'h0080 :  // PC[31:16]
-                                         16'h0008;   // PC[15:0]
+    ({boot_lw[0],boot_half} == 2'b00) ? 16'h0000 :  // SSP[31:16] = $0000
+    ({boot_lw[0],boot_half} == 2'b01) ? 16'h8000 :  // SSP[15:0]  = $8000  (was $7FFE)
+    ({boot_lw[0],boot_half} == 2'b10) ? 16'h0080 :  // PC[31:16]  = $0080
+                                         16'h0400;   // PC[15:0]   = $0400  (was $0008)
 wire [15:0] boot_word = (boot_lw[4:1] == 4'd0) ? boot_word_hc : boot_word_rom;
 wire        boot_we   = ~boot_done & rom_ok;        // write both lanes
 
