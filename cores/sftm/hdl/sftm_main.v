@@ -275,7 +275,7 @@ wire   clkena   = cen & ~bus_busy & boot_done;
 // ---------------------------------------------------------------------------
 wire [7:0] ahi = cpu_a[23:16];
 reg        ram_cs, inp_cs, dip_cs, sys_cs, nvram_cs;
-reg        prot_cs, nopr_cs;
+reg        prot_cs, nopr_cs, duart_cs;
 reg        prog_sel;
 
 always @(*) begin
@@ -290,6 +290,20 @@ always @(*) begin
     nvram_cs = cpu_a[23:17]==7'h30;          // 0x600000-0x61ffff NVRAM
     prot_cs  = cpu_a[23:1]==23'h34_0001;     // 0x680002 protection result byte
     nopr_cs  = cpu_a[23:15]==9'h0af;         // 0x578000-0x57ffff reads as 0
+    // 0x680800-0x68083f: Serial DUART Channel A/B & Top LED sign.
+    // MAME's itech020_map decodes this exact range as
+    // map(0x680800,0x68083f).readonly().nopw() -- a plain, zero-initialised,
+    // read-only backing store (MAME zero-fills auto-allocated RAM regions;
+    // no ROM/init data is loaded here). Writes are ignored (.nopw()).
+    // Our FPGA previously had NO decode for this range at all, so reads
+    // fell through to the catch-all default of 16'hffff (all status/ready
+    // bits appearing permanently SET). If the ROM's boot code polls a
+    // DUART status/ready bit here waiting for it to go low before it will
+    // proceed to enable real (IPL1/2/3) interrupts, an all-1s read would
+    // make that poll loop forever on every single boot -- deterministically,
+    // regardless of NVRAM state or how many times the watchdog reboots the
+    // CPU. Decode it explicitly and return 16'h0000 to match MAME exactly.
+    duart_cs = cpu_a[23:6]==18'h1_A020;      // 0x680800-0x68083f
 end
 
 // The ROM port is driven by the boot-copy FSM until boot_done, then the CPU.
@@ -413,6 +427,9 @@ always @(*) begin
         pal_cs:   inp_mux = pal_dout;
         prot_cs:  inp_mux = { prot_byte, 8'hff };
         nopr_cs:  inp_mux = 16'h0000;
+        // 0x680800-0x68083f DUART/LED-sign range -- see decode comment above.
+        // Matches MAME's zero-initialised readonly() storage.
+        duart_cs: inp_mux = 16'h0000;
         inp_cs:   inp_mux = read_inputs(ahi);
         // P4 (0x200000): bits[7:0] active-low all unused (→ lower half, cpu_a[1]=1).
         sys_cs:   inp_mux = cpu_a[1] ? 16'h00FF : 16'h0000;
