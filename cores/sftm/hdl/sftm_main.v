@@ -155,7 +155,13 @@ wire [31:0] cpu_a;
 wire [15:0] cpu_din, cpu_do16;
 wire [ 1:0] busstate;
 wire        cpu_wr_n;
-wire        bus_active = busstate==2'b00 || busstate==2'b10;
+// TG68KdotC_Kernel busstate encoding (from VHDL source):
+//   00 = fetch code (instruction read)
+//   10 = read data
+//   11 = write data  ← nWr=0 here; MUST include for cpu_write/vreg_cs/pal_cs writes
+//   01 = no mem access (idle)
+wire        bus_active = busstate != 2'b01;  // any memory access (read or write)
+wire        bus_rd     = busstate == 2'b00 || busstate == 2'b10; // reads only
 wire        cpu_write  = cen & bus_active & ~cpu_wr_n & (~cpu_uds_n | ~cpu_lds_n);
 wire        low_byte_we  = ~cpu_lds_n;
 wire        high_byte_we = ~cpu_uds_n;
@@ -228,7 +234,8 @@ end
 // forces a 1-cycle low gap when the CPU changes the ROM long-word address while
 // remaining in ROM space; otherwise sequential instruction fetches can reuse
 // stale cached data from the previous address and execute garbage.
-assign rom_cs   = boot_done ? ((prog_sel & bus_active) & ~cpu_rom_gap) : boot_cs;
+// Use bus_rd (reads only) — ROM is read-only; don't stall on writes to ROM space.
+assign rom_cs   = boot_done ? ((prog_sel & bus_rd) & ~cpu_rom_gap) : boot_cs;
 assign rom_addr = boot_done ? cpu_a[19:2]              // CPU access
                             : { 13'd0, boot_lw };
 
@@ -433,7 +440,7 @@ end
 // cycle re-asserts rom_cs with the new address, creating the bcache-required
 // low→high edge.  Same long-word high/low half fetches do not gap.
 wire [17:0] cpu_rom_addr_cur = cpu_a[19:2];
-wire        cpu_rom_req      = boot_done && prog_sel && bus_active;
+wire        cpu_rom_req      = boot_done && prog_sel && bus_rd; // reads only
 
 always @(posedge clk) begin
     if( w_rst ) begin
