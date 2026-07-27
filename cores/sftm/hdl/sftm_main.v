@@ -147,6 +147,31 @@ module sftm_main #(
     // attempts to touch NVRAM at all.
     output reg          nvram_region_wr_ever,
 
+    // Diagnostic: goes high the first time the CPU WRITES the high byte of
+    // the protection RAM word (0x7A6A, the address itech020_prot_result_r()
+    // echoes back through 0x680002 -- see MAME itech32.cpp init_sftm_common).
+    // The real board has a PIC 16C54 ("ITSF-1") on this bus; MAME does not
+    // emulate it and instead just echoes back whatever the CPU last wrote to
+    // that RAM byte. If the boot code follows the same write-then-poll
+    // pattern documented for sibling games in this driver (see gt2kp/
+    // gtclasscp comments: move.b 680002,d0 / andi / cmpi / bne.s -- spin
+    // forever if the result doesn't match), and it never gets the byte it
+    // wrote to persist/compare correctly, the CPU could spin here forever,
+    // BEFORE ever reaching the code that lowers the SR interrupt mask to
+    // admit real IPL1/2/3 -- which would explain every symptom observed so
+    // far (deterministic stuck state, IPL7 proven working, real IRQ never
+    // taken). Never cleared by w_rst (only by hard rst).
+    output reg          prot_wr_ever,
+
+    // Diagnostic: goes high the first time the CPU performs a READ from
+    // 0x680002 (the protection result port). If this NEVER latches while
+    // stuck, the CPU hasn't even reached the protection check in code --
+    // the hang is earlier and unrelated to protection. If it DOES latch,
+    // the CPU has executed that read at least once, supporting (but not
+    // proving on its own) the protection-poll-loop theory above. Never
+    // cleared by w_rst (only by hard rst).
+    output reg          prot_rd_ever,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -420,6 +445,24 @@ sftm_prot u_prot(
     .din    ( cpu_dout    ),
     .result ( prot_byte   )
 );
+
+// prot_wr_ever / prot_rd_ever: see port comments above. Mirror the exact
+// address/strobe combination fed into u_prot (wr_addr==PROT_WORD && we_hi)
+// for the write side; the read side reuses prot_cs (already decodes
+// 0x680002 exactly) qualified by cen & bus_rd, the same convention used by
+// vec_isr_read/ipl7_vec_read elsewhere in this file.
+wire prot_word_wr = (cpu_write & ram_cs & high_byte_we) & (cpu_a[14:1] == 14'h3d35);
+wire prot_word_rd = cen & bus_rd & prot_cs;
+
+always @(posedge clk) begin
+    if( rst )                  prot_wr_ever <= 1'b0;
+    else if( prot_word_wr )    prot_wr_ever <= 1'b1;
+end
+
+always @(posedge clk) begin
+    if( rst )                  prot_rd_ever <= 1'b0;
+    else if( prot_word_rd )    prot_rd_ever <= 1'b1;
+end
 
 // ---------------------------------------------------------------------------
 // CPU data-in mux

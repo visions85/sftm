@@ -106,6 +106,13 @@ module sftm_video(
     // touch NVRAM at all -- see sftm_main port comment for rationale.
     input               nvram_region_wr_ever,
 
+    // Diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
+    // -- see sftm_main.v port comments. Used below to drive a counted-flash
+    // overlay instead of another same-hue-family colour swap (colour
+    // perception of ORANGE vs MAROON/LILAC proved unreliable in practice).
+    input               prot_wr_ever,
+    input               prot_rd_ever,
+
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
     // G=1 → CPU entered ROM address space.
@@ -570,16 +577,85 @@ wire show_magenta   = show_stuck & ~wdog_fired_ever & ~nvram_region_wr_ever;
 wire show_maroon    = show_stuck &  wdog_fired_ever &  nvram_region_wr_ever;
 wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 
+// ---------------------------------------------------------------------------
+// Counted-flash overlay: encodes prot_wr_ever/prot_rd_ever as a COUNT of
+// distinct WHITE flashes against the stuck-state colour, instead of yet
+// another same-hue-family colour swap. Both blink RATE and subtle partial-
+// channel hue swaps (ORANGE vs MAROON/LILAC) have proven unreliable for the
+// user to judge by eye -- counting a small number of clearly separated
+// flashes, each with a distinct steady-colour gap before/after, is far more
+// robust. Timed off vblank_irq (~60 Hz):
+//   N = 1 + {prot_wr_ever, prot_rd_ever}   (1..4 flashes per cycle)
+//   Each flash: 30 frames (~0.5s) WHITE ON, then 30 frames back to the base
+//   stuck colour. After N flashes: 90 frames (~1.5s) steady at the base
+//   stuck colour as a clear "reset" gap before the next counting cycle.
+//     N=1: protection port NEVER written and NEVER read -- CPU hasn't
+//          reached the protection check in code at all; the hang is
+//          earlier in boot and unrelated to protection.
+//     N=2: written but never read back afterwards -- unexpected; the RAM
+//          write happened but the 0x680002 port read never followed.
+//     N=3: read but the RAM byte was never written first -- also
+//          unexpected; the port would be polled without ever supplying it
+//          a value to echo back.
+//     N=4: BOTH write and read observed at least once -- the protection
+//          hand-off completed successfully at least once. If still stuck
+//          despite this, the loop needs more than a single pass (e.g.
+//          comparing against a moving/incrementing target) or the true
+//          hang is elsewhere entirely.
+localparam [5:0] FLASH_ON  = 6'd30;
+localparam [5:0] FLASH_SEG = 6'd60;
+localparam [6:0] FLASH_HOLD = 7'd90;
+
+wire [2:0] flash_count = 3'd1 + {1'b0, prot_wr_ever, prot_rd_ever};
+
+reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
+reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment
+reg [2:0]  flash_done;     // number of completed flashes so far this cycle
+reg [6:0]  flash_hold_pos; // 0..89 within the post-cycle hold period
+
+always @(posedge clk) begin
+    if( rst ) begin
+        flash_state    <= 1'b0;
+        flash_seg_pos  <= 6'd0;
+        flash_done     <= 3'd0;
+        flash_hold_pos <= 7'd0;
+    end else if( vblank_irq ) begin
+        if( !flash_state ) begin
+            if( flash_seg_pos == FLASH_SEG - 6'd1 ) begin
+                flash_seg_pos <= 6'd0;
+                if( flash_done + 3'd1 >= flash_count ) begin
+                    flash_done  <= 3'd0;
+                    flash_state <= 1'b1;
+                end else begin
+                    flash_done <= flash_done + 3'd1;
+                end
+            end else begin
+                flash_seg_pos <= flash_seg_pos + 6'd1;
+            end
+        end else begin
+            if( flash_hold_pos == FLASH_HOLD - 7'd1 ) begin
+                flash_hold_pos <= 7'd0;
+                flash_state    <= 1'b0;
+            end else begin
+                flash_hold_pos <= flash_hold_pos + 7'd1;
+            end
+        end
+    end
+end
+
+wire flash_on    = !flash_state && (flash_seg_pos < FLASH_ON);
+wire flash_white = show_stuck & flash_on;
+
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h00 : show_orange ? 5'h1F : show_magenta ? 5'h1F : show_maroon ? 5'h1F : show_lilac ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (flash_white ? 5'h1F : show_green ? 5'h00 : show_blue ? 5'h00 : show_orange ? 5'h1F : show_magenta ? 5'h1F : show_maroon ? 5'h1F : show_lilac ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h1F : show_blue ? 5'h00 : show_orange ? 5'h0A : show_magenta ? 5'h00 : show_maroon ? 5'h00 : show_lilac ? 5'h0A : ( boot_done_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (flash_white ? 5'h1F : show_green ? 5'h1F : show_blue ? 5'h00 : show_orange ? 5'h0A : show_magenta ? 5'h00 : show_maroon ? 5'h00 : show_lilac ? 5'h0A : ( boot_done_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h1F : show_orange ? 5'h00 : show_magenta ? 5'h1F : show_maroon ? 5'h0A : show_lilac ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (flash_white ? 5'h1F : show_green ? 5'h00 : show_blue ? 5'h1F : show_orange ? 5'h00 : show_magenta ? 5'h1F : show_maroon ? 5'h0A : show_lilac ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 

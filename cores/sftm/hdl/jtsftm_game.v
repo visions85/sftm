@@ -57,6 +57,8 @@ wire        ipl7_pulse_ever;    // diagnostic-only: synthetic IPL7 test pulse fi
 wire        nvram_region_wr_ever; // diagnostic: CPU wrote NVRAM region at least once (sftm_main -> sftm_video)
 wire        isr_ipl7_fetch_ever;// diagnostic-only: CPU took the synthetic IPL7 test pulse (sftm_main → sftm_video)
 wire        wdog_fired_ever;    // diagnostic: our own watchdog forced a soft reboot at least once (sftm_main → sftm_video)
+wire        prot_wr_ever;       // diagnostic: CPU wrote the protection RAM byte (0x7A6A) at least once (sftm_main → sftm_video)
+wire        prot_rd_ever;       // diagnostic: CPU read the protection port (0x680002) at least once (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -132,7 +134,10 @@ sftm_main u_main(
     // diagnostic: our own watchdog forced a soft reboot at least once
     .wdog_fired_ever( wdog_fired_ever ),
     // diagnostic: CPU wrote NVRAM region at least once
-    .nvram_region_wr_ever( nvram_region_wr_ever )
+    .nvram_region_wr_ever( nvram_region_wr_ever ),
+    // diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
+    .prot_wr_ever( prot_wr_ever ),
+    .prot_rd_ever( prot_rd_ever )
 );
 
 // ---------------------------------------------------------------------------
@@ -199,7 +204,10 @@ sftm_video u_video(
     // diagnostic: our own watchdog forced a soft reboot at least once
     .wdog_fired_ever( wdog_fired_ever ),
     // diagnostic: CPU wrote NVRAM region at least once
-    .nvram_region_wr_ever( nvram_region_wr_ever )
+    .nvram_region_wr_ever( nvram_region_wr_ever ),
+    // diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
+    .prot_wr_ever( prot_wr_ever ),
+    .prot_rd_ever( prot_rd_ever )
 );
 
 // ---------------------------------------------------------------------------
