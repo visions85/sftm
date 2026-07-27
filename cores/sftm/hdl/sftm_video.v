@@ -478,34 +478,35 @@ wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
 
-// Blink the diag-phase colour on top of whatever RGB combination is
-// currently shown, using blink RATE to encode how far the interrupt path
-// got. Blink-rate encoding (see port comments on isr_vec_fetch_ever /
-// ipl_asserted_ever in sftm_main.v for what each latch proves):
-//   solid (no blink)     : FPGA never asserted IPL2/IPL3 at all
-//   fast blink (~4Hz)    : FPGA asserted IPL2/IPL3, but CPU never took it
-//                          (SR interrupt mask on the CPU is the prime
-//                          suspect -- boot code normally must explicitly
-//                          lower it from the reset default of 7)
-//   slow blink (~1Hz)    : CPU actually took an autovectored interrupt
-//                          (isr_vec_fetch_ever takes priority when both
-//                          latch, since it is the stronger proof)
-reg [22:0] isr_blink_cnt;
-always @(posedge clk) if( pxl_cen ) isr_blink_cnt <= isr_blink_cnt + 23'd1;
-wire       isr_blink_off = isr_vec_fetch_ever ? isr_blink_cnt[22]
-                          : ipl_asserted_ever  ? isr_blink_cnt[20]
-                          : 1'b0;
+// Instead of blinking WHITE (hard to judge ~1Hz vs ~4Hz by eye), swap in a
+// completely different SOLID colour once the CPU has evidence of taking an
+// interrupt. This only overrides the exact WHITE combination (R=G=B=1F,
+// i.e. wdog never kicked + boot done + RAM written) -- RED/YELLOW/CYAN are
+// untouched. MAGENTA and pure GREEN never occur naturally in the normal
+// RED->YELLOW->WHITE->CYAN progression (B only turns on after G is already
+// on; R only turns off -> CYAN after both G and B are already on), so they
+// are safe, unambiguous stand-ins:
+//   WHITE   : neither latch ever set -- FPGA never asserted IPL2/IPL3 at all
+//   MAGENTA : ipl_asserted_ever set, isr_vec_fetch_ever NOT set -- FPGA
+//             asserted the interrupt but the CPU never took it (SR
+//             interrupt mask is the prime suspect -- boot code normally
+//             must explicitly lower it from the reset default of 7)
+//   GREEN   : isr_vec_fetch_ever set -- CPU actually took an autovectored
+//             interrupt at least once (takes priority over MAGENTA)
+wire white_now     = !wdog_kick_ever & boot_done_ever & nvram_wr_ever;
+wire show_green     = white_now & isr_vec_fetch_ever;
+wire show_magenta   = white_now & ipl_asserted_ever & ~isr_vec_fetch_ever;
 
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? ((!wdog_kick_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})
+             : diag_phase    ? (show_green ? 5'h00 : show_magenta ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? (( boot_done_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})
+             : diag_phase    ? (show_green ? 5'h1F : show_magenta ? 5'h00 : ( boot_done_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (( nvram_wr_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})
+             : diag_phase    ? (show_green ? 5'h00 : show_magenta ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
