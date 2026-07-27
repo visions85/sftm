@@ -59,6 +59,7 @@ wire        isr_ipl7_fetch_ever;// diagnostic-only: CPU took the synthetic IPL7 
 wire        wdog_fired_ever;    // diagnostic: our own watchdog forced a soft reboot at least once (sftm_main → sftm_video)
 wire        prot_wr_ever;       // diagnostic: CPU wrote the protection RAM byte (0x7A6A) at least once (sftm_main → sftm_video)
 wire        prot_rd_ever;       // diagnostic: CPU read the protection port (0x680002) at least once (sftm_main → sftm_video)
+wire [ 1:0] prot_rd_count;      // diagnostic: saturating count (0..3) of DISTINCT protection-port read accesses (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -137,7 +138,8 @@ sftm_main u_main(
     .nvram_region_wr_ever( nvram_region_wr_ever ),
     // diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
     .prot_wr_ever( prot_wr_ever ),
-    .prot_rd_ever( prot_rd_ever )
+    .prot_rd_ever( prot_rd_ever ),
+    .prot_rd_count( prot_rd_count )
 );
 
 // ---------------------------------------------------------------------------
@@ -207,7 +209,8 @@ sftm_video u_video(
     .nvram_region_wr_ever( nvram_region_wr_ever ),
     // diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
     .prot_wr_ever( prot_wr_ever ),
-    .prot_rd_ever( prot_rd_ever )
+    .prot_rd_ever( prot_rd_ever ),
+    .prot_rd_count( prot_rd_count )
 );
 
 // ---------------------------------------------------------------------------
