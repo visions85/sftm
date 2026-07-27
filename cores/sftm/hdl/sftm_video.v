@@ -587,45 +587,63 @@ wire show_maroon    = show_stuck &  wdog_fired_ever &  nvram_region_wr_ever;
 wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 
 // ---------------------------------------------------------------------------
-// Counted-flash overlay: encodes prot_rd_count as a COUNT of distinct WHITE
-// flashes against the stuck-state colour, instead of yet another same-hue-
-// family colour swap. Both blink RATE and subtle partial-channel hue swaps
-// (ORANGE vs MAROON/LILAC) have proven unreliable for the user to judge by
-// eye -- counting a small number of clearly separated flashes, each with a
-// distinct steady-colour gap before/after, is far more robust. Timed off
-// vblank_irq (~60 Hz):
-//   N = 1 + prot_rd_count   (1..4 flashes per cycle)
+// Counted-flash overlay: encodes a 2-bit diagnostic combo as a COUNT of
+// distinct WHITE flashes against the stuck-state colour, instead of yet
+// another same-hue-family colour swap. Both blink RATE and subtle partial-
+// channel hue swaps (ORANGE vs MAROON/LILAC) have proven unreliable for the
+// user to judge by eye -- counting a small number of clearly separated
+// flashes, each with a distinct steady-colour gap before/after, is far more
+// robust. Timed off vblank_irq (~60 Hz):
 //   Each flash: 30 frames (~0.5s) WHITE ON, then 30 frames back to the base
 //   stuck colour. After N flashes: 90 frames (~1.5s) steady at the base
 //   stuck colour as a clear "reset" gap before the next counting cycle.
 //
-// HISTORY: earlier committed builds used N = 1 + {prot_wr_ever, prot_rd_ever}
-// (1..4, meaning write/read hit-or-miss). Hardware reported N=3 (wr=0,rd=1):
-// the CPU DOES read the protection port 0x680002, but the RAM byte at 0x7A6A
-// it should echo back was NEVER written first -- an unexpected, now-settled
-// fact (see AGENTS.md). That boolean pair has served its purpose and is now
-// fully answered, so the flash count has been REPURPOSED for the next, more
-// decisive question raised by that finding: is the CPU actively SPINNING on
-// this exact read (a tight poll loop, which at CPU clock speed would
-// saturate a small counter within microseconds), or did it read once/twice
-// and move on to hang somewhere else downstream? prot_rd_count answers this
-// directly (see sftm_main.v port comment for the full 0..3 meaning table):
-//     N=1: prot_rd_count==0 -- never read (shouldn't occur; prot_rd_ever
-//          already confirmed 1 on hardware -- kept for completeness).
-//     N=2: prot_rd_count==1 -- read EXACTLY ONCE, then moved on. Protection
-//          check likely PASSED (or was a one-shot probe); the CPU is stuck
-//          somewhere else entirely -- protection is NOT the live blocker.
-//     N=3: prot_rd_count==2 -- read exactly twice. Ambiguous; the check may
-//          have retried once before proceeding or before hanging elsewhere.
-//     N=4: prot_rd_count==3 (saturated, meaning "3 or more") -- if this is
-//          the steady-state reading while the display is stuck, the CPU is
-//          almost certainly ACTIVELY SPINNING on this exact read in a tight
-//          poll loop, confirming protection as the live, direct blocker.
+// CORRECTED HISTORY -- IMPORTANT: the commit-0db0286 build used
+// N = 1 + {prot_wr_ever, prot_rd_ever} and its AGENTS.md table mis-stated
+// the meaning of N=2 and N=3 (swapped). Verilog concatenation {A,B} makes A
+// the MSB (weight 2) and B the LSB (weight 1), so that formula actually
+// meant: N=1->(wr=0,rd=0), N=2->(wr=0,rd=1), N=3->(wr=1,rd=0), N=4->(wr=1,rd=1)
+// -- verified directly in simulation (/tmp/check_concat.v). The hardware
+// report of "N=3" therefore really meant **wr=1, rd=0**: the CPU DOES write
+// the protection RAM byte at 0x7A6A, but NEVER reads the 0x680002 port
+// afterward -- the OPPOSITE of what was previously told to the user (who
+// was told "read but never written"). The commit-1981076 build then added
+// prot_rd_count (still correctly wired/edge-detected) and reported N=1,
+// i.e. prot_rd_count==0 -- never read -- which is CONSISTENT with this
+// corrected reading (both builds agree: write happens, read never does).
+//
+// Given read is now confirmed 0 by two independent, consistently-decoded
+// results, the next most valuable question is no longer "how many times is
+// the read repeated" (it isn't happening at all) but: does the CPU keep
+// running normally AFTER the write, reaching its real main loop (which
+// kicks the game's own watchdog register, REG_WDOG, per the disassembled
+// jsr $8006BA + wdog-kick + loop pattern), or does it stall/crash right
+// around the write and never get that far? wdog_kick_ever answers exactly
+// this and is already wired into this module. New encoding, bit order
+// re-verified via /tmp/check_concat2.v before writing this table:
+//   N = 1 + {prot_wr_ever, wdog_kick_ever}   (1..4 flashes per cycle)
+//     N=1: wr=0, kick=0 -- protection write never happened AND the CPU
+//          never reached its main loop either -- stuck very early in boot,
+//          well before both of these.
+//     N=2: wr=0, kick=1 -- CPU reaches/kicks its main loop repeatedly, but
+//          the protection RAM byte was never written -- would mean the
+//          earlier "write" finding does not hold on this run, or the write
+//          instruction lies on a path the main loop doesn't take.
+//     N=3: wr=1, kick=0 -- confirms the write happens, but the CPU NEVER
+//          reaches its main loop afterward -- strongly suggests the CPU
+//          stalls or crashes shortly after the protection write, before
+//          ever getting to the real game loop (and thus before the
+//          protection read too).
+//     N=4: wr=1, kick=1 -- the write happens AND the CPU is alive, cycling
+//          through its real main loop (kicking the watchdog) -- yet still
+//          never executes the protection read. Would point at the read
+//          living on a conditional/DIP-gated path never taken, rather than
+//          a CPU crash.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + {1'b0, prot_rd_count};
+wire [2:0] flash_count = 3'd1 + {1'b0, prot_wr_ever, wdog_kick_ever};
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment
