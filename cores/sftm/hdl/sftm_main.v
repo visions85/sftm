@@ -199,16 +199,26 @@ reg  [ 6:0] vint_timer;  // counts down in clkena cycles after vblank_irq
 // ROM into main RAM; we do the same before releasing the CPU from reset.
 //
 // IPL / AUTOVECTOR MAPPING (itech32 LINC chip → TG68K IPL_autovector=1):
-//   The LINC chip provides vectors via IACK; we cannot replicate this, but
-//   we CAN choose IPL levels so TG68K's autovectors land on the correct ISRs.
-//   ROM vector table:
-//     L1 autovector (0x64) = 0x00800918 → error-halt code 5 (unused/NMI stub)
-//     L2 autovector (0x68) = 0x00801380 → REAL VBlank ISR (MOVEM/frame counter)
-//     L3 autovector (0x6C) = 0x008012E0 → Scanline ISR
-//   Therefore: vblank + blitter share IPL2; scanline = IPL3.
-//   (In MAME, LINC maps vblank at IPL1→vector26, blitter at IPL2→vector26,
-//   scanline at IPL3→vector27; we collapse vblank+blitter to IPL2 since the
-//   ISR reads VIDEO_INTSTATE to differentiate, and IPL2 autovector = 26 = $00801380.)
+//   CORRECTED per MAME src/mame/itech/itech32.cpp (itech32_state::update_interrupts,
+//   itech32_state::sftm() machine config, itech32_state::machine_start()):
+//     m_maincpu->set_input_line(1 + m_irq_base, vint);  // VINT  = vblank
+//     m_maincpu->set_input_line(2 + m_irq_base, xint);  // XINT  = blitter
+//     m_maincpu->set_input_line(3 + m_irq_base, qint);  // QINT  = scanline
+//   m_irq_base defaults to 0 in itech32_state::machine_start() and is ONLY
+//   overridden (to 2) by drivedge_state::machine_reset() for Driver's Edge.
+//   sftm() uses the base itech32_state class (see GAME(sftm,...) in
+//   itech32.cpp), so m_irq_base stays 0 for Street Fighter: The Movie:
+//     VINT (vblank)  → CPU input line 1 → IPL1 → autovector 25 → 0x64
+//     XINT (blitter) → CPU input line 2 → IPL2 → autovector 26 → 0x68
+//     QINT (scanline)→ CPU input line 3 → IPL3 → autovector 27 → 0x6C
+//   vblank and blitter are SEPARATE IPL levels, not shared. Previous notes in
+//   this file claimed the disassembled ISR at 0x00801380 (L2/0x68 target) was
+//   "the real VBlank ISR" and collapsed vblank+blitter onto IPL2 — that is
+//   inconsistent with MAME's authoritative driver mapping above and is the
+//   suspected root cause of the CPU never taking the FPGA-asserted interrupt
+//   (confirmed on hardware: MAGENTA = ipl_asserted_ever & ~isr_vec_fetch_ever).
+//   0x00801380 is very likely the XINT/blitter ISR, not vblank; whatever lives
+//   at 0x00800918 (L1/0x64) is the real vblank ISR, not an "unused NMI stub".
 reg  [ 4:0] boot_lw;                     // 0..31 long-word index (32*4 = 0x80)
 reg         boot_half;                   // 0 = high word, 1 = low word
 reg         boot_done;                   // copy finished, CPU may run
@@ -433,15 +443,18 @@ always @(posedge clk) begin
 end
 
 // isr_vec_fetch_ever: latches the first time the CPU performs a data READ
-// from the autovector 26/27 exception vector table entries (word addresses
-// 0x34/0x35 = byte $68-$6B, 0x36/0x37 = byte $6C-$6F). With IPL_autovector=1
-// TG68K.C does not do an external IACK bus cycle -- it internally forms the
-// vector number and then reads the 4-byte vector table entry from memory the
-// normal way. Seeing this address on the bus during a read cycle is a
-// ROM-content-independent proof that the CPU actually recognized IPL2/IPL3
-// and began exception processing (SR mask allowed it, IPL held long enough).
+// from the autovector 25/26/27 exception vector table entries (word
+// addresses 0x32/0x33 = byte $64-$67 [IPL1/vblank], 0x34/0x35 = byte
+// $68-$6B [IPL2/blitter], 0x36/0x37 = byte $6C-$6F [IPL3/scanline]). With
+// IPL_autovector=1 TG68K.C does not do an external IACK bus cycle -- it
+// internally forms the vector number and then reads the 4-byte vector table
+// entry from memory the normal way. Seeing any of these addresses on the
+// bus during a read cycle is a ROM-content-independent proof that the CPU
+// actually recognized IPL1/IPL2/IPL3 and began exception processing (SR
+// mask allowed it, IPL held long enough).
 wire vec_isr_read = cen & bus_rd &
-                     (cpu_addr==23'h34 || cpu_addr==23'h35 ||
+                     (cpu_addr==23'h32 || cpu_addr==23'h33 ||
+                      cpu_addr==23'h34 || cpu_addr==23'h35 ||
                       cpu_addr==23'h36 || cpu_addr==23'h37);
 always @(posedge clk) begin
     if( rst ) isr_vec_fetch_ever <= 1'b0;
@@ -578,24 +591,28 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Interrupt priority: mapped to match the LINC chip's IACK vector provision
-// via TG68K autovectors (IPL_autovector=1).
+// Interrupt priority: mapped per MAME's authoritative itech32.cpp driver
+// (itech32_state::update_interrupts / sftm() config, m_irq_base=0 for sftm):
+//   VINT (vblank)  → CPU line 1 → IPL1 → autovector 25 (0x64) → 0x00800918
+//   XINT (blitter) → CPU line 2 → IPL2 → autovector 26 (0x68) → 0x00801380
+//   QINT (scanline)→ CPU line 3 → IPL3 → autovector 27 (0x6C) → 0x008012E0
 //
-// LINC maps vblank→vector26, blitter→vector26, scanline→vector27 in real HW.
-// Autovector rule: IPL N → vector (24+N).  So:
-//   IPL2 autovector → vector 26 (0x68) → 0x00801380  (VBlank/blitter ISR)
-//   IPL3 autovector → vector 27 (0x6C) → 0x008012E0  (Scanline ISR)
-//
-// VBlank + blitter share IPL2; the ISR reads VIDEO_INTSTATE to differentiate.
-// Scanline → IPL3.
+// Each source gets its OWN IPL level; they are not shared/collapsed. This
+// replaces an earlier, incorrect "vblank+blitter share IPL2" assumption that
+// contradicted MAME's driver and is the suspected root cause of the CPU never
+// taking the FPGA-asserted interrupt (hardware-confirmed MAGENTA diagnostic:
+// ipl_asserted_ever & ~isr_vec_fetch_ever).
 // ---------------------------------------------------------------------------
 // (vint_latch and vint_timer are declared earlier, near cpu_ipl, to avoid
 // iverilog forward-reference errors from the assign vint_latch_out statement.)
 
-// The VBlank ISR at 0x00801380 does NOT read 0x080000; it acks via the LINC
-// chip's IACK cycle in real hardware (hardware-automatic ack).
-// With IPL_autovector=1 there is no IACK bus cycle, so we simulate the LINC
-// ack with a timer: hold vint_latch high for 100 CPU-ACTIVE (clkena) cycles.
+// Per MAME's itech020_map (used by sftm), int1_ack_w is mapped at 0x080000
+// (shared with the P1 input port read) -- this is the real vblank ack
+// address; the VBlank ISR (now understood to live at 0x00800918, the L1/
+// IPL1 autovector target) should write there to clear the interrupt.
+// As a safety net in case the real ack path differs subtly (timing, a
+// second write, etc.), we also auto-clear via a timer: hold vint_latch high
+// for 100 CPU-ACTIVE (clkena) cycles even without an explicit ack write.
 //
 // IMPORTANT: count clkena (= cen & ~bus_busy), NOT cen.
 // When the CPU stalls on SDRAM reads, cen still ticks but clkena=0; counting
@@ -627,9 +644,9 @@ always @(posedge clk) begin
     if( w_rst ) cpu_ipl <= 3'b111;          // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
-        if( vint_latch ) cpu_ipl <= 3'b101; // IPL2: vblank → autovector 26 → 0x00801380
-        if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter (same ISR, checks INTSTATE)
-        if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline → autovector 27 → 0x008012E0
+        if( vint_latch ) cpu_ipl <= 3'b110; // IPL1: vblank  → autovector 25 → 0x00800918
+        if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter → autovector 26 → 0x00801380
+        if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline→ autovector 27 → 0x008012E0
     end
 end
 

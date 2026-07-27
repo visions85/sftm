@@ -65,9 +65,13 @@ module sftm_video(
     input               nvram_wr_ever,
 
     // VBlank active latch from sftm_main: held high for ~100 CPU-active cycles
-    // after each VBlank. Drives bit 6 of VR_XFER reads so the VBlank ISR at
-    // $801380 can poll for end-of-vblank (it loops writing $0040 to VR_XFER
-    // and reading $500005 bit 6 until the window expires).
+    // after each VBlank. Drives bit 6 of VR_XFER reads so an ISR can poll for
+    // end-of-vblank (loops writing $0040 to VR_XFER and reading $500005 bit 6
+    // until the window expires).
+    // NOTE: per MAME's itech32.cpp, vblank (VINT) maps to IPL1 (autovector
+    // 25, $00800918), not IPL2. The routine at $801380 (IPL2 autovector,
+    // $68) is the blitter/XINT ISR, not the VBlank ISR -- it may still poll
+    // this bit as a secondary condition, but it is not the vblank handler.
     input               vint_latch,
 
     // Diagnostic: first watchdog kick by the main CPU outer loop.
