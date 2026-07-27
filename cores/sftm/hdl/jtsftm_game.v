@@ -54,6 +54,7 @@ wire        boot_done_ever;  // latches first boot_done (sftm_main → sftm_vide
 wire        isr_vec_fetch_ever; // latches first autovector 26/27 table read (sftm_main → sftm_video)
 wire        ipl_asserted_ever;  // latches first cpu_ipl != 111 (sftm_main → sftm_video)
 wire        ipl7_pulse_ever;    // diagnostic-only: synthetic IPL7 test pulse fired (sftm_main → sftm_video)
+wire        nvram_region_wr_ever; // diagnostic: CPU wrote NVRAM region at least once (sftm_main -> sftm_video)
 wire        isr_ipl7_fetch_ever;// diagnostic-only: CPU took the synthetic IPL7 test pulse (sftm_main → sftm_video)
 wire        wdog_fired_ever;    // diagnostic: our own watchdog forced a soft reboot at least once (sftm_main → sftm_video)
 
@@ -129,7 +130,9 @@ sftm_main u_main(
     .ipl7_pulse_ever( ipl7_pulse_ever ),
     .isr_ipl7_fetch_ever( isr_ipl7_fetch_ever ),
     // diagnostic: our own watchdog forced a soft reboot at least once
-    .wdog_fired_ever( wdog_fired_ever )
+    .wdog_fired_ever( wdog_fired_ever ),
+    // diagnostic: CPU wrote NVRAM region at least once
+    .nvram_region_wr_ever( nvram_region_wr_ever )
 );
 
 // ---------------------------------------------------------------------------
@@ -194,7 +197,9 @@ sftm_video u_video(
     .ipl7_pulse_ever( ipl7_pulse_ever ),
     .isr_ipl7_fetch_ever( isr_ipl7_fetch_ever ),
     // diagnostic: our own watchdog forced a soft reboot at least once
-    .wdog_fired_ever( wdog_fired_ever )
+    .wdog_fired_ever( wdog_fired_ever ),
+    // diagnostic: CPU wrote NVRAM region at least once
+    .nvram_region_wr_ever( nvram_region_wr_ever )
 );
 
 // ---------------------------------------------------------------------------
