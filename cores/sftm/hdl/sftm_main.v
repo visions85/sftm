@@ -139,6 +139,14 @@ module sftm_main #(
     // is proven to have already happened.
     output reg          wdog_fired_ever,
 
+    // Diagnostic: goes high the first time the CPU performs any write
+    // (either byte lane) to the NVRAM address region (0x600000-0x61ffff),
+    // regardless of whether that write actually persists in the backing
+    // BRAM. Never cleared by w_rst (only by hard rst) so it survives any
+    // number of soft reboots. Used to determine whether the boot ROM ever
+    // attempts to touch NVRAM at all.
+    output reg          nvram_region_wr_ever,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -599,6 +607,15 @@ end
 always @(posedge clk) begin
     if( rst )              wdog_fired_ever <= 1'b0;
     else if( wdog_rst )     wdog_fired_ever <= 1'b1;
+end
+
+// nvram_region_wr_ever: latches the first time the CPU issues a write
+// (low or high byte lane) to the NVRAM address region. Reset only by hard
+// rst so it survives across any soft reboots, same rationale as
+// wdog_fired_ever above.
+always @(posedge clk) begin
+    if( rst )                                    nvram_region_wr_ever <= 1'b0;
+    else if( nvram_we_lo || nvram_we_hi )         nvram_region_wr_ever <= 1'b1;
 end
 
 // CPU ROM bcache gap generator.

@@ -100,6 +100,12 @@ module sftm_video(
     // sftm_main port comment for the full rationale.
     input               wdog_fired_ever,
 
+    // Diagnostic: the CPU has issued at least one write (either byte lane)
+    // to the NVRAM address region (0x600000-0x61ffff). Reset only by hard
+    // rst. Used to disambiguate whether the boot ROM ever attempts to
+    // touch NVRAM at all -- see sftm_main port comment for rationale.
+    input               nvram_region_wr_ever,
+
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
     // G=1 → CPU entered ROM address space.
@@ -538,19 +544,42 @@ wire white_now     = !wdog_kick_ever & boot_done_ever & nvram_wr_ever;
 wire show_green    = white_now & isr_vec_fetch_ever;
 wire show_blue      = white_now & ~show_green & ipl7_pulse_ever & ~isr_ipl7_fetch_ever;
 wire show_stuck     = white_now & ~show_green & ~show_blue & ipl_asserted_ever & ~isr_vec_fetch_ever;
-wire show_orange    = show_stuck & wdog_fired_ever;
-wire show_magenta   = show_stuck & ~wdog_fired_ever;
+// show_stuck splits into 4 combinations of (wdog_fired_ever, nvram_region_wr_ever).
+// Each new colour is built by swapping ORANGE/MAGENTA's existing "partial"
+// channel from green to blue (same brightness, 0x0A), matching the same
+// single-partial-channel encoding technique already confirmed reliable for
+// ORANGE -- rather than blending a third channel in, which would be a much
+// smaller (harder to judge) visual delta from the existing colours:
+//   ORANGE (wdog=1, nvram_wr=0): unchanged meaning from before this
+//           diagnostic was added -- watchdog fired at least once, CPU never
+//           wrote NVRAM. R=1F G=0A B=00 (partial GREEN).
+//   MAGENTA(wdog=0, nvram_wr=0): unchanged meaning -- still on first boot
+//           attempt, CPU never wrote NVRAM. R=1F G=00 B=1F.
+//   MAROON (wdog=1, nvram_wr=1): NEW -- watchdog fired at least once AND the
+//           CPU DID write to the NVRAM region at least once. Rules out "ROM
+//           never touches NVRAM" -- keeps the NVRAM-checksum / aliasing /
+//           path-resolution theories alive as the leading explanation.
+//           R=1F G=00 B=0A (partial BLUE instead of partial GREEN --
+//           visually a muted red/brick colour, not orange).
+//   LILAC  (wdog=0, nvram_wr=1): NEW -- still on first boot attempt, but the
+//           CPU already wrote NVRAM at least once before getting stuck.
+//           R=1F G=0A B=1F (MAGENTA + partial GREEN -- visually a pale
+//           pink/lilac, not a pure magenta).
+wire show_orange    = show_stuck &  wdog_fired_ever & ~nvram_region_wr_ever;
+wire show_magenta   = show_stuck & ~wdog_fired_ever & ~nvram_region_wr_ever;
+wire show_maroon    = show_stuck &  wdog_fired_ever &  nvram_region_wr_ever;
+wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h00 : show_orange ? 5'h1F : show_magenta ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h00 : show_orange ? 5'h1F : show_magenta ? 5'h1F : show_maroon ? 5'h1F : show_lilac ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h1F : show_blue ? 5'h00 : show_orange ? 5'h0A : show_magenta ? 5'h00 : ( boot_done_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h1F : show_blue ? 5'h00 : show_orange ? 5'h0A : show_magenta ? 5'h00 : show_maroon ? 5'h00 : show_lilac ? 5'h0A : ( boot_done_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h1F : show_orange ? 5'h00 : show_magenta ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h1F : show_orange ? 5'h00 : show_magenta ? 5'h1F : show_maroon ? 5'h0A : show_lilac ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 
