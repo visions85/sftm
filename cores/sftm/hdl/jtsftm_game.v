@@ -52,6 +52,9 @@ wire        nvram_wr_ever;   // latches first CPU NVRAM write (sftm_main → sft
 wire        wdog_kick_ever;  // latches first watchdog kick (sftm_main → sftm_video)
 wire        boot_done_ever;  // latches first boot_done (sftm_main → sftm_video)
 wire        isr_vec_fetch_ever; // latches first autovector 26/27 table read (sftm_main → sftm_video)
+wire        ipl_asserted_ever;  // latches first cpu_ipl != 111 (sftm_main → sftm_video)
+wire        ipl7_pulse_ever;    // diagnostic-only: synthetic IPL7 test pulse fired (sftm_main → sftm_video)
+wire        isr_ipl7_fetch_ever;// diagnostic-only: CPU took the synthetic IPL7 test pulse (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -120,7 +123,10 @@ sftm_main u_main(
     // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
     .isr_vec_fetch_ever( isr_vec_fetch_ever ),
     // diagnostic: FPGA ever asserted IPL2/IPL3 to the CPU (regardless of whether it was taken)
-    .ipl_asserted_ever( ipl_asserted_ever )
+    .ipl_asserted_ever( ipl_asserted_ever ),
+    // diagnostic-only: synthetic non-maskable IPL7 test pulse + whether CPU took it
+    .ipl7_pulse_ever( ipl7_pulse_ever ),
+    .isr_ipl7_fetch_ever( isr_ipl7_fetch_ever )
 );
 
 // ---------------------------------------------------------------------------
@@ -180,7 +186,10 @@ sftm_video u_video(
     // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
     .isr_vec_fetch_ever( isr_vec_fetch_ever ),
     // diagnostic: FPGA ever asserted IPL2/IPL3 to the CPU (regardless of whether it was taken)
-    .ipl_asserted_ever( ipl_asserted_ever )
+    .ipl_asserted_ever( ipl_asserted_ever ),
+    // diagnostic-only: synthetic non-maskable IPL7 test pulse + whether CPU took it
+    .ipl7_pulse_ever( ipl7_pulse_ever ),
+    .isr_ipl7_fetch_ever( isr_ipl7_fetch_ever )
 );
 
 // ---------------------------------------------------------------------------
