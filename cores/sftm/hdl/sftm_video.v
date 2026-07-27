@@ -78,6 +78,7 @@ module sftm_video(
     // ROM-content knowledge -- proves whether the interrupt path itself
     // was ever taken by the CPU.
     input               isr_vec_fetch_ever,
+    input               ipl_asserted_ever,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -477,16 +478,23 @@ wire [4:0] dbg_g = vcnt[5:1];
 wire [4:0] dbg_b = {hcnt[8], vcnt[7], 3'd0};
 wire       show_raster = startup_phase | ~gfx_en[3];
 
-// isr_vec_fetch_ever blink: once the CPU has ever read the IPL2/IPL3
-// autovector table entry, blink the diag-phase colour at ~1Hz (toggle to
-// black and back) on top of whatever RGB combination is currently shown.
-// Solid colour (no blink)  = CPU has NEVER taken an interrupt.
-// Blinking colour          = CPU DID take at least one autovectored
-//                            interrupt at some point (proves the IPL /
-//                            vint_latch / SR-mask path works at least once).
+// Blink the diag-phase colour on top of whatever RGB combination is
+// currently shown, using blink RATE to encode how far the interrupt path
+// got. Blink-rate encoding (see port comments on isr_vec_fetch_ever /
+// ipl_asserted_ever in sftm_main.v for what each latch proves):
+//   solid (no blink)     : FPGA never asserted IPL2/IPL3 at all
+//   fast blink (~4Hz)    : FPGA asserted IPL2/IPL3, but CPU never took it
+//                          (SR interrupt mask on the CPU is the prime
+//                          suspect -- boot code normally must explicitly
+//                          lower it from the reset default of 7)
+//   slow blink (~1Hz)    : CPU actually took an autovectored interrupt
+//                          (isr_vec_fetch_ever takes priority when both
+//                          latch, since it is the stronger proof)
 reg [22:0] isr_blink_cnt;
 always @(posedge clk) if( pxl_cen ) isr_blink_cnt <= isr_blink_cnt + 23'd1;
-wire       isr_blink_off = isr_vec_fetch_ever & isr_blink_cnt[22];
+wire       isr_blink_off = isr_vec_fetch_ever ? isr_blink_cnt[22]
+                          : ipl_asserted_ever  ? isr_blink_cnt[20]
+                          : 1'b0;
 
 assign red   = startup_phase ? 5'h1F
              : diag_phase    ? ((!wdog_kick_ever ? 5'h1F : 5'h00) & {5{~isr_blink_off}})

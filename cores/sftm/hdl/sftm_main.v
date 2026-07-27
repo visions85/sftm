@@ -96,6 +96,17 @@ module sftm_main(
     // a polling loop instead.
     output reg          isr_vec_fetch_ever,
 
+    // Diagnostic: goes high the first time cpu_ipl leaves 3'b111 (i.e. the
+    // FPGA side asserted IPL2/IPL3 for at least one clk), independent of
+    // whether the CPU ever actually took the resulting exception. Splits
+    // the WHITE-with-no-blink case in two: if this NEVER latches, the
+    // FPGA never even asserts the interrupt (vint_latch/blit_irq/scan_irq
+    // generation is the prime suspect). If this DOES latch but
+    // isr_vec_fetch_ever never does, the FPGA is asserting the interrupt
+    // fine but the CPU's SR interrupt mask (set by boot code, normally
+    // 7 out of RESET until lowered) is blocking it from ever being taken.
+    output reg          ipl_asserted_ever,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -435,6 +446,16 @@ wire vec_isr_read = cen & bus_rd &
 always @(posedge clk) begin
     if( rst ) isr_vec_fetch_ever <= 1'b0;
     else if( vec_isr_read ) isr_vec_fetch_ever <= 1'b1;
+end
+
+// ipl_asserted_ever: latches the first time cpu_ipl leaves 3'b111, i.e. the
+// FPGA side (vint_latch / blit_irq / scan_irq) asserted an interrupt request
+// for at least one clk -- independent of whether the CPU ever actually took
+// it. See port comment above for how to interpret this alongside
+// isr_vec_fetch_ever.
+always @(posedge clk) begin
+    if( rst ) ipl_asserted_ever <= 1'b0;
+    else if( cpu_ipl != 3'b111 ) ipl_asserted_ever <= 1'b1;
 end
 // G diagnostic = "rom_ok_ever": latches the first time rom_ok fires while
 // boot_done=1 and rom_cs=1.  This requires the SDRAM cache to actually respond
