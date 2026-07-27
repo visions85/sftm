@@ -85,6 +85,17 @@ module sftm_main(
     // ISR polls this bit to know when the vblank window has ended.
     output              vint_latch_out,
 
+    // Diagnostic: goes high the first time the CPU performs a READ from the
+    // autovector-26/27 exception vector table entries ($68-$6B, $6C-$6F).
+    // This is independent of any ROM disassembly knowledge — it fires iff
+    // TG68K.C's IPL_autovector logic actually recognized an IPL2/IPL3
+    // request and began exception processing. If this NEVER latches while
+    // stuck at WHITE, the interrupt path (IPL mapping, vint_latch timing,
+    // or SR interrupt mask) is the prime suspect. If it DOES latch, the
+    // interrupt mechanism itself works and the hang is inside the ISR or
+    // a polling loop instead.
+    output reg          isr_vec_fetch_ever,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -408,6 +419,22 @@ endfunction
 always @(posedge clk) begin
     if( rst ) wdog_kick_ever <= 1'b0;
     else if( cpu_write && ahi==REG_WDOG ) wdog_kick_ever <= 1'b1;
+end
+
+// isr_vec_fetch_ever: latches the first time the CPU performs a data READ
+// from the autovector 26/27 exception vector table entries (word addresses
+// 0x34/0x35 = byte $68-$6B, 0x36/0x37 = byte $6C-$6F). With IPL_autovector=1
+// TG68K.C does not do an external IACK bus cycle -- it internally forms the
+// vector number and then reads the 4-byte vector table entry from memory the
+// normal way. Seeing this address on the bus during a read cycle is a
+// ROM-content-independent proof that the CPU actually recognized IPL2/IPL3
+// and began exception processing (SR mask allowed it, IPL held long enough).
+wire vec_isr_read = cen & bus_rd &
+                     (cpu_addr==23'h34 || cpu_addr==23'h35 ||
+                      cpu_addr==23'h36 || cpu_addr==23'h37);
+always @(posedge clk) begin
+    if( rst ) isr_vec_fetch_ever <= 1'b0;
+    else if( vec_isr_read ) isr_vec_fetch_ever <= 1'b1;
 end
 // G diagnostic = "rom_ok_ever": latches the first time rom_ok fires while
 // boot_done=1 and rom_cs=1.  This requires the SDRAM cache to actually respond
