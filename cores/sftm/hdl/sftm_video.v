@@ -84,6 +84,15 @@ module sftm_video(
     input               isr_vec_fetch_ever,
     input               ipl_asserted_ever,
 
+    // Diagnostic-only: a synthetic, game-logic-independent level-7 (non-
+    // maskable) interrupt pulse fired once ~1s after reset by sftm_main,
+    // and whether the CPU actually took it. Level 7 cannot be masked by
+    // software, so ipl7_pulse_ever & ~isr_ipl7_fetch_ever proves the CPU
+    // (or the cpu_ipl/autovector wiring) is not functioning at all on real
+    // hardware, independent of the real ROM's own interrupt-mask handling.
+    input               ipl7_pulse_ever,
+    input               isr_ipl7_fetch_ever,
+
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
     // G=1 → CPU entered ROM address space.
@@ -490,27 +499,39 @@ wire       show_raster = startup_phase | ~gfx_en[3];
 // RED->YELLOW->WHITE->CYAN progression (B only turns on after G is already
 // on; R only turns off -> CYAN after both G and B are already on), so they
 // are safe, unambiguous stand-ins:
-//   WHITE   : neither latch ever set -- FPGA never asserted IPL2/IPL3 at all
-//   MAGENTA : ipl_asserted_ever set, isr_vec_fetch_ever NOT set -- FPGA
-//             asserted the interrupt but the CPU never took it (SR
-//             interrupt mask is the prime suspect -- boot code normally
-//             must explicitly lower it from the reset default of 7)
-//   GREEN   : isr_vec_fetch_ever set -- CPU actually took an autovectored
-//             interrupt at least once (takes priority over MAGENTA)
+//   WHITE   : neither latch ever set -- FPGA never asserted IPL1/2/3 at all
+//   MAGENTA : ipl_asserted_ever set, isr_vec_fetch_ever NOT set, and the
+//             diagnostic IPL7 test (below) WAS taken -- FPGA correctly
+//             asserted a real (IPL1/2/3) interrupt and the CPU/autovector
+//             mechanism is proven to work (it took the non-maskable IPL7
+//             test pulse), but the CPU never took the real one. This means
+//             the real ROM's own boot code never lowered its SR interrupt
+//             mask enough to admit IPL1/2/3, and is the prime remaining
+//             suspect (e.g. still spinning on a protection/init check).
+//   BLUE    : the diagnostic IPL7 test pulse fired (sftm_main forces this
+//             ~1s after reset, unconditionally, non-maskable by spec) but
+//             was NEVER taken by the CPU. This rules out the ROM's SR mask
+//             entirely -- it proves the CPU itself (or the cpu_ipl /
+//             IPL_autovector wiring to the vendored core) is not
+//             functioning on real hardware. Takes priority over MAGENTA.
+//   GREEN   : isr_vec_fetch_ever set -- CPU actually took a real (IPL1/2/3)
+//             autovectored interrupt at least once (best outcome, takes
+//             priority over both BLUE and MAGENTA)
 wire white_now     = !wdog_kick_ever & boot_done_ever & nvram_wr_ever;
-wire show_green     = white_now & isr_vec_fetch_ever;
-wire show_magenta   = white_now & ipl_asserted_ever & ~isr_vec_fetch_ever;
+wire show_green    = white_now & isr_vec_fetch_ever;
+wire show_blue      = white_now & ~show_green & ipl7_pulse_ever & ~isr_ipl7_fetch_ever;
+wire show_magenta   = white_now & ~show_green & ~show_blue & ipl_asserted_ever & ~isr_vec_fetch_ever;
 
 assign red   = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_magenta ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h00 : show_magenta ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h1F : show_magenta ? 5'h00 : ( boot_done_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h1F : show_blue ? 5'h00 : show_magenta ? 5'h00 : ( boot_done_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
-             : diag_phase    ? (show_green ? 5'h00 : show_magenta ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
+             : diag_phase    ? (show_green ? 5'h00 : show_blue ? 5'h1F : show_magenta ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
 

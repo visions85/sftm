@@ -11,7 +11,13 @@
     and `init_sftm_common`. All offsets cross-checked against MAME source.
 */
 
-module sftm_main(
+module sftm_main #(
+    // Diagnostic-only: clk cycles from reset release to the synthetic IPL7
+    // test pulse (see ipl7_pulse_ever below). Defaults to ~1s @ 48 MHz for
+    // real hardware; testbenches override this to a small value so they
+    // don't have to simulate a full second of cycles.
+    parameter [27:0] IPL7_DBG_DELAY = 28'd48_000_000
+) (
     input               rst,
     input               clk,
     input               cen,        // ~25 MHz enable
@@ -106,6 +112,22 @@ module sftm_main(
     // fine but the CPU's SR interrupt mask (set by boot code, normally
     // 7 out of RESET until lowered) is blocking it from ever being taken.
     output reg          ipl_asserted_ever,
+
+    // Diagnostic-only: a synthetic, game-logic-independent level-7 (NMI-
+    // equivalent, truly non-maskable on the 68000/68020) interrupt pulse is
+    // forced ~1s after reset regardless of vint_latch/blit_irq/scan_irq or
+    // any SR mask state. Level 7 CANNOT be masked out by software, so if
+    // ipl7_pulse_ever fires but isr_ipl7_fetch_ever never does, the CPU is
+    // not actually alive/fetching despite other WHITE evidence (or cpu_ipl
+    // wiring itself is broken on real silicon). If BOTH fire, the CPU and
+    // the whole IPL/autovector mechanism are proven fully functional, which
+    // pins the remaining bug squarely on the real ROM's own boot code never
+    // lowering its SR interrupt mask below 7 for the ordinary IPL1/2/3
+    // levels used by vint_latch/blit_irq/scan_irq (i.e. the game may be
+    // stuck looping earlier in boot, before it ever reaches the
+    // "enable interrupts" instruction).
+    output reg          ipl7_pulse_ever,
+    output reg          isr_ipl7_fetch_ever,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -470,6 +492,55 @@ always @(posedge clk) begin
     if( rst ) ipl_asserted_ever <= 1'b0;
     else if( cpu_ipl != 3'b111 ) ipl_asserted_ever <= 1'b1;
 end
+
+// ---------------------------------------------------------------------------
+// Diagnostic-only synthetic level-7 (non-maskable) interrupt pulse.
+// Fires exactly once, ~1s after reset (48,000,000 clk cycles @ 48 MHz),
+// completely independent of vint_latch/blit_irq/scan_irq. Level 7 requests
+// cannot be masked out by the CPU's SR interrupt mask (68000/68020 spec),
+// so if the CPU is truly alive and cpu_ipl/autovector wiring works, this
+// MUST be taken regardless of whatever the real ROM's boot code has done
+// to its interrupt mask. Held for the same 100-clkena window as vint_latch
+// to guarantee TG68K.C reaches an instruction boundary while it's asserted.
+// This logic is diagnostic-only and should be removed once the real bug is
+// found -- it does not reflect any real itech32 hardware behaviour.
+// ---------------------------------------------------------------------------
+reg [27:0] ipl7_dbg_cnt;
+reg        ipl7_dbg_fired;
+reg        ipl7_pulse;
+reg [ 6:0] ipl7_timer;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        ipl7_dbg_cnt   <= 28'd0;
+        ipl7_dbg_fired <= 1'b0;
+        ipl7_pulse     <= 1'b0;
+        ipl7_timer     <= 7'd0;
+        ipl7_pulse_ever<= 1'b0;
+    end else begin
+        if( !ipl7_dbg_fired ) begin
+            ipl7_dbg_cnt <= ipl7_dbg_cnt + 28'd1;
+            if( ipl7_dbg_cnt == IPL7_DBG_DELAY ) begin
+                ipl7_dbg_fired <= 1'b1;
+                ipl7_pulse     <= 1'b1;
+                ipl7_timer     <= 7'd100;
+                ipl7_pulse_ever<= 1'b1;
+            end
+        end else if( ipl7_pulse ) begin
+            if( clkena && ipl7_timer != 7'd0 ) ipl7_timer <= ipl7_timer - 7'd1;
+            if( ipl7_timer == 7'd1 && clkena ) ipl7_pulse <= 1'b0;
+        end
+    end
+end
+
+// isr_ipl7_fetch_ever: latches the first time the CPU reads the level-7
+// autovector (autovector 31, byte $7C-$7F, word addresses 0x3E/0x3F).
+wire ipl7_vec_read = cen & bus_rd & (cpu_addr==23'h3E || cpu_addr==23'h3F);
+always @(posedge clk) begin
+    if( rst ) isr_ipl7_fetch_ever <= 1'b0;
+    else if( ipl7_vec_read ) isr_ipl7_fetch_ever <= 1'b1;
+end
+
 // G diagnostic = "rom_ok_ever": latches the first time rom_ok fires while
 // boot_done=1 and rom_cs=1.  This requires the SDRAM cache to actually respond
 // to a CPU instruction fetch (not just the CPU presenting the address).
@@ -647,6 +718,7 @@ always @(posedge clk) begin
         if( vint_latch ) cpu_ipl <= 3'b110; // IPL1: vblank  → autovector 25 → 0x00800918
         if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter → autovector 26 → 0x00801380
         if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline→ autovector 27 → 0x008012E0
+        if( ipl7_pulse ) cpu_ipl <= 3'b000; // IPL7: diagnostic-only, non-maskable test pulse
     end
 end
 
