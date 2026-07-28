@@ -909,10 +909,22 @@ always @(posedge clk) begin
     if( w_rst ) cpu_ipl <= 3'b111;          // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
-        if( vint_latch ) cpu_ipl <= 3'b000; // DIAG (this build): vblank forced to IPL7 (was 3'b110/IPL1) to test SR-mask theory
         if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter → autovector 26 → 0x00801380
         if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline→ autovector 27 → 0x008012E0
         // if( ipl7_pulse ) cpu_ipl <= 3'b000; // DIAG (this build): disabled so isr_ipl7_fetch_ever is unambiguous -- can now only be set by the real vblank request above
+        // DIAG (this build): vint_latch (forced level 7) checked LAST so it
+        // always wins regardless of blit_irq/scan_irq -- fixes a priority-
+        // inversion bug found by inspection+sim (/tmp/check_priority.v) after
+        // the first N=3 hardware result: with this check listed FIRST (as it
+        // was in the previous build), any blit_irq/scan_irq coinciding in the
+        // same cycle would incorrectly overwrite the level-7 encoding down to
+        // level 2/3, since this block resolves ties by "last statement wins",
+        // not by numeric priority. That ordering was harmless in the original
+        // (non-diagnostic) code, where vint_latch legitimately drove the
+        // LOWEST-priority level (IPL1) and being checked first was correct.
+        // Moving it last restores correct highest-priority-wins behaviour for
+        // this diagnostic build specifically.
+        if( vint_latch ) cpu_ipl <= 3'b000; // DIAG (this build): vblank forced to IPL7 (was 3'b110/IPL1) to test SR-mask theory
     end
 end
 
