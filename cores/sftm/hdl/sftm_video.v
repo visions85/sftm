@@ -672,11 +672,51 @@ wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 //          that never reaches the watchdog-kick or protection-read
 //          addresses specifically. Points at a loop/branch elsewhere in
 //          the boot code, not a CPU fault.
+//
+// HARDWARE RESULT (this build, 2026-07-27): N=4, i.e. post_wr_fetch_count
+// saturated at 3 ("3 or more") -- the CPU keeps fetching instructions well
+// past the protection write. It is NOT a raw crash/halt; it is alive and
+// executing, just never reaching the watchdog-kick or protection-read
+// addresses specifically.
+// REPURPOSED AGAIN to pursue a more fundamental, unrelated question raised
+// by the much-earlier IPL7 (non-maskable) diagnostic build, whose hardware
+// result ("magenta", i.e. NOT show_blue) was ambiguous: show_blue requires
+// BOTH ipl7_pulse_ever==1 AND isr_ipl7_fetch_ever==0, so seeing magenta
+// instead of blue only proves NOT(pulse fired AND never taken) -- it does
+// not distinguish "pulse fired and the CPU DID take it" from "pulse never
+// got a chance to fire". Both signals already exist and are already wired
+// into this module (ipl7_pulse_ever, isr_ipl7_fetch_ever) -- no new RTL
+// signals needed, this is a pure formula change. Bit order re-verified via
+// /tmp/check_concat3.v before writing this table:
+//   N = 1 + {ipl7_pulse_ever, isr_ipl7_fetch_ever}   (1..4 flashes)
+//     N=1: pulse=0, taken=0 -- the guaranteed one-shot IPL7 test pulse
+//          (fires once, ~1s after hard power-on, held 100 clkena cycles)
+//          has not fired yet. Should not occur after more than a couple
+//          seconds of runtime; would indicate a measurement problem if seen.
+//     N=2: pulse=0, taken=1 -- CPU took a vector fetch that, per the logic,
+//          could not have happened without the pulse having fired first.
+//          Should be impossible; flags a logic bug in this diagnostic if
+//          ever observed.
+//     N=3: pulse=1, taken=0 -- DEFINITIVE: the pulse fired and was held for
+//          its full window, but the CPU NEVER performed the level-7
+//          autovector read. Since level 7 cannot be masked out by the SR
+//          on a real 68000/68020, this would point at a fundamental
+//          CPU-core/autovector wiring problem affecting ALL interrupt
+//          levels uniformly -- independent of the game's own interrupt
+//          masking or vector-table contents, and independent of the
+//          protection sequence entirely.
+//     N=4: pulse=1, taken=1 -- the CPU DOES take a forced, guaranteed
+//          unmaskable interrupt when one is correctly asserted -- proving
+//          the core's basic autovector/vector-fetch mechanism works. Any
+//          earlier failure to take IPL1/2/3 must then be down to
+//          game-specific factors (SR interrupt mask, assertion timing/
+//          duration, or vector-table contents) rather than a fundamental
+//          CPU-interrupt-interface bug.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + {1'b0, post_wr_fetch_count};
+wire [2:0] flash_count = 3'd1 + {ipl7_pulse_ever, isr_ipl7_fetch_ever};
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment
