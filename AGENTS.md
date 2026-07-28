@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`) produced false positives caused by the game's own power-on RAM self-test sweeping every RAM address including the vector table; both are **retracted**, see the "ROM CROSS-CHECK" / "ROM fetch path cleared" sections below. **Only trustworthy diagnostic now in place**: `exc_code_ram`, a live mirror of `RAM[0x0FBE]`, where this ROM's own exception handlers record their own exception code before parking — displayed as on-screen bit-display row 5, `BUILD_ID=0x7`. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read row 5 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`/`exc_fetch_addr`) produced false positives, both **retracted** — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` (RAM[0x0FBE], row 5) read `0x2700` on hardware (build 0x7, confirmed via matching photo-decode + user visual read) — not one of the four real exception codes, ruling out the "stuck in a dead-end handler" theory. **Leading hypothesis now**: the CPU may simply still be looping inside the power-on RAM self-test (`0x80158A`), consistent with every fact observed so far; simulation runs it healthily but real hardware has a recorded timing violation (`slack −1.053ns`) sim can't model. **Current diagnostic**: `pc_snapshot_addr`/`pc_snapshot_word`, a one-shot ~5s-post-reset snapshot of the CPU's live instruction-fetch address/word (time-triggered, not address-triggered, so it can't repeat the address-sweep trap) — on-screen bit-display rows 2-4, `BUILD_ID=0x8`. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read rows 1-5 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -509,6 +509,73 @@ regressions.
     the branch-to-self signature (fetches forever, zero data reads, SR
     interrupt-masked) established earlier in the ROM CROSS-CHECK section.
     Not yet investigated further this session.
+
+### `pc_snapshot_addr`/`pc_snapshot_word` implemented -- live PC, sampled once (this session, build 0x8)
+
+`exc_code_ram=0x2700` reopened the question of where the CPU actually is,
+without falling back into the address-match trap that sank `exc_vec`/
+`exc_fetch_addr` twice already. Re-examined the established facts against a
+hypothesis that was never actually ruled out: **the CPU may simply still be
+inside the power-on RAM self-test loop** (`0x80158A`-`0x8015A6` per the ROM
+CROSS-CHECK disassembly above). Every finding is consistent with it: fetches
+forever (loops fetch their own few instructions repeatedly); `poll_region==0`
+(the RAM test only reads *main RAM*, which `poll_region` deliberately
+excludes -- this was never evidence against the theory); interrupts masked
+throughout (`ORI #$2700,SR` runs once, before the test, which never touches
+SR); `tb_romfetch` simulation shows the RAM test running healthily for
+thousands of fetches with a perfect RAM model, while real hardware has a
+recorded timing violation (`slack −1.053ns`, "Quartus synthesis fits" section
+above) that iverilog cannot model -- a marginal timing fault on the exact
+write-then-read-back pair the test relies on would be silent in sim and
+deterministic on real silicon; and `exc_code_ram=0x2700` is fully explained
+as an ordinary RAM-test pattern-table byte (the test's `MOVE.L` writes sweep
+every address in RAM including `0x0FBE`) rather than requiring the earlier
+"stale SR value" coincidence theory.
+
+Added `pc_snapshot_addr`/`pc_snapshot_word` in `sftm_main.v`: a **one-shot**
+snapshot of the already-existing, always-live `last_fetch_addr`/
+`last_fetch_data` registers (these update on every single instruction fetch
+regardless of exception state -- `exc_fetch_addr`/`exc_fetch_word` already
+latched FROM them, just gated on the retracted trigger). The snapshot fires
+once, on the 0->1 transition of `poll_armed` (`sftm_main.v`'s existing ~5s
+post-reset settle timer, reused directly -- no new timer). This is
+deliberately **time-triggered, not address-triggered**: immune to the
+address-sweep trap by construction, since it doesn't condition on which
+address is touched at all -- it just grabs whatever the PC is doing at a
+fixed point in time, which should land inside whatever loop the CPU is
+steady-state parked in.
+
+**Why not just display `last_fetch_addr` live, continuously?** It updates on
+every CPU fetch (every few cycles, far faster than the ~60Hz video scan-out),
+so a non-snapshotted display would tear/flicker within a single on-screen row
+as the value changed mid-scanline. Freezing once gives a stable, readable
+value -- same reasoning as the sample-and-hold in the retracted `exc_vec`,
+but without that mechanism's fatal flaw: freezing on a fixed TIME can't be
+fooled by an incidental first-touch, whereas freezing on the first ADDRESS
+match can (and did, twice).
+
+`sftm_video.v`'s bit display: rows 2-4 (previously `exc_fetch_addr[23:12]`/
+`exc_fetch_addr[11:0]`/`exc_fetch_word`, both retracted) now show
+`pc_snapshot_addr[23:12]`/`pc_snapshot_addr[11:0]`/`pc_snapshot_word`
+instead -- same row positions and widths, so the already-validated grid
+alignment from `BUILD_ID`/row 5 carries over directly. Row 1 (`BUILD_ID`/
+`exc_vec_num`/`exc_last_ff`/`exc_detail`) and row 5 (`exc_code_ram`) are
+unchanged. `BUILD_ID` bumped to `0x8`.
+
+New testbench `/tmp/tb_pcsnapshot.v` (drives `uut.last_fetch_addr`/
+`last_fetch_data`/`poll_armed` directly via `force`/`release`, since the
+real ~5s delay is impractical to simulate and the stub CPU can't produce
+realistic fetch traffic): confirms the snapshot stays 0 while `last_fetch_*`
+changes before `poll_armed` fires; captures exactly what `last_fetch_*` holds
+at the instant `poll_armed` transitions high (the critical case -- proves it
+samples "right now", not something stale); does not update again on later
+`last_fetch_*` changes while `poll_armed` stays high (one-shot); and clears
+on hard reset. **All 5 checks PASS.** Re-ran `tb_sftm_prot`, `tb_sftm_ram`,
+`tb_sftm_blitter`, `tb_sftm5506`, `tb_sftm_main`, `tb_excoderam`, and the
+committed `tb_sftm_video` -- all still PASS (or fail with the same
+pre-existing, already-documented failures) -- no new regressions. Both
+`sftm_main.v` and `sftm_video.v` elaborate cleanly standalone.
+**Awaiting hardware observation of rows 2-4.**
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)

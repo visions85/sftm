@@ -69,6 +69,8 @@ wire [23:0] exc_fetch_addr;    // diagnostic: byte address of the last instructi
 wire [15:0] exc_fetch_word;    // diagnostic: data word of that fetch, i.e. the faulting opcode (sftm_main → sftm_video)
 wire        exc_last_ff;       // diagnostic: that last fetched word was 0xFFFF (sftm_main → sftm_video)
 wire [15:0] exc_code_ram;      // diagnostic: live mirror of RAM[0x0FBE], the game's own exception-code scratch word (sftm_main → sftm_video)
+wire [23:0] pc_snapshot_addr;   // diagnostic: one-shot snapshot of the CPU's instruction-fetch address, ~5s after reset (sftm_main → sftm_video)
+wire [15:0] pc_snapshot_word;   // diagnostic: one-shot snapshot of the instruction word fetched at that address (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -157,7 +159,9 @@ sftm_main u_main(
     .exc_fetch_addr     ( exc_fetch_addr      ),
     .exc_fetch_word     ( exc_fetch_word      ),
     .exc_last_ff        ( exc_last_ff         ),
-    .exc_code_ram       ( exc_code_ram        )
+    .exc_code_ram       ( exc_code_ram        ),
+    .pc_snapshot_addr   ( pc_snapshot_addr    ),
+    .pc_snapshot_word   ( pc_snapshot_word    )
 );
 
 // ---------------------------------------------------------------------------
@@ -237,7 +241,9 @@ sftm_video u_video(
     .exc_fetch_addr     ( exc_fetch_addr      ),
     .exc_fetch_word     ( exc_fetch_word      ),
     .exc_last_ff        ( exc_last_ff         ),
-    .exc_code_ram       ( exc_code_ram        )
+    .exc_code_ram       ( exc_code_ram        ),
+    .pc_snapshot_addr   ( pc_snapshot_addr    ),
+    .pc_snapshot_word   ( pc_snapshot_word    )
 );
 
 // ---------------------------------------------------------------------------

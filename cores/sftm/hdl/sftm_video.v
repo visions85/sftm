@@ -144,6 +144,14 @@ module sftm_video(
     // trips any address-match latch on a first-hit basis), this is a live
     // value with no freeze, so it settles on the true final answer.
     input      [15:0]   exc_code_ram,
+    // pc_snapshot_addr/word: one-shot snapshot of the CPU's instruction
+    // fetch address/word ~5s after reset. See the detailed port comment in
+    // sftm_main.v. Drives rows 2-4 below, replacing the retracted
+    // exc_fetch_addr/exc_fetch_word (rows 2-4 previously showed those; see
+    // the ROM CROSS-CHECK / "ROM fetch path cleared" retractions in
+    // AGENTS.md for why that data was unreliable).
+    input      [23:0]   pc_snapshot_addr,
+    input      [15:0]   pc_snapshot_word,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -955,15 +963,24 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 //
 //   Row 1: 16 bits = { BUILD_ID[3:0], exc_vec_num[7:0], exc_last_ff,
 //                      exc_detail[2:0] }   <- build stamp is the LEFTMOST
-//                      nibble, so it can be checked at a glance
-//   Row 2: 12 bits = exc_fetch_addr[23:12]   (upper 3 hex digits)
-//   Row 3: 12 bits = exc_fetch_addr[11:0]    (lower 3 hex digits)
-//   Row 4: 16 bits = exc_fetch_word          (the faulting opcode itself)
+//                      nibble, so it can be checked at a glance. Only
+//                      BUILD_ID and exc_last_ff (bits 11 and the low 3 of
+//                      exc_detail's slot -- see caveat below) are trustworthy
+//                      here; exc_vec_num/exc_detail share exc_vec's
+//                      RETRACTED first-hit-on-address-match latch mechanism.
+//   Row 2: 12 bits = pc_snapshot_addr[23:12] (upper 3 hex digits)
+//   Row 3: 12 bits = pc_snapshot_addr[11:0]  (lower 3 hex digits)
+//   Row 4: 16 bits = pc_snapshot_word        (instruction word fetched there)
 //   Row 5: 16 bits = exc_code_ram            (RAM[0x0FBE] -- the game's OWN
-//                     recorded exception code; see sftm_main.v port comment.
-//                     Rows 1-4 are RETRACTED as unreliable -- kept on screen
-//                     only for reference/continuity -- this row is the only
-//                     trustworthy one: AGENTS.md's ROM cross-check.)
+//                     recorded exception code; see sftm_main.v port comment)
+//
+// Rows 2-4 previously showed exc_fetch_addr/exc_fetch_word, RETRACTED as
+// unreliable (AGENTS.md ROM CROSS-CHECK / "ROM fetch path cleared"): that
+// mechanism froze on the FIRST read matching an address range, which the
+// power-on RAM self-test satisfies incidentally while sweeping every RAM
+// address. pc_snapshot_addr/word instead freeze on a fixed TIME (~5s after
+// reset, sftm_main.v's poll_armed) regardless of which address is touched,
+// so they cannot be fooled the same way -- see the port comment there.
 //
 // The address is split across two 12-bit rows rather than one 24-bit row
 // purely to respect the width limit above.
@@ -971,7 +988,7 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // BUILD_ID is hardcoded and incremented whenever this display changes, so
 // every reading is self-identifying and the "is the new core actually loaded?"
 // ambiguity can never recur.
-localparam [3:0] BUILD_ID  = 4'h7;
+localparam [3:0] BUILD_ID  = 4'h8;
 localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
@@ -986,9 +1003,9 @@ wire bits_row5 = (vcnt >= 10'd200) && (vcnt < 10'd224);
 
 wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
 wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, exc_detail }
-                     : bits_row2 ? { 12'd0, exc_fetch_addr[23:12] }
-                     : bits_row3 ? { 12'd0, exc_fetch_addr[11:0]  }
-                     : bits_row4 ? { 8'd0,  exc_fetch_word }
+                     : bits_row2 ? { 12'd0, pc_snapshot_addr[23:12] }
+                     : bits_row3 ? { 12'd0, pc_snapshot_addr[11:0]  }
+                     : bits_row4 ? { 8'd0,  pc_snapshot_word }
                      :             { 8'd0,  exc_code_ram };
 
 // Two guards that are easy to get wrong and would each produce a WRONG but
