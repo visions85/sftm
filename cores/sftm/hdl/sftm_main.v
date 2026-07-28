@@ -215,6 +215,11 @@ module sftm_main #(
     //       crash.
     // Never cleared by w_rst (only by hard rst).
     output reg [1:0]    post_wr_fetch_count,
+    // poll_region: which hardware region the stuck CPU is reading in steady
+    // state (sample-and-hold ~5s after hard reset, then frozen). 0=none/still
+    // in RAM+ROM only, 1=vreg, 2=inp/sys/dip, 3=duart, 4=nvram, 5=pal/nopr,
+    // 6=prot. See the detailed block comment at the logic below.
+    output reg [2:0]    poll_region,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -542,6 +547,107 @@ wire cpu_fetch_edge = cpu_fetch_lvl & ~cpu_fetch_lvl_d;
 always @(posedge clk) begin
     if( rst )                                                              post_wr_fetch_count <= 2'd0;
     else if( prot_wr_ever && cpu_fetch_edge && post_wr_fetch_count != 2'd3 ) post_wr_fetch_count <= post_wr_fetch_count + 2'd1;
+end
+
+// ---------------------------------------------------------------------------
+// poll_region: WHICH hardware region is the stuck CPU reading?
+//
+// State of knowledge going in: the CPU writes the protection byte, keeps
+// executing instructions indefinitely (post_wr_fetch_count saturates), never
+// reaches the watchdog kick or the protection read, and runs with interrupts
+// masked the whole time (confirmed by the forced-IPL7 probe). So it is
+// sitting in a spin loop -- and because interrupts are masked, that loop
+// CANNOT be waiting on an ISR to set a flag. It must either be polling a
+// hardware register that never returns the value it wants, or spinning
+// purely in RAM/ROM (a delay loop, or a crash loop on garbage).
+//
+// This probe distinguishes those cases and, if it is polling, identifies the
+// region. Method: wait POLL_SAMPLE_DELAY (~5 s -- long after everything has
+// settled into steady state, and well past the ~20-30 s watchdog transition
+// being irrelevant here since this latches on hard rst only), then capture
+// the region of the FIRST qualifying I/O data read and FREEZE forever.
+// Sample-and-hold rather than "most recent" deliberately: a steady-state
+// loop repeats, so the first hit after the sample point is representative,
+// and freezing avoids a value that oscillates between regions and would make
+// the flash count unreadable.
+//
+// Only DATA reads qualify (busstate==2'b10), never instruction fetches
+// (2'b00) -- fetches stream through ROM constantly and would tell us nothing
+// about what the loop is inspecting. Main RAM and program ROM are
+// deliberately EXCLUDED from the region list for the same reason: stack and
+// variable traffic is constant background noise. Codes are priority-encoded,
+// though in practice at most one select is active in any single cycle.
+//   1 = none captured -- no I/O read at all in the window. CPU is spinning
+//       purely in RAM/ROM, touching no hardware register: points at a delay
+//       loop or a crash loop on garbage rather than a failed handshake.
+//   2 = vreg_cs   (0x500000-0x5000ff video/CRTC registers)  <-- prime suspect:
+//       a "wait for vblank/scanline by polling" loop, which is exactly what
+//       boot code would use while interrupts are still masked. If our video
+//       register read-back never presents the bit the code waits on, it spins
+//       forever -- and that would explain every symptom observed so far.
+//   3 = inp_cs / sys_cs / dip_cs (inputs, system, DIP switches)
+//   4 = duart_cs  (0x680800-0x68083f sound-CPU comms) -- a sound handshake
+//       that never completes.
+//   5 = nvram_cs  (0x600000-0x61ffff)
+//   6 = pal_cs / nopr_cs (palette, read-as-zero region)
+//   7 = prot_cs   (0x680002) -- sanity check only; prot_rd_ever is already
+//       hardware-confirmed 0, so this should never appear.
+localparam [27:0] POLL_SAMPLE_DELAY = 28'd240_000_000; // ~5 s at 48 MHz
+reg [27:0] poll_dly_cnt;
+wire       poll_armed = poll_dly_cnt == POLL_SAMPLE_DELAY;
+always @(posedge clk) begin
+    if( rst )              poll_dly_cnt <= 28'd0;
+    else if( !poll_armed ) poll_dly_cnt <= poll_dly_cnt + 28'd1;
+end
+
+// Data read only (busstate 2'b10), never an instruction fetch (2'b00).
+// Edge-detected on the RAW bus state, deliberately NOT gated on cen: the read
+// bus state holds for multiple cycles per access, so a cen-gated level would
+// produce several pulses for a SINGLE access -- which would let one access
+// falsely satisfy the "two consecutive reads" confirmation filter below and
+// defeat its entire purpose. Detecting the transition INTO the read state
+// yields exactly one pulse per actual read access.
+wire poll_rd_lvl = (busstate == 2'b10);
+reg  poll_rd_lvl_d;
+always @(posedge clk) begin
+    if( rst ) poll_rd_lvl_d <= 1'b0;
+    else      poll_rd_lvl_d <= poll_rd_lvl;
+end
+wire poll_rd = poll_rd_lvl & ~poll_rd_lvl_d;
+
+// Combinational region decode of the address currently being read. 0 means
+// "not one of the watched I/O regions" (i.e. main RAM or program ROM), which
+// is ignored entirely rather than latched.
+reg [2:0] rd_code;
+always @(*) begin
+    if     ( vreg_cs                  ) rd_code = 3'd1;
+    else if( inp_cs | sys_cs | dip_cs ) rd_code = 3'd2;
+    else if( duart_cs                 ) rd_code = 3'd3;
+    else if( nvram_cs                 ) rd_code = 3'd4;
+    else if( pal_cs | nopr_cs         ) rd_code = 3'd5;
+    else if( prot_cs                  ) rd_code = 3'd6;
+    else                                rd_code = 3'd0;
+end
+
+// Confirmation filter: require TWO CONSECUTIVE qualifying I/O reads hitting
+// the SAME region before latching, rather than trusting a single hit. This
+// matters because the watchdog appears to reboot the system repeatedly (that
+// is why the ORANGE state persists), so boot code re-runs periodically and a
+// single-instant sample could land on incidental start-up traffic instead of
+// the spin loop. A genuine polling loop reads its one register over and over,
+// so it satisfies this trivially; a boot sequence stepping through different
+// regions does not. Intervening RAM/ROM accesses (rd_code==0) are skipped
+// rather than breaking the run, since a realistic poll loop interleaves
+// register reads with stack/variable traffic.
+reg [2:0] poll_cand;
+always @(posedge clk) begin
+    if( rst ) begin
+        poll_region <= 3'd0;
+        poll_cand   <= 3'd0;
+    end else if( poll_armed && poll_region == 3'd0 && poll_rd && rd_code != 3'd0 ) begin
+        if( rd_code == poll_cand ) poll_region <= rd_code; // confirmed, freeze
+        else                       poll_cand   <= rd_code; // first sighting
+    end
 end
 
 // ---------------------------------------------------------------------------
@@ -888,43 +994,32 @@ always @(posedge clk) begin
     end
 end
 // ---------------------------------------------------------------------------
-// DIAGNOSTIC-ONLY (this build): the previous IPL7 test proved the CPU DOES
-// correctly take a forced, guaranteed-unmaskable interrupt (isr_ipl7_fetch_ever
-// latched, hardware-confirmed). That only proves the wiring/autovector
-// mechanism works in general -- it says nothing about whether the SR
-// interrupt mask happens to be open (<=0) whenever the REAL vint_latch/
-// vblank request asserts as IPL1. To test that directly, temporarily
-// present the REAL vint_latch request at level 7 (non-maskable) instead of
-// level 1 for this build only, and stop the old synthetic one-shot
-// ipl7_pulse from also driving level 7 (commented out below) so
-// isr_ipl7_fetch_ever is unambiguous this round -- it can now ONLY be set
-// by the real, periodically-recurring (~60 Hz) vblank request. If
-// isr_ipl7_fetch_ever now latches, SR masking (game code has interrupts
-// disabled and never re-enables them) is confirmed as the exact reason the
-// real IPL1 request is never taken -- not any deeper wiring or
-// signal-path-specific issue. Revert this swap once that's confirmed; it
-// does not reflect real itech32 hardware behaviour.
+// The forced-IPL7 diagnostic (commits 81cdd14 / e98093a) has now returned its
+// answer on hardware: with the priority-inversion bug fixed, the CPU DOES
+// take the real vblank request when it is presented as non-maskable. SR
+// interrupt masking is therefore CONFIRMED as the reason the real (maskable)
+// IPL1 request is never serviced -- the boot code runs with interrupts
+// disabled and never reaches the point where it lowers the mask. That probe
+// has served its purpose and is REVERTED here back to normal itech32
+// behaviour (vint_latch -> IPL1, synthetic ipl7_pulse restored).
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     if( w_rst ) cpu_ipl <= 3'b111;          // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
+        // NOTE ON ORDERING: this block resolves ties by "last statement wins"
+        // (sequential non-blocking assignment), NOT by numeric priority. The
+        // order below is correct because vint_latch drives the LOWEST-priority
+        // level (IPL1), so it must be checked FIRST in order to lose to
+        // blit_irq/scan_irq when they coincide. Any future change that
+        // repoints vint_latch to a HIGHER priority level must also move its
+        // check LATER in this chain -- exactly the priority-inversion bug hit
+        // by the forced-IPL7 diagnostic in commit 81cdd14 and fixed in
+        // e98093a (see /tmp/check_priority.v, /tmp/check_priority2.v).
+        if( vint_latch ) cpu_ipl <= 3'b110; // IPL1: vblank  → autovector 25 → 0x00800918
         if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter → autovector 26 → 0x00801380
         if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline→ autovector 27 → 0x008012E0
-        // if( ipl7_pulse ) cpu_ipl <= 3'b000; // DIAG (this build): disabled so isr_ipl7_fetch_ever is unambiguous -- can now only be set by the real vblank request above
-        // DIAG (this build): vint_latch (forced level 7) checked LAST so it
-        // always wins regardless of blit_irq/scan_irq -- fixes a priority-
-        // inversion bug found by inspection+sim (/tmp/check_priority.v) after
-        // the first N=3 hardware result: with this check listed FIRST (as it
-        // was in the previous build), any blit_irq/scan_irq coinciding in the
-        // same cycle would incorrectly overwrite the level-7 encoding down to
-        // level 2/3, since this block resolves ties by "last statement wins",
-        // not by numeric priority. That ordering was harmless in the original
-        // (non-diagnostic) code, where vint_latch legitimately drove the
-        // LOWEST-priority level (IPL1) and being checked first was correct.
-        // Moving it last restores correct highest-priority-wins behaviour for
-        // this diagnostic build specifically.
-        if( vint_latch ) cpu_ipl <= 3'b000; // DIAG (this build): vblank forced to IPL7 (was 3'b110/IPL1) to test SR-mask theory
+        if( ipl7_pulse ) cpu_ipl <= 3'b000; // IPL7: diagnostic-only, non-maskable test pulse
     end
 end
 

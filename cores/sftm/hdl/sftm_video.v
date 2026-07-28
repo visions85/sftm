@@ -129,6 +129,7 @@ module sftm_video(
     // answering whether the CPU is still alive/executing at all after the
     // protection write (as opposed to a hard crash/halt right there).
     input      [ 1:0]   post_wr_fetch_count,
+    input      [ 2:0]   poll_region,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -566,18 +567,15 @@ wire       show_raster = startup_phase | ~gfx_en[3];
 //             priority over BLUE/ORANGE/MAGENTA)
 wire white_now     = !wdog_kick_ever & boot_done_ever & nvram_wr_ever;
 wire show_green    = white_now & isr_vec_fetch_ever;
-// show_blue DISABLED this build: isr_ipl7_fetch_ever's meaning has been
-// repurposed (see flash_count comment below) to mean "the real vblank
-// request, forced to level 7, was taken" rather than "the old synthetic
-// one-shot ipl7_pulse test was taken". ipl7_pulse_ever will still latch on
-// its own independent ~1s timer regardless of this round's outcome (that
-// countdown logic in sftm_main.v was left untouched), so leaving the old
-// show_blue formula active would let it override show_stuck (and disable
-// the flash overlay, since flash_white is gated on show_stuck) based on
-// stale logic unrelated to this round's actual question. Hardwired to 0 so
-// the base colour and flash overlay stay driven purely by show_stuck as
-// before, and the new question is carried entirely by flash_count.
-wire show_blue      = 1'b0;
+// show_blue RESTORED to its original formula: the forced-IPL7 diagnostic
+// (which had temporarily repurposed the meaning of these two signals, and so
+// required hardwiring this to 0) has returned its answer and been reverted in
+// sftm_main.v, so ipl7_pulse_ever / isr_ipl7_fetch_ever once again mean what
+// they originally did -- the synthetic one-shot level-7 test pulse.
+// For the record, that test's confirmed hardware answer was
+// isr_ipl7_fetch_ever=1 (the CPU DOES take a forced unmaskable interrupt), so
+// this term is expected to stay 0 in practice and not mask show_stuck.
+wire show_blue      = white_now & ~show_green & ipl7_pulse_ever & ~isr_ipl7_fetch_ever;
 wire show_stuck     = white_now & ~show_green & ~show_blue & ipl_asserted_ever & ~isr_vec_fetch_ever;
 // show_stuck splits into 4 combinations of (wdog_fired_ever, nvram_region_wr_ever).
 // Each new colour is built by swapping ORANGE/MAGENTA's existing "partial"
@@ -762,11 +760,46 @@ wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 //          boot code runs with interrupts disabled and never reaches the
 //          point where it re-enables them, matching the "CPU alive but
 //          looping" post_wr_fetch_count finding perfectly.
+//
+// HARDWARE RESULT (2026-07-28, commit e98093a, i.e. with the priority-
+// inversion bug fixed): N=4 -- assert=1, taken=1. CONFIRMED: SR interrupt
+// masking is why the real IPL1 vblank request is never serviced. The earlier
+// N=3 reading against commit 81cdd14 was indeed an artifact of that bug. The
+// forced-IPL7 probe has served its purpose and the interrupt rerouting has
+// been REVERTED to normal IPL1 behaviour in sftm_main.v; show_blue is
+// restored to its original formula above.
+//
+// REPURPOSED AGAIN, to the question this all now points at: the CPU is in a
+// spin loop with interrupts masked, so it CANNOT be waiting on an ISR flag.
+// It must be polling a hardware register that never returns what it wants,
+// or spinning purely in RAM/ROM. `poll_region` (new signal in sftm_main.v,
+// sample-and-hold ~5 s after hard reset then frozen) identifies which.
+// Full rationale and region map are documented at the poll_region logic in
+// sftm_main.v. Bit order is a plain 3-bit value here, not a concatenation,
+// so no {} ordering hazard applies -- but the +1 offset still does, hence:
+//   N = 1 + poll_region   (1..7 flashes)
+//     N=1: no I/O read at all in the window -- CPU spinning purely in
+//          RAM/ROM, touching no hardware register. Points at a delay loop or
+//          a crash loop on garbage rather than a failed hardware handshake.
+//     N=2: video/CRTC registers (0x500000-0x5000ff) -- PRIME SUSPECT: a
+//          "wait for vblank/scanline by polling" loop, exactly what boot code
+//          would use while interrupts are still masked. If our video register
+//          read-back never presents the bit the code waits on, it spins
+//          forever -- consistent with every symptom observed so far.
+//     N=3: inputs / system / DIP switches.
+//     N=4: DUART (0x680800-0x68083f) -- a sound-CPU handshake that never
+//          completes.
+//     N=5: NVRAM (0x600000-0x61ffff).
+//     N=6: palette / read-as-zero region.
+//     N=7: protection port (0x680002) -- sanity check only; prot_rd_ever is
+//          already hardware-confirmed 0, so this should never appear. Would
+//          contradict an established finding and mean something is wrong with
+//          either this probe or that earlier one.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + {ipl_asserted_ever, isr_ipl7_fetch_ever};
+wire [2:0] flash_count = 3'd1 + poll_region;
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment

@@ -61,6 +61,7 @@ wire        prot_wr_ever;       // diagnostic: CPU wrote the protection RAM byte
 wire        prot_rd_ever;       // diagnostic: CPU read the protection port (0x680002) at least once (sftm_main → sftm_video)
 wire [ 1:0] prot_rd_count;      // diagnostic: saturating count (0..3) of DISTINCT protection-port read accesses (sftm_main → sftm_video)
 wire [ 1:0] post_wr_fetch_count;// diagnostic: saturating count (0..3) of DISTINCT instruction fetches AFTER the protection write (sftm_main → sftm_video)
+wire [ 2:0] poll_region;       // diagnostic: which hardware region the stuck CPU reads in steady state, 0=none/RAM+ROM only (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -141,7 +142,8 @@ sftm_main u_main(
     .prot_wr_ever( prot_wr_ever ),
     .prot_rd_ever( prot_rd_ever ),
     .prot_rd_count( prot_rd_count ),
-    .post_wr_fetch_count( post_wr_fetch_count )
+    .post_wr_fetch_count( post_wr_fetch_count ),
+    .poll_region        ( poll_region         )
 );
 
 // ---------------------------------------------------------------------------
@@ -213,7 +215,8 @@ sftm_video u_video(
     .prot_wr_ever( prot_wr_ever ),
     .prot_rd_ever( prot_rd_ever ),
     .prot_rd_count( prot_rd_count ),
-    .post_wr_fetch_count( post_wr_fetch_count )
+    .post_wr_fetch_count( post_wr_fetch_count ),
+    .poll_region        ( poll_region         )
 );
 
 // ---------------------------------------------------------------------------
