@@ -130,6 +130,7 @@ module sftm_video(
     // protection write (as opposed to a hard crash/halt right there).
     input      [ 1:0]   post_wr_fetch_count,
     input      [ 2:0]   poll_region,
+    input      [ 2:0]   exc_vec,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -778,28 +779,50 @@ wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 // sftm_main.v. Bit order is a plain 3-bit value here, not a concatenation,
 // so no {} ordering hazard applies -- but the +1 offset still does, hence:
 //   N = 1 + poll_region   (1..7 flashes)
-//     N=1: no I/O read at all in the window -- CPU spinning purely in
-//          RAM/ROM, touching no hardware register. Points at a delay loop or
-//          a crash loop on garbage rather than a failed hardware handshake.
-//     N=2: video/CRTC registers (0x500000-0x5000ff) -- PRIME SUSPECT: a
-//          "wait for vblank/scanline by polling" loop, exactly what boot code
-//          would use while interrupts are still masked. If our video register
-//          read-back never presents the bit the code waits on, it spins
-//          forever -- consistent with every symptom observed so far.
-//     N=3: inputs / system / DIP switches.
-//     N=4: DUART (0x680800-0x68083f) -- a sound-CPU handshake that never
-//          completes.
-//     N=5: NVRAM (0x600000-0x61ffff).
-//     N=6: palette / read-as-zero region.
-//     N=7: protection port (0x680002) -- sanity check only; prot_rd_ever is
-//          already hardware-confirmed 0, so this should never appear. Would
-//          contradict an established finding and mean something is wrong with
-//          either this probe or that earlier one.
+//     N=1: no I/O read at all -- spinning purely in RAM/ROM.
+//     N=2: video/CRTC. N=3: inp/sys/dip. N=4: DUART. N=5: NVRAM.
+//     N=6: palette/read-as-zero. N=7: protection port.
+//
+// HARDWARE RESULT (commit 6748cc9, 2026-07-28): **N=1**. The CPU performs NO
+// I/O data read of any kind in steady state -- it is not polling any hardware
+// register at all, so this is NOT a failed hardware handshake. It rules out
+// the video/CRTC prime suspect and every other region at once. Combined with
+// "still fetching instructions indefinitely" and "interrupts masked", this is
+// highly characteristic of a catch-all exception handler (classically a
+// branch-to-self, which fetches forever but reads no data), or of executing
+// garbage.
+//
+// REPURPOSED AGAIN, to that question: did the CPU take an EXCEPTION, and
+// which one? `exc_vec` (new signal in sftm_main.v) watches for READS of the
+// 68k vector table at byte 0x000-0x3FF, which are ROM-content-independent
+// proof that exception processing began for a specific vector. Full rationale
+// and category map are documented at the exc_vec logic in sftm_main.v.
+//   N = 1 + exc_vec   (1..7 flashes)
+//     N=1: NO exception vector ever fetched -- the CPU never faulted, so it
+//          reached this loop by normal program flow. That makes it a
+//          deliberate wait/delay loop, and since it reads no hardware and no
+//          interrupt can fire, it would be waiting on something that can
+//          never change -- suggesting the code took a wrong branch earlier.
+//     N=2: BUS ERROR (vector 2) -- an access to an address that did not
+//          respond. Would point directly at our own address decoding or
+//          SDRAM/bus handling, i.e. a core bug rather than a game behaviour.
+//     N=3: ADDRESS ERROR (vector 3) -- misaligned word/long access; usually a
+//          corrupted pointer or stack, or executing garbage.
+//     N=4: ILLEGAL INSTRUCTION (vector 4) -- executing data as code, i.e. a
+//          wild jump through a bad pointer or an uninitialised vector.
+//     N=5: PRIVILEGE VIOLATION / LINE-A / LINE-F (vectors 8, 10, 11) -- also
+//          typical of executing garbage, OR a 68020-specific opcode that our
+//          TG68K core does not implement (this is a 68020 game on a core
+//          that is not a full 68020, so this outcome is quite plausible and
+//          would be very actionable).
+//     N=6: OTHER exception (zero divide, CHK, TRAPV, trace, TRAP #n, ...).
+//     N=7: INTERRUPT AUTOVECTOR (vectors 24-31) -- an interrupt actually
+//          serviced. Expected never to appear given interrupts are masked.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + poll_region;
+wire [2:0] flash_count = 3'd1 + exc_vec;
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment
