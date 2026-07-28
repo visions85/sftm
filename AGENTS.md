@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`/`exc_fetch_addr`) produced false positives, both **retracted** — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` (RAM[0x0FBE], row 5) read `0x2700` on hardware (build 0x7) — not one of the four real exception codes, ruling out the "stuck in a dead-end handler" theory. Follow-up `pc_snapshot_addr`/`pc_snapshot_word` (build 0x8, a one-shot ~5s-post-reset, time-triggered snapshot of the CPU's live instruction-fetch address/word — immune to the address-sweep trap that sank two earlier diagnostics) read **`0x336BAC` / `0xFFFF`** on hardware, confirmed via photo-decode (26px-wide stable plateau) plus direct user observation of row 4 (all-white = `0xFFFF`). `0xFFFF` is the bus's unmapped-read default and `0x336BAC` is outside both main RAM and program ROM — **direct evidence the CPU's PC is executing from unmapped address space**, reopening the original "CPU ran off into nothing" theory. Not yet resolved: single wild jump vs. a repeating unmapped-space/line-F-exception cycle. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: determine whether the PC is fixed (a loop) or drifting (roaming garbage) in unmapped space. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`/`exc_fetch_addr`) produced false positives, both **retracted** — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` (RAM[0x0FBE], row 5) read `0x2700` on hardware (build 0x7) — not one of the four real exception codes, ruling out the "stuck in a dead-end handler" theory. Follow-up `pc_snapshot_addr`/`pc_snapshot_word` (build 0x8, a one-shot ~5s-post-reset, time-triggered snapshot of the CPU's live instruction-fetch address/word — immune to the address-sweep trap that sank two earlier diagnostics) read **`0x336BAC` / `0xFFFF`** on hardware, confirmed via photo-decode (26px-wide stable plateau) plus direct user observation of row 4 (all-white = `0xFFFF`). `0xFFFF` is the bus's unmapped-read default and `0x336BAC` is outside both main RAM and program ROM — **direct evidence the CPU's PC is executing from unmapped address space**, reopening the original "CPU ran off into nothing" theory. Not yet resolved: single wild jump vs. a repeating unmapped-space/line-F-exception cycle. **Current diagnostic**: `pc_stable` (build 0x9, row 1's last bit) — a second PC snapshot ~5s after the first; equal means a fixed loop, different means the PC is roaming. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read row 1's last bit off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -611,6 +611,40 @@ pre-existing, already-documented failures) -- no new regressions. Both
     observation). `0x336BAC` is a single one-shot sample; it does not by
     itself distinguish a fixed loop from a single resting point reached once
     and never left. Next diagnostic should determine which.
+
+### `pc_stable` implemented -- second PC snapshot, ~5s after the first (this session, build 0x9)
+
+Directly answers the question the previous entry left open: is
+`0x336BAC`/`0xFFFF` a fixed loop or a single resting point? Added a second
+one-shot snapshot in `sftm_main.v`, `pc_snapshot2_addr`/`pc_snapshot2_word`
+(own 30-bit delay counter, `PC_SNAPSHOT2_DELAY = 480_000_000` cycles, ~10s at
+48MHz -- a new counter rather than reusing `poll_dly_cnt`, since
+`POLL_SAMPLE_DELAY` at 28 bits already sits close to that width's ~5.6s
+ceiling). These two registers are internal only (not ports) -- to keep this
+round's on-screen display within the existing 5 rows, only a single derived
+comparison bit is exposed: `pc_stable = pc_snap_done && pc_snap2_done &&
+(pc_snapshot_addr==pc_snapshot2_addr) && (pc_snapshot_word==pc_snapshot2_word)`.
+If hardware reads "different" (`pc_stable=0`), the full second snapshot
+already exists in the RTL and a follow-up build can expose it the same way
+`pc_snapshot_addr`/`word` do now.
+
+`sftm_video.v` row 1 repurposed: the low 3 bits (previously `exc_detail`,
+retracted along with the rest of `exc_vec`) are now `{2'b00, pc_stable}` --
+only the last bit carries a signal, the other two are spare/zero. Rows 2-5
+unchanged. `BUILD_ID` bumped to `0x9`.
+
+New testbench `/tmp/tb_pcstable.v` (same `force`/`release` technique as
+`tb_pcsnapshot.v`): confirms `pc_stable` stays 0 until both snapshots have
+fired; **scenario A** (PC hasn't moved -- both snapshots see the same
+`last_fetch_addr`/`data`) reads `pc_stable=1`; **scenario B** (PC has moved
+between the two sample points) reads `pc_stable=0`. **All 6 checks PASS.**
+Re-ran `tb_sftm_main`, `tb_excoderam`, `tb_pcsnapshot`, `tb_sftm_prot`,
+`tb_sftm_ram`, `tb_sftm_blitter`, `tb_sftm5506`, and the committed
+`tb_sftm_video` -- all still PASS (or fail with the same pre-existing,
+already-documented failures) -- no new regressions. Both `sftm_main.v` and
+`sftm_video.v` elaborate cleanly standalone. **Awaiting hardware observation
+of row 1's last bit** (should render as one extra light/dark block at the
+end of row 1, block 15).
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
