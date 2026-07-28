@@ -134,6 +134,7 @@ module sftm_video(
     input      [ 2:0]   exc_detail,
     input      [ 7:0]   exc_vec_num,
     input      [23:0]   exc_fetch_addr,
+    input      [15:0]   exc_fetch_word,
     input               exc_last_ff,
 
     // Diagnostic: boot copy completed at least once.
@@ -920,35 +921,51 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // number AND the faulting address AND a build ID, with no counting and no
 // ambiguity about which build is loaded.
 //
-// Layout: three rows of 8px-wide blocks (6px lit, 2px gutter), MSB at the
-// LEFT. A one-bit reads WHITE. A zero-bit reads dark, and the dark shade
-// ALTERNATES every 4 bits (navy / maroon) so nibble groups are visually
-// obvious and can be read straight off as hex digits.
+// Layout: rows of 8px-wide blocks (6px lit, 2px gutter), MSB at the LEFT. A
+// one-bit reads WHITE. A zero-bit reads dark, and the dark shade ALTERNATES
+// every 4 bits (navy / maroon) so nibble groups are visually obvious and can
+// be read straight off as hex digits.
 //
-//   Row 1 (upper):  8 bits  = exact 68k vector number
-//   Row 2 (middle): 24 bits = byte address of the last instruction fetch
-//                             before the fault (where the CPU was executing)
-//   Row 3 (lower):  8 bits  = { exc_last_ff, exc_detail[2:0], BUILD_ID[3:0] }
+// WIDTH CONSTRAINT LEARNED FROM HARDWARE (2026-07-28): although the active
+// area is 384 px wide (VR_HBSTART=384), a photo of the real monitor showed
+// only roughly the LEFT HALF (~192 px) actually reaching the screen -- the
+// display is being stretched about 2x horizontally. The previous 24-block row
+// started at x=48 and ran to x=240, so its last ~6 blocks were CUT OFF and the
+// low bits of the address were unreadable. Everything here must therefore fit
+// inside about x=0..176. Max row is 16 blocks = 128 px starting at x=24, so it
+// ends at x=152, leaving margin at both edges.
 //
-// BUILD_ID is a hardcoded constant, incremented whenever this display
-// changes. It permanently removes the "is the new core actually loaded?"
-// question that the repeated 5-flash reading raised.
+//   Row 1: 16 bits = { BUILD_ID[3:0], exc_vec_num[7:0], exc_last_ff,
+//                      exc_detail[2:0] }   <- build stamp is the LEFTMOST
+//                      nibble, so it can be checked at a glance
+//   Row 2: 12 bits = exc_fetch_addr[23:12]   (upper 3 hex digits)
+//   Row 3: 12 bits = exc_fetch_addr[11:0]    (lower 3 hex digits)
+//   Row 4: 16 bits = exc_fetch_word          (the faulting opcode itself)
+//
+// The address is split across two 12-bit rows rather than one 24-bit row
+// purely to respect the width limit above.
+//
+// BUILD_ID is hardcoded and incremented whenever this display changes, so
+// every reading is self-identifying and the "is the new core actually loaded?"
+// ambiguity can never recur.
 localparam       BITS_MODE = 1'b1;
-localparam [3:0] BUILD_ID  = 4'h5;
-localparam [9:0] BITS_H0   = 10'd48;
+localparam [3:0] BUILD_ID  = 4'h6;
+localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
-wire [4:0] bit_slot  = bits_x[7:3];        // which block: (hcnt-48)/8
+wire [4:0] bit_slot  = bits_x[7:3];        // which block: (hcnt-BITS_H0)/8
 wire [2:0] bits_sub  = bits_x[2:0];        // position within the block
 
-wire bits_row1 = (vcnt >= 10'd64)  && (vcnt < 10'd96);
-wire bits_row2 = (vcnt >= 10'd112) && (vcnt < 10'd144);
-wire bits_row3 = (vcnt >= 10'd160) && (vcnt < 10'd192);
+wire bits_row1 = (vcnt >= 10'd40)  && (vcnt < 10'd64);
+wire bits_row2 = (vcnt >= 10'd80)  && (vcnt < 10'd104);
+wire bits_row3 = (vcnt >= 10'd120) && (vcnt < 10'd144);
+wire bits_row4 = (vcnt >= 10'd160) && (vcnt < 10'd184);
 
-wire [4:0]  bits_n   = bits_row2 ? 5'd24 : 5'd8;
-wire [23:0] bits_val = bits_row1 ? { 16'd0, exc_vec_num }
-                     : bits_row2 ? exc_fetch_addr
-                     :             { 16'd0, exc_last_ff, exc_detail, BUILD_ID };
+wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
+wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, exc_detail }
+                     : bits_row2 ? { 12'd0, exc_fetch_addr[23:12] }
+                     : bits_row3 ? { 12'd0, exc_fetch_addr[11:0]  }
+                     :             { 8'd0,  exc_fetch_word };
 
 // Two guards that are easy to get wrong and would each produce a WRONG but
 // plausible-looking display:
@@ -957,8 +974,9 @@ wire [23:0] bits_val = bits_row1 ? { 16'd0, exc_vec_num }
 //  2. bits_x < 192, because bit_slot is sliced as bits_x[7:3] and therefore
 //     ALIASES every 256 pixels -- without this the rows would be redrawn a
 //     second time further right, which could easily be misread as extra bits.
-wire bits_active = BITS_MODE && diag_phase && (bits_row1 || bits_row2 || bits_row3)
-                   && (hcnt >= BITS_H0) && (bits_x < 10'd192)
+wire bits_active = BITS_MODE && diag_phase
+                   && (bits_row1 || bits_row2 || bits_row3 || bits_row4)
+                   && (hcnt >= BITS_H0) && (bits_x < 10'd128)
                    && (bit_slot < bits_n) && (bits_sub < 3'd6);
 wire bits_one    = bits_val[ bits_n - 5'd1 - bit_slot ];   // MSB leftmost
 

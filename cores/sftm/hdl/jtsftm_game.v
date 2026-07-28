@@ -66,6 +66,7 @@ wire [ 2:0] exc_vec;           // diagnostic: which exception vector the CPU fet
 wire [ 2:0] exc_detail;        // diagnostic: finer split of exc_vec incl. the unmapped-fetch (0xFFFF) test (sftm_main → sftm_video)
 wire [ 7:0] exc_vec_num;       // diagnostic: exact 68k vector number, for the on-screen bit display (sftm_main → sftm_video)
 wire [23:0] exc_fetch_addr;    // diagnostic: byte address of the last instruction fetch before the fault (sftm_main → sftm_video)
+wire [15:0] exc_fetch_word;    // diagnostic: data word of that fetch, i.e. the faulting opcode (sftm_main → sftm_video)
 wire        exc_last_ff;       // diagnostic: that last fetched word was 0xFFFF (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
@@ -153,6 +154,7 @@ sftm_main u_main(
     .exc_detail         ( exc_detail          ),
     .exc_vec_num        ( exc_vec_num         ),
     .exc_fetch_addr     ( exc_fetch_addr      ),
+    .exc_fetch_word     ( exc_fetch_word      ),
     .exc_last_ff        ( exc_last_ff         )
 );
 
@@ -231,6 +233,7 @@ sftm_video u_video(
     .exc_detail         ( exc_detail          ),
     .exc_vec_num        ( exc_vec_num         ),
     .exc_fetch_addr     ( exc_fetch_addr      ),
+    .exc_fetch_word     ( exc_fetch_word      ),
     .exc_last_ff        ( exc_last_ff         )
 );
 
