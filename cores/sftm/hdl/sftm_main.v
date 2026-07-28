@@ -193,6 +193,29 @@ module sftm_main #(
     // Never cleared by w_rst (only by hard rst).
     output reg [1:0]    prot_rd_count,
 
+    // Diagnostic: saturating count (0..3) of DISTINCT instruction fetches
+    // the CPU performs AFTER prot_wr_ever has already latched (i.e. counted
+    // strictly since the protection RAM byte at 0x7a6a was written). Answers
+    // "is the CPU still alive/executing at all after the write, or did it
+    // stop dead (crash/halt) right there?" -- independent of whether it ever
+    // reaches the specific wdog-kick or protection-read addresses. Same
+    // edge-detected counter pattern as prot_rd_count: the fetch bus state
+    // (busstate==2'b00) is a LEVEL that can hold across several cen ticks
+    // for one instruction fetch (e.g. ROM wait states), so a rising-edge
+    // detector is used to count one increment per distinct fetch, not per
+    // cen tick. Saturates at 3 ("3 or more").
+    //   0 = zero fetches after the write -- CPU never fetched another
+    //       instruction post-write -- consistent with a hard crash/halt
+    //       (e.g. double bus fault, CPU truly stopped) right at/after the
+    //       protection write.
+    //   1-3 = CPU continued fetching instructions after the write (1, 2, or
+    //       3-or-more distinct fetches) -- CPU is still alive/executing,
+    //       just never reaching the wdog-kick or protection-read addresses
+    //       specifically -- points at a loop/branch elsewhere, not a raw
+    //       crash.
+    // Never cleared by w_rst (only by hard rst).
+    output reg [1:0]    post_wr_fetch_count,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -501,6 +524,24 @@ wire prot_rd_edge = prot_word_rd & ~prot_rd_lvl_d;
 always @(posedge clk) begin
     if( rst )                                      prot_rd_count <= 2'd0;
     else if( prot_rd_edge && prot_rd_count != 2'd3 ) prot_rd_count <= prot_rd_count + 2'd1;
+end
+
+// post_wr_fetch_count: edge-detected saturating counter of instruction
+// fetches strictly AFTER the protection write (prot_wr_ever) has latched.
+// Same LEVEL-vs-EDGE caveat as prot_rd_count above applies to the fetch bus
+// state, so it is sampled and edge-detected the identical way. See port
+// comment above for the 0..3 saturating meaning.
+wire cpu_fetch_lvl = cen & (busstate == 2'b00);
+reg  cpu_fetch_lvl_d;
+always @(posedge clk) begin
+    if( rst ) cpu_fetch_lvl_d <= 1'b0;
+    else      cpu_fetch_lvl_d <= cpu_fetch_lvl;
+end
+wire cpu_fetch_edge = cpu_fetch_lvl & ~cpu_fetch_lvl_d;
+
+always @(posedge clk) begin
+    if( rst )                                                              post_wr_fetch_count <= 2'd0;
+    else if( prot_wr_ever && cpu_fetch_edge && post_wr_fetch_count != 2'd3 ) post_wr_fetch_count <= post_wr_fetch_count + 2'd1;
 end
 
 // ---------------------------------------------------------------------------

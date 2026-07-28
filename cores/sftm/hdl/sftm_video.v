@@ -114,13 +114,21 @@ module sftm_video(
     input               prot_rd_ever,
 
     // Diagnostic: saturating count (0..3) of DISTINCT protection-port read
-    // accesses -- see sftm_main.v port comment. Drives the flash-count
-    // overlay below (superseding the older prot_wr_ever/prot_rd_ever pair,
-    // which already answered "did it write/read at all" -- N=3 confirmed
-    // wr=0,rd=1 on hardware -- and is now a settled, documented fact. This
-    // counter answers the NEW live question: is the CPU actively spinning
-    // on this exact read (many repeats) or did it pass through once/twice?
+    // accesses -- see sftm_main.v port comment. CORRECTED: an earlier
+    // version of this comment mis-stated the hardware result as
+    // wr=0,rd=1 due to a Verilog concatenation bit-order error -- the true
+    // result (re-verified in simulation, see AGENTS.md) is wr=1,rd=0: the
+    // protection write happens, the read never does. That question is now
+    // settled; this counter (still correctly wired/edge-detected) is no
+    // longer driving the flash overlay below but is kept available.
     input      [ 1:0]   prot_rd_count,
+
+    // Diagnostic: saturating count (0..3) of DISTINCT instruction fetches
+    // the CPU performs strictly AFTER prot_wr_ever has latched -- see
+    // sftm_main.v port comment. Drives the flash-count overlay below,
+    // answering whether the CPU is still alive/executing at all after the
+    // protection write (as opposed to a hard crash/halt right there).
+    input      [ 1:0]   post_wr_fetch_count,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -639,11 +647,36 @@ wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 //          never executes the protection read. Would point at the read
 //          living on a conditional/DIP-gated path never taken, rather than
 //          a CPU crash.
+//
+// HARDWARE RESULT (this build, 2026-07-27): N=3, i.e. wr=1, kick=0 --
+// CONFIRMS the protection write happens, but the CPU NEVER reaches its
+// main loop (never kicks the watchdog) afterward. This narrows the hang to
+// somewhere between the protection write and the main loop, but is still
+// ambiguous between "CPU crashed/halted outright" and "CPU is alive but
+// looping somewhere in between that never touches the watchdog register".
+// REPURPOSED AGAIN to resolve exactly that ambiguity, using a brand-new
+// signal (post_wr_fetch_count -- not a re-use of an already-answered one):
+//   N = 1 + post_wr_fetch_count   (1..4 flashes per cycle)
+//     N=1: post_wr_fetch_count==0 -- ZERO instruction fetches after the
+//          write -- the CPU never fetched another instruction post-write.
+//          Strongly indicates a hard crash/halt (e.g. double bus fault,
+//          CPU well and truly stopped) right at/after the protection write.
+//     N=2: post_wr_fetch_count==1 -- exactly one more fetch after the
+//          write, then nothing further -- CPU took one more step (likely
+//          trapped into an exception vector fetch) then also stopped.
+//     N=3: post_wr_fetch_count==2 -- two more fetches -- similar to above,
+//          slightly further before stopping.
+//     N=4: post_wr_fetch_count==3 (saturated, "3 or more") -- CPU keeps
+//          fetching instructions well past the write -- it is NOT a raw
+//          crash/halt; it is alive and executing, just looping somewhere
+//          that never reaches the watchdog-kick or protection-read
+//          addresses specifically. Points at a loop/branch elsewhere in
+//          the boot code, not a CPU fault.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + {1'b0, prot_wr_ever, wdog_kick_ever};
+wire [2:0] flash_count = 3'd1 + {1'b0, post_wr_fetch_count};
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment
