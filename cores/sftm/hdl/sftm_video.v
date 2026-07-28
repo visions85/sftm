@@ -566,7 +566,18 @@ wire       show_raster = startup_phase | ~gfx_en[3];
 //             priority over BLUE/ORANGE/MAGENTA)
 wire white_now     = !wdog_kick_ever & boot_done_ever & nvram_wr_ever;
 wire show_green    = white_now & isr_vec_fetch_ever;
-wire show_blue      = white_now & ~show_green & ipl7_pulse_ever & ~isr_ipl7_fetch_ever;
+// show_blue DISABLED this build: isr_ipl7_fetch_ever's meaning has been
+// repurposed (see flash_count comment below) to mean "the real vblank
+// request, forced to level 7, was taken" rather than "the old synthetic
+// one-shot ipl7_pulse test was taken". ipl7_pulse_ever will still latch on
+// its own independent ~1s timer regardless of this round's outcome (that
+// countdown logic in sftm_main.v was left untouched), so leaving the old
+// show_blue formula active would let it override show_stuck (and disable
+// the flash overlay, since flash_white is gated on show_stuck) based on
+// stale logic unrelated to this round's actual question. Hardwired to 0 so
+// the base colour and flash overlay stay driven purely by show_stuck as
+// before, and the new question is carried entirely by flash_count.
+wire show_blue      = 1'b0;
 wire show_stuck     = white_now & ~show_green & ~show_blue & ipl_asserted_ever & ~isr_vec_fetch_ever;
 // show_stuck splits into 4 combinations of (wdog_fired_ever, nvram_region_wr_ever).
 // Each new colour is built by swapping ORANGE/MAGENTA's existing "partial"
@@ -712,11 +723,50 @@ wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 //          game-specific factors (SR interrupt mask, assertion timing/
 //          duration, or vector-table contents) rather than a fundamental
 //          CPU-interrupt-interface bug.
+//
+// HARDWARE RESULT (this build, 2026-07-27): N=4, i.e. pulse=1, taken=1 --
+// the CPU DOES take a forced, guaranteed unmaskable interrupt correctly.
+// The core's basic autovector/vector-fetch mechanism works. Narrows the
+// investigation to game-specific factors for why real IPL1/2/3 requests
+// are never taken -- not a fundamental CPU/wiring bug.
+// REPURPOSED AGAIN to test the leading such factor directly: is the SR
+// interrupt mask simply never open (<=0) whenever the REAL vint_latch/
+// vblank request asserts as IPL1? In sftm_main.v (this same commit), the
+// REAL vint_latch request now drives cpu_ipl to level 7 (non-maskable)
+// instead of level 1 for this build only, and the old synthetic ipl7_pulse
+// no longer drives cpu_ipl at all -- so isr_ipl7_fetch_ever's meaning is
+// now "the real, periodically-recurring (~60 Hz) vblank request was taken
+// when presented as non-maskable", not the old one-shot synthetic test.
+// show_blue has been hardwired to 0 this build (see above) so the base
+// colour/flash-overlay gating stays driven purely by show_stuck, unaffected
+// by ipl7_pulse_ever's own independent timer still latching as before.
+// Bit order re-verified via /tmp/check_concat4.v before writing this table:
+//   N = 1 + {ipl_asserted_ever, isr_ipl7_fetch_ever}   (1..4 flashes)
+//     N=1: assert=0, taken=0 -- the vblank interrupt request itself never
+//          even asserts. Would be a brand-new finding (already known false
+//          from earlier in the session, where ipl_asserted_ever was
+//          confirmed 1 -- included here only as a sanity check).
+//     N=2: assert=0, taken=1 -- should be impossible (can't take a vector
+//          fetch without an assert happening first via this path); flags a
+//          logic bug in this diagnostic if ever observed.
+//     N=3: assert=1, taken=0 -- the real vblank request keeps asserting
+//          periodically, but even forced NON-MASKABLE, the CPU still never
+//          takes it. This would be a genuinely surprising new finding,
+//          pointing at something specific to the real vint_latch signal
+//          path (distinct from the synthetic ipl7_pulse test that DID
+//          succeed) rather than SR masking.
+//     N=4: assert=1, taken=1 -- CONFIRMS: when the real vblank request is
+//          forced non-maskable, the CPU takes it. This proves SR interrupt
+//          masking -- not any core wiring or signal-path issue -- is
+//          exactly why the real (maskable) IPL1 request is ignored: the
+//          boot code runs with interrupts disabled and never reaches the
+//          point where it re-enables them, matching the "CPU alive but
+//          looping" post_wr_fetch_count finding perfectly.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + {ipl7_pulse_ever, isr_ipl7_fetch_ever};
+wire [2:0] flash_count = 3'd1 + {ipl_asserted_ever, isr_ipl7_fetch_ever};
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment

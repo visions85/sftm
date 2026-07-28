@@ -887,14 +887,32 @@ always @(posedge clk) begin
         end
     end
 end
+// ---------------------------------------------------------------------------
+// DIAGNOSTIC-ONLY (this build): the previous IPL7 test proved the CPU DOES
+// correctly take a forced, guaranteed-unmaskable interrupt (isr_ipl7_fetch_ever
+// latched, hardware-confirmed). That only proves the wiring/autovector
+// mechanism works in general -- it says nothing about whether the SR
+// interrupt mask happens to be open (<=0) whenever the REAL vint_latch/
+// vblank request asserts as IPL1. To test that directly, temporarily
+// present the REAL vint_latch request at level 7 (non-maskable) instead of
+// level 1 for this build only, and stop the old synthetic one-shot
+// ipl7_pulse from also driving level 7 (commented out below) so
+// isr_ipl7_fetch_ever is unambiguous this round -- it can now ONLY be set
+// by the real, periodically-recurring (~60 Hz) vblank request. If
+// isr_ipl7_fetch_ever now latches, SR masking (game code has interrupts
+// disabled and never re-enables them) is confirmed as the exact reason the
+// real IPL1 request is never taken -- not any deeper wiring or
+// signal-path-specific issue. Revert this swap once that's confirmed; it
+// does not reflect real itech32 hardware behaviour.
+// ---------------------------------------------------------------------------
 always @(posedge clk) begin
     if( w_rst ) cpu_ipl <= 3'b111;          // no IRQ (active low IPL)
     else begin
         cpu_ipl <= 3'b111;
-        if( vint_latch ) cpu_ipl <= 3'b110; // IPL1: vblank  → autovector 25 → 0x00800918
+        if( vint_latch ) cpu_ipl <= 3'b000; // DIAG (this build): vblank forced to IPL7 (was 3'b110/IPL1) to test SR-mask theory
         if( blit_irq   ) cpu_ipl <= 3'b101; // IPL2: blitter → autovector 26 → 0x00801380
         if( scan_irq   ) cpu_ipl <= 3'b100; // IPL3: scanline→ autovector 27 → 0x008012E0
-        if( ipl7_pulse ) cpu_ipl <= 3'b000; // IPL7: diagnostic-only, non-maskable test pulse
+        // if( ipl7_pulse ) cpu_ipl <= 3'b000; // DIAG (this build): disabled so isr_ipl7_fetch_ever is unambiguous -- can now only be set by the real vblank request above
     end
 end
 
