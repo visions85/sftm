@@ -68,6 +68,7 @@ wire [ 7:0] exc_vec_num;       // diagnostic: exact 68k vector number, for the o
 wire [23:0] exc_fetch_addr;    // diagnostic: byte address of the last instruction fetch before the fault (sftm_main → sftm_video)
 wire [15:0] exc_fetch_word;    // diagnostic: data word of that fetch, i.e. the faulting opcode (sftm_main → sftm_video)
 wire        exc_last_ff;       // diagnostic: that last fetched word was 0xFFFF (sftm_main → sftm_video)
+wire [15:0] exc_code_ram;      // diagnostic: live mirror of RAM[0x0FBE], the game's own exception-code scratch word (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -155,7 +156,8 @@ sftm_main u_main(
     .exc_vec_num        ( exc_vec_num         ),
     .exc_fetch_addr     ( exc_fetch_addr      ),
     .exc_fetch_word     ( exc_fetch_word      ),
-    .exc_last_ff        ( exc_last_ff         )
+    .exc_last_ff        ( exc_last_ff         ),
+    .exc_code_ram       ( exc_code_ram        )
 );
 
 // ---------------------------------------------------------------------------
@@ -234,7 +236,8 @@ sftm_video u_video(
     .exc_vec_num        ( exc_vec_num         ),
     .exc_fetch_addr     ( exc_fetch_addr      ),
     .exc_fetch_word     ( exc_fetch_word      ),
-    .exc_last_ff        ( exc_last_ff         )
+    .exc_last_ff        ( exc_last_ff         ),
+    .exc_code_ram       ( exc_code_ram        )
 );
 
 // ---------------------------------------------------------------------------

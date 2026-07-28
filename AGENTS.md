@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status: **CPU executing and writing RAM — WHITE confirmed (2026-07-27)** — root cause of all prior stuck-CPU symptoms found and fixed: `bus_active` excluded TG68K write cycles (`busstate=11`), silently dropping every CPU write. Fix: `bus_active = (busstate != 2'b01)`. Diagnostic: R=`!wdog_kick_ever`, G=`boot_done_ever` (rom_ok), B=`ram_wr_ever`. Current build md5 `01f3fa2c16a7f89dd8c352ea702d8915`. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: watch for CYAN (wdog kick = outer main loop). All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`) produced false positives caused by the game's own power-on RAM self-test sweeping every RAM address including the vector table; both are **retracted**, see the "ROM CROSS-CHECK" / "ROM fetch path cleared" sections below. **Only trustworthy diagnostic now in place**: `exc_code_ram`, a live mirror of `RAM[0x0FBE]`, where this ROM's own exception handlers record their own exception code before parking — displayed as on-screen bit-display row 5, `BUILD_ID=0x7`. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read row 5 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -419,6 +419,69 @@ this ROM is `MOVE.W #code,($0FBE).W` followed by a branch -- `8008F0`->0,
 its own exception code in RAM at `0x0FBE`.** Displaying `RAM[0x0FBE]` reads the
 program's own verdict and cannot be faked by a memory sweep. Note the RAM test
 overwrites `0x0FBE`, so the display must be latched, or read after the test.
+
+### `exc_code_ram` diagnostic implemented (this session) -- RAM[0x0FBE] on screen, build 0x7
+
+Implemented the "only trustworthy diagnostic left" from the previous entry.
+New signal `exc_code_ram` (`sftm_main.v`) is a **live, continuously-updated**
+mirror of the CPU's last full-word write to RAM byte `0x0FBE` (word `0x07DF`):
+`if( boot_done && ram_we_lo && ram_we_hi && ram_addr==EXC_CODE_WORD ) exc_code_ram <= ram_din;`.
+Deliberately **not** a sample-and-hold/`_ever` latch like `exc_vec`/`exc_detail`
+-- those were proven unreliable twice this session (findings #3 and #10/#11
+retractions) specifically because freezing on the *first* qualifying event lets
+the power-on RAM self-test's sweep win the race. A live mirror sidesteps the
+whole failure class: the self-test also writes over `0x0FBE` as part of its
+sweep, but a CPU that is genuinely parked in a dead-end handler never writes
+anywhere again, so the value naturally settles on the true final answer with
+no freeze-timing risk at all. Gated on a **full word write only**
+(`ram_we_lo && ram_we_hi` together, matching the ROM's `MOVE.W`) so a stray
+byte-only write elsewhere can never merge a stale half into the reported value.
+
+Wired through `jtsftm_game.v` (`sftm_main` → `sftm_video`) following the
+existing pattern. `sftm_video.v`'s on-screen bit display gets a **fifth row**
+(`vcnt` 200-224, same 16-bit layout as rows 1/4) showing `exc_code_ram`
+directly -- no decode table, no ambiguity. `BUILD_ID` bumped to `0x7`. Rows
+1-4 (`exc_vec_num`/`exc_fetch_addr`/`exc_fetch_word`) are left in place for
+reference but are **not trustworthy** per the retraction above; row 5 is the
+only one to read now.
+
+**Pre-existing bug found and fixed while wiring this up, unrelated to the new
+diagnostic**: `sftm_video.v`'s `flash_white` wire (`show_stuck & flash_on &
+~BITS_MODE`) referenced the `BITS_MODE` localparam roughly 45 lines before
+that localparam's own declaration. This is silently accepted by some tools
+but iverilog refuses to bind it (`Unable to bind wire/reg/memory 'BITS_MODE'
+... declared here: check for declaration after use`), which meant **the
+committed `tb_sftm_video.v` testbench has not actually been able to elaborate
+in this environment** -- confirmed by reverting to unmodified HEAD and
+reproducing the identical failure. Fixed by moving just the `BITS_MODE`
+declaration up before `flash_white`; `BUILD_ID`/`BITS_H0` stay declared
+together with the row logic below. **Also newly exposed by fixing the
+elaboration failure**: `tb_sftm_video.v` itself now runs but reports 2
+pre-existing failures (`VIDEO_XFER readback pixel 0/1 got=00X0`), and
+`tb_sftm_main.v` reports 1 pre-existing failure (`unexpected boot cycle count
+2`) -- both reproduced identically against unmodified HEAD with only the
+elaboration-order fix applied, so neither is caused by `exc_code_ram`. Not
+investigated further this session (out of scope for the exception-code work);
+flagged here since AGENTS.md's own history claims these testbenches were
+passing, which is no longer true in this environment and should be
+re-verified before trusting them again.
+
+New testbench `/tmp/tb_excoderam.v` (drives `uut.ram_addr`/`ram_din`/
+`ram_we_lo`/`ram_we_hi` directly via `force`/`release`, the same technique as
+`tb_pollregion.v`/`tb_excvec.v`, since exercising the real write path needs
+the ghdl-converted TG68K kernel which is Docker-only and not built in this
+environment): confirms `exc_code_ram` is 0 after boot; a write to an unrelated
+word does not update it; a partial byte-lane-only write to the target word
+does not update it (both lo-only and hi-only checked); a genuine full-word
+write latches it; a **second** full-word write overwrites it with the new
+value (proving this is live, not first-hit -- the entire point versus
+`exc_vec`); unrelated writes afterward leave it undisturbed; a simulated
+RAM-test sweep write followed by a real exception-code write settles on the
+real code, not the sweep's pattern (the exact false-positive scenario this
+diagnostic exists to avoid); and hard reset clears it. **All 9 checks PASS.**
+Re-ran `tb_sftm_prot`, `tb_sftm_ram`, `tb_sftm_blitter`, `tb_sftm5506` (the
+testbenches unaffected by the `BITS_MODE` fix) -- all still PASS, no
+regressions. **Awaiting hardware observation of row 5.**
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)

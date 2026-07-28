@@ -238,6 +238,19 @@ module sftm_main #(
     // opcode the CPU choked on. Address alone says where; this says what.
     output reg [15:0]   exc_fetch_word,
     output              exc_last_ff,
+    // exc_code_ram: continuously mirrors the CPU's last full-word write to
+    // RAM byte address 0x0FBE (word 0x07DF). Every exception handler in
+    // this ROM does MOVE.W #code,($0FBE).W before parking in a branch-to-
+    // self spin (see AGENTS.md ROM cross-check) -- the game's own verdict.
+    // Unlike exc_vec/exc_detail above (sample-and-hold on the first
+    // qualifying event, proven unreliable: the power-on RAM self-test
+    // sweeps every address including this one and the vector table,
+    // tripping address-match latches spuriously), this has no freeze and
+    // no "first" bias. The self-test also writes over this address as
+    // part of its sweep, but a genuinely stuck CPU never writes anywhere
+    // again once parked, so the value naturally settles on the true final
+    // answer with no risk of a stale early hit.
+    output reg [15:0]   exc_code_ram,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -464,6 +477,20 @@ sftm_ram #(.AW(14)) u_ram(
     .we_hi  ( ram_we_hi ),
     .dout   ( ram_dout  )
 );
+
+// exc_code_ram: see the port comment above. Gated on a full-word write
+// (both lanes together, matching the ROM's MOVE.W) so a stray byte write
+// elsewhere can never merge a stale half into the reported value. Gating
+// on boot_done is belt-and-braces, not load-bearing: the boot-copy FSM's
+// own address range (LW0..31, ram_addr up to 14'h003F) never reaches
+// EXC_CODE_WORD, but the check documents that intent explicitly.
+localparam [13:0] EXC_CODE_WORD = 14'h07DF; // byte 0x0FBE >> 1
+always @(posedge clk) begin
+    if( rst )
+        exc_code_ram <= 16'd0;
+    else if( boot_done && ram_we_lo && ram_we_hi && ram_addr == EXC_CODE_WORD )
+        exc_code_ram <= ram_din;
+end
 
 // ---------------------------------------------------------------------------
 // NVRAM: 0x600000-0x61ffff is a 128 KB battery-backed region on the real
