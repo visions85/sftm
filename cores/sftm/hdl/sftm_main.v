@@ -234,6 +234,9 @@ module sftm_main #(
     // exc_last_ff:     whether that last fetched word was 0xFFFF.
     output reg [7:0]    exc_vec_num,
     output reg [23:0]   exc_fetch_addr,
+    // exc_fetch_word: the DATA of that last fetch, i.e. (approximately) the
+    // opcode the CPU choked on. Address alone says where; this says what.
+    output reg [15:0]   exc_fetch_word,
     output              exc_last_ff,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
@@ -741,13 +744,16 @@ end
 // non-0xFFFF as only weak evidence against it.
 reg last_fetch_ff;
 reg [23:0] last_fetch_addr;
+reg [15:0] last_fetch_data;
 always @(posedge clk) begin
     if( rst ) begin
         last_fetch_ff   <= 1'b0;
         last_fetch_addr <= 24'd0;
+        last_fetch_data <= 16'd0;
     end else if( clkena && busstate == 2'b00 ) begin
         last_fetch_ff   <= (cpu_din == 16'hffff);
         last_fetch_addr <= { cpu_addr, 1'b0 };  // word addr -> byte addr
+        last_fetch_data <= cpu_din;
     end
 end
 assign exc_last_ff = last_fetch_ff;
@@ -759,6 +765,7 @@ always @(posedge clk) begin
         exc_detail     <= 3'd0;
         exc_vec_num    <= 8'd0;
         exc_fetch_addr <= 24'd0;
+        exc_fetch_word <= 16'd0;
     end else if( exc_vec == 3'd0 && exc_vec_rd ) begin
         exc_vec_num    <= cpu_addr[9:2];   // exact vector number
         // Freeze where the CPU was executing when it faulted. This is the
@@ -766,6 +773,7 @@ always @(posedge clk) begin
         // into ROM data, execution out of RAM, and execution in unmapped
         // space from one another.
         exc_fetch_addr <= last_fetch_addr;
+        exc_fetch_word <= last_fetch_data;
         // exc_detail: finer-grained follow-up encoding, now that hardware has
         // narrowed the fault to the 8/10/11 group. Splits that group into its
         // individual vectors AND tests the unmapped-fetch theory in the same
