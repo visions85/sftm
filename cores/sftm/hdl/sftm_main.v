@@ -220,6 +220,10 @@ module sftm_main #(
     // in RAM+ROM only, 1=vreg, 2=inp/sys/dip, 3=duart, 4=nvram, 5=pal/nopr,
     // 6=prot. See the detailed block comment at the logic below.
     output reg [2:0]    poll_region,
+    // exc_vec: which exception vector, if any, the CPU fetched. Answers
+    // whether the steady-state loop is a fault handler or normal flow.
+    // Full category map documented at the exc_vec logic below.
+    output reg [2:0]    exc_vec,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -647,6 +651,78 @@ always @(posedge clk) begin
     end else if( poll_armed && poll_region == 3'd0 && poll_rd && rd_code != 3'd0 ) begin
         if( rd_code == poll_cand ) poll_region <= rd_code; // confirmed, freeze
         else                       poll_cand   <= rd_code; // first sighting
+    end
+end
+
+// ---------------------------------------------------------------------------
+// exc_vec: WHICH exception vector did the CPU fetch, if any?
+//
+// Hardware has now established that in steady state the CPU performs NO I/O
+// data reads whatsoever (poll_region==0) while still fetching instructions
+// indefinitely, with interrupts masked, never reaching the watchdog kick or
+// the protection read. A loop that touches no hardware register at all is
+// very characteristic of a catch-all exception handler -- classically a
+// branch-to-self -- or of executing garbage. Note a tight `BRA.S *` self-loop
+// performs instruction fetches but zero data reads, matching the observations
+// exactly.
+//
+// So: did the CPU take an exception, and which one? On a 68k the vector table
+// lives at byte 0x000-0x3FF (in main RAM here), and vector N is fetched by
+// READING byte address 4*N. Boot code WRITES its handlers there, but writes
+// are ignored here -- only reads qualify, and a read of that region is
+// ROM-content-independent proof that the CPU began exception processing for
+// that specific vector. Vectors 0/1 (reset SSP/PC) are excluded since those
+// are fetched legitimately at power-on.
+//
+// BIT-INDEXING HAZARD (caught by tb_excvec, first attempt was wrong): cpu_addr
+// is declared `[23:1]`, so although its VALUE is a word address (numerically
+// byte_addr>>1, which is why the existing numeric comparisons like
+// `cpu_addr==23'h32` for byte 0x64 are correct), its BIT INDICES are the
+// literal cpu_a bit positions -- cpu_addr[9] IS cpu_a[9], NOT cpu_a[10].
+// So the vector number is cpu_addr[9:2] (== cpu_a[9:2]), and byte address
+// < 0x400 is cpu_addr[23:10]==0. Slicing [8:1] instead (the natural mistake
+// if you assume the range were [22:0]) yields 2*N and silently misclassifies
+// every single vector.
+// Sample-and-hold on the FIRST qualifying fetch, then frozen, so we capture
+// the ORIGINAL fault rather than whatever it may cascade into. Categories are
+// grouped to fit the 1..7 flash range:
+//   1 = bus error (vector 2) -- access to an address that does not respond.
+//       Would point straight at our own address decoding/SDRAM handling.
+//   2 = address error (vector 3) -- misaligned word/long access. Often means
+//       the CPU is executing garbage, or a corrupted pointer/stack.
+//   3 = illegal instruction (vector 4) -- executing data as code: a wild jump
+//       or a corrupted vector/pointer.
+//   4 = privilege violation / line-A / line-F (vectors 8, 10, 11) -- also
+//       typical of executing garbage, or a 68020-specific opcode our TG68K
+//       core does not implement.
+//   5 = other exception (5,6,7,9,12-23,32+) -- zero divide, CHK, TRAPV,
+//       trace, TRAP #n, etc.
+//   6 = interrupt autovector (24-31) -- an interrupt actually being serviced.
+//       Expected to be 0 here given interrupts are masked; would be
+//       informative if it appeared.
+//   0 = no exception vector ever fetched -- the CPU never faulted at all, so
+//       the loop is reached by NORMAL program flow. That would make it a
+//       deliberate wait/delay loop rather than a crash, and shift suspicion
+//       onto whatever condition the code expects something else to change.
+reg [7:0] exc_vec_num;
+wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2);
+always @(posedge clk) begin
+    if( rst ) begin
+        exc_vec     <= 3'd0;
+        exc_vec_num <= 8'd0;
+    end else if( exc_vec == 3'd0 && exc_vec_rd ) begin
+        exc_vec_num <= cpu_addr[9:2];   // raw vector number, for waveform debug
+        case( cpu_addr[9:2] )
+            8'd2:                   exc_vec <= 3'd1; // bus error
+            8'd3:                   exc_vec <= 3'd2; // address error
+            8'd4:                   exc_vec <= 3'd3; // illegal instruction
+            8'd8, 8'd10, 8'd11:     exc_vec <= 3'd4; // privilege / line-A / line-F
+            default: begin
+                if( cpu_addr[9:2] >= 8'd24 && cpu_addr[9:2] <= 8'd31 )
+                                    exc_vec <= 3'd6; // interrupt autovector
+                else                exc_vec <= 3'd5; // other exception
+            end
+        endcase
     end
 end
 
