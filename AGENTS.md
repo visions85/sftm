@@ -481,7 +481,34 @@ real code, not the sweep's pattern (the exact false-positive scenario this
 diagnostic exists to avoid); and hard reset clears it. **All 9 checks PASS.**
 Re-ran `tb_sftm_prot`, `tb_sftm_ram`, `tb_sftm_blitter`, `tb_sftm5506` (the
 testbenches unaffected by the `BITS_MODE` fix) -- all still PASS, no
-regressions. **Awaiting hardware observation of row 5.**
+regressions.
+
+- **HARDWARE RESULT (2026-07-28): row 5 (`exc_code_ram`) = `0x2700`.** Read two
+  independent ways and cross-checked: (1) a CRT photo, decoded programmatically
+  by fitting a shared block grid (pitch + left edge) across all 5 rows via
+  gutter/trough detection in the blue channel, calibrated against the known
+  `BUILD_ID=0x7` in row 1 as ground truth (a wide, stable alignment plateau at
+  the independently-measured pitch converged on `0111`, not an isolated lucky
+  match); (2) the user's own direct visual read of row 5
+  ("black, black, white, black, blue, white, white, white, black, black,
+  black, black, blue, blue, blue, blue") decoded by hand. **Both agree
+  bit-for-bit**, including the maroon("black")/navy("blue") nibble-shading
+  pattern, which independently confirms the nibble grouping (bit_slot[2])
+  alongside the raw bit values -- strong double confirmation.
+  - `0x2700` is **not** one of the four codes the ROM's exception handlers
+    write (`0`-`3` via `MOVE.W #code,($0FBE).W`, see the ROM CROSS-CHECK
+    section above). It is suspiciously exactly the SR immediate value from
+    `ORI #$2700,SR`, the very first instruction executed at the reset entry
+    point `0x800400`.
+  - **Reading**: the CPU most likely never actually executed any of the four
+    documented exception handlers on this stuck path. `RAM[0x0FBE]` is
+    showing leftover/stale content (from the power-on RAM self-test sweep or
+    other RAM traffic), not a genuine handler write. This **rules out** the
+    "stuck in a dead-end exception handler" hypothesis that motivated this
+    entire diagnostic, and reopens the question of what else could produce
+    the branch-to-self signature (fetches forever, zero data reads, SR
+    interrupt-masked) established earlier in the ROM CROSS-CHECK section.
+    Not yet investigated further this session.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
