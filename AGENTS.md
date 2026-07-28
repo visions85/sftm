@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`/`exc_fetch_addr`) produced false positives, both **retracted** — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` (RAM[0x0FBE], row 5) read `0x2700` on hardware (build 0x7, confirmed via matching photo-decode + user visual read) — not one of the four real exception codes, ruling out the "stuck in a dead-end handler" theory. **Leading hypothesis now**: the CPU may simply still be looping inside the power-on RAM self-test (`0x80158A`), consistent with every fact observed so far; simulation runs it healthily but real hardware has a recorded timing violation (`slack −1.053ns`) sim can't model. **Current diagnostic**: `pc_snapshot_addr`/`pc_snapshot_word`, a one-shot ~5s-post-reset snapshot of the CPU's live instruction-fetch address/word (time-triggered, not address-triggered, so it can't repeat the address-sweep trap) — on-screen bit-display rows 2-4, `BUILD_ID=0x8`. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read rows 1-5 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`/`exc_fetch_addr`) produced false positives, both **retracted** — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` (RAM[0x0FBE], row 5) read `0x2700` on hardware (build 0x7) — not one of the four real exception codes, ruling out the "stuck in a dead-end handler" theory. Follow-up `pc_snapshot_addr`/`pc_snapshot_word` (build 0x8, a one-shot ~5s-post-reset, time-triggered snapshot of the CPU's live instruction-fetch address/word — immune to the address-sweep trap that sank two earlier diagnostics) read **`0x336BAC` / `0xFFFF`** on hardware, confirmed via photo-decode (26px-wide stable plateau) plus direct user observation of row 4 (all-white = `0xFFFF`). `0xFFFF` is the bus's unmapped-read default and `0x336BAC` is outside both main RAM and program ROM — **direct evidence the CPU's PC is executing from unmapped address space**, reopening the original "CPU ran off into nothing" theory. Not yet resolved: single wild jump vs. a repeating unmapped-space/line-F-exception cycle. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: determine whether the PC is fixed (a loop) or drifting (roaming garbage) in unmapped space. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -575,7 +575,42 @@ on hard reset. **All 5 checks PASS.** Re-ran `tb_sftm_prot`, `tb_sftm_ram`,
 committed `tb_sftm_video` -- all still PASS (or fail with the same
 pre-existing, already-documented failures) -- no new regressions. Both
 `sftm_main.v` and `sftm_video.v` elaborate cleanly standalone.
-**Awaiting hardware observation of rows 2-4.**
+
+- **HARDWARE RESULT (2026-07-28): `pc_snapshot_addr=0x336BAC`,
+  `pc_snapshot_word=0xFFFF`.** Read via the same photo-decode method as
+  before (gutter/trough detection, joint least-squares fit of pitch and left
+  edge across all 5 rows pooled together, resolved against `BUILD_ID=0x8` as
+  ground truth -- the correct alignment produced a 26px-wide completely
+  stable plateau across rows 2-5, not an isolated lucky match). `row1`
+  confirmed `BUILD_ID=1000=0x8` exactly as expected, and `row4` (all 16
+  blocks solid white = `0xFFFF`) was independently confirmed by direct user
+  observation of the physical screen -- both cross-checks agree.
+  `exc_code_ram` (row 5) read `0x2700` again, identical to the previous
+  boot -- a good reproducibility signal.
+  - **`0xFFFF` is exactly the unmapped-read signature**: `sftm_main.v`'s CPU
+    data-in mux ends `default: inp_mux = 16'hffff`, so any read of an address
+    with no chip-select match returns `0xFFFF`. The last instruction fetch
+    before the snapshot returned that default.
+  - **`0x336BAC` is not in any mapped region**: main RAM is
+    `0x000000-0x007FFF`, program ROM is `0x800000`+. `0x336BAC` is outside
+    both.
+  - **Reading**: 5 seconds after reset, the CPU's PC was executing from
+    genuinely unmapped address space, reading the bus's default filler
+    value. This is direct evidence for the *original* "CPU ran off into
+    nothing" theory -- the one `last_fetch_ff`/`exc_last_ff` was built to
+    test, before the retracted `exc_vec` mechanism conflated it with an
+    unreliable address-match trigger. It **reopens** (does not confirm) the
+    RAM-test-loop theory from the previous entry: that hypothesis predicted
+    a PC sitting inside `0x80158A-0x8015A6` (mapped ROM), which this is not.
+  - **Not yet resolved**: whether the CPU reaches unmapped space via a single
+    wild jump early in boot and then stays there, or via a repeating cycle
+    (e.g. taking a line-F exception on the `0xFFFF` it fetches, reading a
+    vector table entry that itself hasn't been properly initialised, and
+    landing back in unmapped space each time -- which would still fetch
+    forever, read no I/O, and stay interrupt-masked, matching every existing
+    observation). `0x336BAC` is a single one-shot sample; it does not by
+    itself distinguish a fixed loop from a single resting point reached once
+    and never left. Next diagnostic should determine which.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
