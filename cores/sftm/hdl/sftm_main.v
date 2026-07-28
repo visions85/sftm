@@ -227,6 +227,14 @@ module sftm_main #(
     // exc_detail: finer split of exc_vec, now that hardware has narrowed the
     // fault to the privilege/line-A/line-F group. See the logic below.
     output reg [2:0]    exc_detail,
+    // Raw captured fault details, for the on-screen bit display in sftm_video.
+    // exc_vec_num:     the exact 68k vector number (so no grouping ambiguity).
+    // exc_fetch_addr:  byte address of the last instruction fetch before the
+    //                  fault, i.e. approximately where the CPU was executing.
+    // exc_last_ff:     whether that last fetched word was 0xFFFF.
+    output reg [7:0]    exc_vec_num,
+    output reg [23:0]   exc_fetch_addr,
+    output              exc_last_ff,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -732,20 +740,32 @@ end
 // either way, so treat 0xFFFF as strong evidence FOR the unmapped theory but
 // non-0xFFFF as only weak evidence against it.
 reg last_fetch_ff;
+reg [23:0] last_fetch_addr;
 always @(posedge clk) begin
-    if( rst )                                 last_fetch_ff <= 1'b0;
-    else if( clkena && busstate == 2'b00 )    last_fetch_ff <= (cpu_din == 16'hffff);
+    if( rst ) begin
+        last_fetch_ff   <= 1'b0;
+        last_fetch_addr <= 24'd0;
+    end else if( clkena && busstate == 2'b00 ) begin
+        last_fetch_ff   <= (cpu_din == 16'hffff);
+        last_fetch_addr <= { cpu_addr, 1'b0 };  // word addr -> byte addr
+    end
 end
+assign exc_last_ff = last_fetch_ff;
 
-reg [7:0] exc_vec_num;
 wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2);
 always @(posedge clk) begin
     if( rst ) begin
-        exc_vec     <= 3'd0;
-        exc_detail  <= 3'd0;
-        exc_vec_num <= 8'd0;
+        exc_vec        <= 3'd0;
+        exc_detail     <= 3'd0;
+        exc_vec_num    <= 8'd0;
+        exc_fetch_addr <= 24'd0;
     end else if( exc_vec == 3'd0 && exc_vec_rd ) begin
-        exc_vec_num <= cpu_addr[9:2];   // raw vector number, for waveform debug
+        exc_vec_num    <= cpu_addr[9:2];   // exact vector number
+        // Freeze where the CPU was executing when it faulted. This is the
+        // single most valuable datum remaining: it distinguishes a wild jump
+        // into ROM data, execution out of RAM, and execution in unmapped
+        // space from one another.
+        exc_fetch_addr <= last_fetch_addr;
         // exc_detail: finer-grained follow-up encoding, now that hardware has
         // narrowed the fault to the 8/10/11 group. Splits that group into its
         // individual vectors AND tests the unmapped-fetch theory in the same
