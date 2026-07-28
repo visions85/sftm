@@ -64,6 +64,9 @@ wire [ 1:0] post_wr_fetch_count;// diagnostic: saturating count (0..3) of DISTIN
 wire [ 2:0] poll_region;       // diagnostic: which hardware region the stuck CPU reads in steady state, 0=none/RAM+ROM only (sftm_main → sftm_video)
 wire [ 2:0] exc_vec;           // diagnostic: which exception vector the CPU fetched, 0=none/never faulted (sftm_main → sftm_video)
 wire [ 2:0] exc_detail;        // diagnostic: finer split of exc_vec incl. the unmapped-fetch (0xFFFF) test (sftm_main → sftm_video)
+wire [ 7:0] exc_vec_num;       // diagnostic: exact 68k vector number, for the on-screen bit display (sftm_main → sftm_video)
+wire [23:0] exc_fetch_addr;    // diagnostic: byte address of the last instruction fetch before the fault (sftm_main → sftm_video)
+wire        exc_last_ff;       // diagnostic: that last fetched word was 0xFFFF (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -147,7 +150,10 @@ sftm_main u_main(
     .post_wr_fetch_count( post_wr_fetch_count ),
     .poll_region        ( poll_region         ),
     .exc_vec            ( exc_vec             ),
-    .exc_detail         ( exc_detail          )
+    .exc_detail         ( exc_detail          ),
+    .exc_vec_num        ( exc_vec_num         ),
+    .exc_fetch_addr     ( exc_fetch_addr      ),
+    .exc_last_ff        ( exc_last_ff         )
 );
 
 // ---------------------------------------------------------------------------
@@ -222,7 +228,10 @@ sftm_video u_video(
     .post_wr_fetch_count( post_wr_fetch_count ),
     .poll_region        ( poll_region         ),
     .exc_vec            ( exc_vec             ),
-    .exc_detail         ( exc_detail          )
+    .exc_detail         ( exc_detail          ),
+    .exc_vec_num        ( exc_vec_num         ),
+    .exc_fetch_addr     ( exc_fetch_addr      ),
+    .exc_last_ff        ( exc_last_ff         )
 );
 
 // ---------------------------------------------------------------------------

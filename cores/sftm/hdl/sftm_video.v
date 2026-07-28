@@ -132,6 +132,9 @@ module sftm_video(
     input      [ 2:0]   poll_region,
     input      [ 2:0]   exc_vec,
     input      [ 2:0]   exc_detail,
+    input      [ 7:0]   exc_vec_num,
+    input      [23:0]   exc_fetch_addr,
+    input               exc_last_ff,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -902,17 +905,75 @@ always @(posedge clk) begin
 end
 
 wire flash_on    = !flash_state && (flash_seg_pos < FLASH_ON);
-wire flash_white = show_stuck & flash_on;
+// Flash overlay SUPPRESSED while the bit display is active: it whites out the
+// whole screen periodically, which would obscure the bit rows below.
+wire flash_white = show_stuck & flash_on & ~BITS_MODE;
+
+// ---------------------------------------------------------------------------
+// ON-SCREEN BIT DISPLAY
+//
+// Flash-counting has carried the diagnosis a long way but costs one hardware
+// round trip per single small integer, and the last two rounds both happened
+// to read 5 with DIFFERENT meanings, which is exactly the kind of collision
+// that can silently invalidate a conclusion. This renders several multi-bit
+// values simultaneously as rows of blocks, so one flash gives the exact vector
+// number AND the faulting address AND a build ID, with no counting and no
+// ambiguity about which build is loaded.
+//
+// Layout: three rows of 8px-wide blocks (6px lit, 2px gutter), MSB at the
+// LEFT. A one-bit reads WHITE. A zero-bit reads dark, and the dark shade
+// ALTERNATES every 4 bits (navy / maroon) so nibble groups are visually
+// obvious and can be read straight off as hex digits.
+//
+//   Row 1 (upper):  8 bits  = exact 68k vector number
+//   Row 2 (middle): 24 bits = byte address of the last instruction fetch
+//                             before the fault (where the CPU was executing)
+//   Row 3 (lower):  8 bits  = { exc_last_ff, exc_detail[2:0], BUILD_ID[3:0] }
+//
+// BUILD_ID is a hardcoded constant, incremented whenever this display
+// changes. It permanently removes the "is the new core actually loaded?"
+// question that the repeated 5-flash reading raised.
+localparam       BITS_MODE = 1'b1;
+localparam [3:0] BUILD_ID  = 4'h5;
+localparam [9:0] BITS_H0   = 10'd48;
+
+wire [9:0] bits_x    = hcnt - BITS_H0;
+wire [4:0] bit_slot  = bits_x[7:3];        // which block: (hcnt-48)/8
+wire [2:0] bits_sub  = bits_x[2:0];        // position within the block
+
+wire bits_row1 = (vcnt >= 10'd64)  && (vcnt < 10'd96);
+wire bits_row2 = (vcnt >= 10'd112) && (vcnt < 10'd144);
+wire bits_row3 = (vcnt >= 10'd160) && (vcnt < 10'd192);
+
+wire [4:0]  bits_n   = bits_row2 ? 5'd24 : 5'd8;
+wire [23:0] bits_val = bits_row1 ? { 16'd0, exc_vec_num }
+                     : bits_row2 ? exc_fetch_addr
+                     :             { 16'd0, exc_last_ff, exc_detail, BUILD_ID };
+
+// Two guards that are easy to get wrong and would each produce a WRONG but
+// plausible-looking display:
+//  1. hcnt >= BITS_H0, because bits_x underflows and wraps to a large value
+//     to the left of the display origin.
+//  2. bits_x < 192, because bit_slot is sliced as bits_x[7:3] and therefore
+//     ALIASES every 256 pixels -- without this the rows would be redrawn a
+//     second time further right, which could easily be misread as extra bits.
+wire bits_active = BITS_MODE && diag_phase && (bits_row1 || bits_row2 || bits_row3)
+                   && (hcnt >= BITS_H0) && (bits_x < 10'd192)
+                   && (bit_slot < bits_n) && (bits_sub < 3'd6);
+wire bits_one    = bits_val[ bits_n - 5'd1 - bit_slot ];   // MSB leftmost
 
 assign red   = startup_phase ? 5'h1F
+             : bits_active   ? (bits_one ? 5'h1F : (bit_slot[2] ? 5'h00 : 5'h0C))
              : diag_phase    ? (flash_white ? 5'h1F : show_green ? 5'h00 : show_blue ? 5'h00 : show_orange ? 5'h1F : show_magenta ? 5'h1F : show_maroon ? 5'h1F : show_lilac ? 5'h1F : (!wdog_kick_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_r
              : (gfx_en[0] ? pal_rgb[14:10] : 5'd0);
 assign green = startup_phase ? 5'h1F
+             : bits_active   ? (bits_one ? 5'h1F : 5'h00)
              : diag_phase    ? (flash_white ? 5'h1F : show_green ? 5'h1F : show_blue ? 5'h00 : show_orange ? 5'h0A : show_magenta ? 5'h00 : show_maroon ? 5'h00 : show_lilac ? 5'h0A : ( boot_done_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_g
              : (gfx_en[0] ? pal_rgb[ 9: 5] : 5'd0);
 assign blue  = startup_phase ? 5'h1F
+             : bits_active   ? (bits_one ? 5'h1F : (bit_slot[2] ? 5'h0C : 5'h00))
              : diag_phase    ? (flash_white ? 5'h1F : show_green ? 5'h00 : show_blue ? 5'h1F : show_orange ? 5'h00 : show_magenta ? 5'h1F : show_maroon ? 5'h0A : show_lilac ? 5'h1F : ( nvram_wr_ever ? 5'h1F : 5'h00))
              : show_raster   ? dbg_b
              : (gfx_en[0] ? pal_rgb[ 4: 0] : 5'd0);
