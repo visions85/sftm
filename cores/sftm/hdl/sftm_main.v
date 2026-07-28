@@ -252,6 +252,25 @@ module sftm_main #(
     // answer with no risk of a stale early hit.
     output reg [15:0]   exc_code_ram,
 
+    // pc_snapshot_addr/word: a ONE-SHOT snapshot of last_fetch_addr/
+    // last_fetch_data (see the block comment at that always block), taken
+    // the instant poll_armed first goes high (~5s after hard reset, the
+    // same settle delay poll_region already uses -- reused directly, no new
+    // timer). Answers "where is the CPU's PC, right now, in steady state?"
+    // directly, with none of the pitfalls that sank exc_vec/exc_fetch_addr:
+    // those latched on the FIRST read matching an address range, which the
+    // power-on RAM self-test satisfies incidentally while sweeping every RAM
+    // address including the vector table (see the ROM CROSS-CHECK and "ROM
+    // fetch path cleared" retractions in AGENTS.md). This instead freezes on
+    // a fixed TIME, completely independent of which address is touched --
+    // if the CPU is genuinely parked in a repeating loop by 5s in (which
+    // every established finding this session points toward: it fetches
+    // forever, is deterministic across reboots, and never reaches any
+    // recorded milestone), the snapshot lands on some instruction inside
+    // that loop and reveals exactly where it is.
+    output reg [23:0]   pc_snapshot_addr,
+    output reg [15:0]   pc_snapshot_word,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -784,6 +803,27 @@ always @(posedge clk) begin
     end
 end
 assign exc_last_ff = last_fetch_ff;
+
+// pc_snapshot_addr/word: see the port comment above. poll_armed is defined
+// later in this file (the poll_region block) but is a plain wire, so the
+// forward reference is fine. One-shot: only the transition of poll_armed
+// 0->1 is captured (guarded by pc_snap_done), not held live -- last_fetch_*
+// updates on every single instruction fetch (i.e. every few CPU cycles),
+// far faster than the ~60Hz video scan-out, so a live (non-snapshotted)
+// display of it would tear/flicker within a single on-screen row as the
+// value changed mid-scanline. Freezing once gives a stable, readable value.
+reg pc_snap_done;
+always @(posedge clk) begin
+    if( rst ) begin
+        pc_snap_done     <= 1'b0;
+        pc_snapshot_addr <= 24'd0;
+        pc_snapshot_word <= 16'd0;
+    end else if( poll_armed && !pc_snap_done ) begin
+        pc_snap_done     <= 1'b1;
+        pc_snapshot_addr <= last_fetch_addr;
+        pc_snapshot_word <= last_fetch_data;
+    end
+end
 
 wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2);
 always @(posedge clk) begin
