@@ -131,6 +131,7 @@ module sftm_video(
     input      [ 1:0]   post_wr_fetch_count,
     input      [ 2:0]   poll_region,
     input      [ 2:0]   exc_vec,
+    input      [ 2:0]   exc_detail,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -818,11 +819,52 @@ wire show_lilac     = show_stuck & ~wdog_fired_ever &  nvram_region_wr_ever;
 //     N=6: OTHER exception (zero divide, CHK, TRAPV, trace, TRAP #n, ...).
 //     N=7: INTERRUPT AUTOVECTOR (vectors 24-31) -- an interrupt actually
 //          serviced. Expected never to appear given interrupts are masked.
+//
+// HARDWARE RESULT (commit 00f0035, 2026-07-28): **N=5** -- the CPU DID take an
+// exception, in the PRIVILEGE VIOLATION / LINE-A / LINE-F group (vector 8, 10
+// or 11). So the steady-state loop IS a dead-end fault handler, confirming the
+// branch-to-self hypothesis. Since that category covers three quite different
+// causes it must now be split.
+//
+// REPURPOSED AGAIN to `exc_detail`, which splits that group into individual
+// vectors AND simultaneously tests the strongest remaining hypothesis, so no
+// extra hardware round trip is spent. That hypothesis: the CPU data-in mux in
+// sftm_main.v ends in `default: inp_mux = 16'hffff`, so ANY read of an
+// UNMAPPED address returns 0xFFFF -- and 0xFFFF is itself a line-F opcode.
+// If the CPU jumps into unmapped space, every fetch returns 0xFFFF and it
+// takes a line-F exception immediately. `last_fetch_ff` records whether the
+// last fetched word was 0xFFFF, which separates that from a real coprocessor
+// opcode in valid code. Full rationale, and an honest caveat about 68k
+// prefetch weakening the non-0xFFFF direction, are at the logic in sftm_main.v.
+//   N = 1 + exc_detail   (1..7 flashes)
+//     N=1: no fault captured at all. Would CONTRADICT the N=5 result above and
+//          mean the failure is non-deterministic between runs -- itself an
+//          important finding rather than a null result.
+//     N=2: PRIVILEGE VIOLATION (vector 8) -- a privileged instruction executed
+//          in user mode. Would imply the CPU is not in supervisor state when
+//          it should be, pointing at S-bit / RTE / stack-frame handling.
+//     N=3: LINE-A (vector 10) -- an 0xAxxx opcode, which is unused on the 68k
+//          and appears in no real compiler output, so this means executing
+//          garbage data as code.
+//     N=4: LINE-F (vector 11) **with the last fetch == 0xFFFF** -- STRONGEST
+//          DIAGNOSIS: the CPU has jumped into UNMAPPED address space and is
+//          fetching the mux default. The bug is then in our address decoding /
+//          ROM mapping, or in whatever computed that jump target -- a core
+//          bug, and one we can chase directly.
+//     N=5: LINE-F (vector 11) with the last fetch NOT 0xFFFF -- a genuine
+//          0xFxxx coprocessor/extension opcode. TG68K is instantiated in
+//          68020 mode with MUL/DIV/BitField/extAddr extensions enabled, but
+//          coprocessor (F-line) instructions are still unimplemented, so this
+//          would mean the game really does use one. Treat with the prefetch
+//          caveat in mind: this does not fully exclude the unmapped theory.
+//     N=6: ILLEGAL INSTRUCTION (vector 4) -- would contradict N=5 above.
+//     N=7: any OTHER vector -- also contradicts N=5; suggests
+//          non-determinism or a probe problem.
 localparam [5:0] FLASH_ON  = 6'd30;
 localparam [5:0] FLASH_SEG = 6'd60;
 localparam [6:0] FLASH_HOLD = 7'd90;
 
-wire [2:0] flash_count = 3'd1 + exc_vec;
+wire [2:0] flash_count = 3'd1 + exc_detail;
 
 reg        flash_state;    // 0 = flashing, 1 = holding (steady, no flash)
 reg [5:0]  flash_seg_pos;  // 0..59 within the current 60-frame flash segment
