@@ -136,6 +136,14 @@ module sftm_video(
     input      [23:0]   exc_fetch_addr,
     input      [15:0]   exc_fetch_word,
     input               exc_last_ff,
+    // exc_code_ram: live mirror of RAM[0x0FBE], where this ROM's exception
+    // handlers record their own exception code before parking. See the
+    // detailed port comment in sftm_main.v. Unlike exc_vec/exc_detail
+    // above (retracted as false positives -- see AGENTS.md ROM cross-check
+    // -- because the power-on RAM self-test sweeps the vector table and
+    // trips any address-match latch on a first-hit basis), this is a live
+    // value with no freeze, so it settles on the true final answer.
+    input      [15:0]   exc_code_ram,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -906,6 +914,16 @@ always @(posedge clk) begin
 end
 
 wire flash_on    = !flash_state && (flash_seg_pos < FLASH_ON);
+
+// BITS_MODE must be declared before flash_white below, which reads it --
+// iverilog will not bind a localparam referenced in a continuous assign
+// ahead of its own declaration, even though it is otherwise a compile-time
+// constant. (Pre-existing ordering bug found while adding exc_code_ram;
+// unrelated to that change -- the same failure reproduces on unmodified
+// HEAD.) The rest of the ON-SCREEN BIT DISPLAY block below still declares
+// BUILD_ID/BITS_H0 and the row logic in one place for readability.
+localparam       BITS_MODE = 1'b1;
+
 // Flash overlay SUPPRESSED while the bit display is active: it whites out the
 // whole screen periodically, which would obscure the bit rows below.
 wire flash_white = show_stuck & flash_on & ~BITS_MODE;
@@ -941,6 +959,11 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 //   Row 2: 12 bits = exc_fetch_addr[23:12]   (upper 3 hex digits)
 //   Row 3: 12 bits = exc_fetch_addr[11:0]    (lower 3 hex digits)
 //   Row 4: 16 bits = exc_fetch_word          (the faulting opcode itself)
+//   Row 5: 16 bits = exc_code_ram            (RAM[0x0FBE] -- the game's OWN
+//                     recorded exception code; see sftm_main.v port comment.
+//                     Rows 1-4 are RETRACTED as unreliable -- kept on screen
+//                     only for reference/continuity -- this row is the only
+//                     trustworthy one: AGENTS.md's ROM cross-check.)
 //
 // The address is split across two 12-bit rows rather than one 24-bit row
 // purely to respect the width limit above.
@@ -948,8 +971,7 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // BUILD_ID is hardcoded and incremented whenever this display changes, so
 // every reading is self-identifying and the "is the new core actually loaded?"
 // ambiguity can never recur.
-localparam       BITS_MODE = 1'b1;
-localparam [3:0] BUILD_ID  = 4'h6;
+localparam [3:0] BUILD_ID  = 4'h7;
 localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
@@ -960,12 +982,14 @@ wire bits_row1 = (vcnt >= 10'd40)  && (vcnt < 10'd64);
 wire bits_row2 = (vcnt >= 10'd80)  && (vcnt < 10'd104);
 wire bits_row3 = (vcnt >= 10'd120) && (vcnt < 10'd144);
 wire bits_row4 = (vcnt >= 10'd160) && (vcnt < 10'd184);
+wire bits_row5 = (vcnt >= 10'd200) && (vcnt < 10'd224);
 
 wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
 wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, exc_detail }
                      : bits_row2 ? { 12'd0, exc_fetch_addr[23:12] }
                      : bits_row3 ? { 12'd0, exc_fetch_addr[11:0]  }
-                     :             { 8'd0,  exc_fetch_word };
+                     : bits_row4 ? { 8'd0,  exc_fetch_word }
+                     :             { 8'd0,  exc_code_ram };
 
 // Two guards that are easy to get wrong and would each produce a WRONG but
 // plausible-looking display:
@@ -975,7 +999,7 @@ wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, e
 //     ALIASES every 256 pixels -- without this the rows would be redrawn a
 //     second time further right, which could easily be misread as extra bits.
 wire bits_active = BITS_MODE && diag_phase
-                   && (bits_row1 || bits_row2 || bits_row3 || bits_row4)
+                   && (bits_row1 || bits_row2 || bits_row3 || bits_row4 || bits_row5)
                    && (hcnt >= BITS_H0) && (bits_x < 10'd128)
                    && (bit_slot < bits_n) && (bits_sub < 3'd6);
 wire bits_one    = bits_val[ bits_n - 5'd1 - bit_slot ];   // MSB leftmost
