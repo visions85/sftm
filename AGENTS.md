@@ -340,6 +340,86 @@ The real romset was located on the user's machine (`~/Library/Application Suppor
 - **Why the fault address was ambiguous**: `0x800400`-`0x80043F` contains BOTH the reset entry AND that vector-copy/RAM-clear init, so the six unreadable low address bits genuinely mattered. Build `0x6` reports the full 24-bit address plus the fetched word, which will say exactly which fetch dies and what the CPU saw.
 - **Useful spare lead**: every ROM exception handler is `MOVE.W #code,($0FBE).W` followed by a branch (`0x8008F0`→code 0, `0x8008F8`→code 1 [line-A and line-F and illegal all vector here], `0x800900`→code 2, `0x800908`→code 3). **The game records its own exception code in main RAM at `0x0FBE`**, so a future diagnostic row could display that word straight from RAM and read the game's own verdict.
 
+### ROM fetch path cleared in simulation -- and findings #10/#11 RETRACTED
+
+`cores/sftm/ver/romfetch/tb_romfetch.v` is the first testbench that lets TG68K
+run **freely** from reset against a model of the real 1 MB program ROM, checking
+every instruction fetch byte-for-byte. Two memory models were run:
+
+* `MODE=0`, ideal always-ready memory: boot copy done in 96 clk, **3694 fetches,
+  0 wrong words.**
+* `MODE=1`, bcache-like model that starts a fetch only on a LOW->HIGH edge of
+  `rom_cs` and deliberately returns stale data if `rom_addr` changes while
+  `rom_cs` stays high -- the exact hazard `cpu_rom_gap` exists to prevent:
+  boot copy done in 251 clk, **1628 fetches, 0 wrong words.**
+
+In both cases the boot copy lands SSP=`00008000` and PC=`00800400` in RAM
+correctly. **`rom_addr`, `rom_half` and the `cpu_rom_gap` handshake are
+correct. The ROM read path is not the bug.**
+
+**Findings #10 (`exc_vec==4`) and #11 (`exc_vec_num==11` -> LINE-F) are FALSE
+POSITIVES and are hereby retracted.**
+
+The reset code at `0x800400` ends in `JMP $0080158A`, and `0x80158A` is the
+power-on **RAM test**:
+
+```
+80158A: 41F8 0000        LEA     ($0000).W,A0     ; A0 = 0  <-- starts at the vector table
+80158E: 363C 1FFF        MOVE.W  #$1FFF,D3        ; 8192 longwords = all 32 KB
+801592: 45F9 0080157A    LEA     $0080157A,A2     ; pattern table
+801598: 241A             MOVE.L  (A2)+,D2
+80159A: 221A             MOVE.L  (A2)+,D1
+80159C: 2081             MOVE.L  D1,(A0)          ; write pattern
+80159E: 2010             MOVE.L  (A0),D0          ; READ IT BACK
+8015A0: B280             CMP.L   D0,D1
+8015A2: 6636             BNE.S   error
+8015A4: 51CA FFF4        DBF     D2,*-12
+```
+
+`exc_vec_rd` is `poll_rd & (cpu_addr[23:10]==0) & (cpu_addr[9:2]>=2)`, i.e. any
+**read** of bytes `0x008`-`0x3FF`. The RAM test reads every longword of RAM
+starting at 0, so it sweeps straight through the vector table and trips the
+latch. The simulation tracer proves it:
+
+```
+vec-table READ #1: byte 00000008 (vector 2) busstate=10, last instr fetch was 8015a0
+vec-table READ #4: byte 0000000c (vector 3) busstate=10, last instr fetch was 8015a0
+vec-table READ #7: byte 00000010 (vector 4) busstate=10, last instr fetch was 8015a0
+```
+
+`busstate=10` is a **data** read, the address marches sequentially upward, and
+the instruction responsible is the same RAM-test loop every time. A genuine
+exception vector fetch would be a single read at one address with the last
+instruction fetch sitting at the faulting instruction. It reports vector 2 only
+because vectors 0 and 1 are excluded by the `>=2` guard, so `0x008` is the first
+address in an ascending sweep that qualifies.
+
+This is the **second** time this exact class of mistake has bitten us (see the
+retraction of finding #3). Restating the lesson, because it keeps costing us
+days:
+
+> **An address-match diagnostic on a low RAM location proves nothing.** This
+> game writes *and reads back* all 32 KB of main RAM from address 0 during
+> power-on self-test. Any diagnostic that watches a fixed RAM address will fire
+> during that sweep. Only a diagnostic that inspects *what the program itself
+> concluded* is trustworthy.
+
+Also note: the `FFF4`/`FFE0` words previously flagged as "line-F" at
+`0x8015A6`/`0x8015B2` are the 16-bit **displacements** of `DBF` instructions
+(`51CA FFF4`), not opcodes. Counting fetched words against the `F000` mask
+without decoding cannot distinguish an opcode from an operand.
+
+**Consequently there is currently NO evidence that the CPU takes any exception
+at all.** In simulation it runs the RAM test healthily for thousands of fetches.
+The whole "LINE-F at 0x800400" narrative rested on the retracted latch.
+
+**Next diagnostic (the only trustworthy one left):** every exception handler in
+this ROM is `MOVE.W #code,($0FBE).W` followed by a branch -- `8008F0`->0,
+`8008F8`->1 (illegal/lineA/lineF), `800900`->2, `800908`->3. **The game records
+its own exception code in RAM at `0x0FBE`.** Displaying `RAM[0x0FBE]` reads the
+program's own verdict and cannot be faked by a memory sweep. Note the RAM test
+overwrites `0x0FBE`, so the display must be latched, or read after the test.
+
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
 - ~~ROM download via MRA confirmed working~~ — DONE; startup white diagnostic confirmed on hardware (2026-07-23)
