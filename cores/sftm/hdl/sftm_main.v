@@ -271,6 +271,21 @@ module sftm_main #(
     output reg [23:0]   pc_snapshot_addr,
     output reg [15:0]   pc_snapshot_word,
 
+    // pc_stable: is the CPU's PC in the SAME place ~10s after reset as it
+    // was at the ~5s pc_snapshot_addr/word point? A single sample can't
+    // distinguish a genuine repeating loop (matches every established
+    // finding: deterministic across reboots, fetches forever) from the CPU
+    // merely resting at 0x336BAC once and never being seen there again.
+    // A second, later snapshot answers that directly: equal means a fixed
+    // loop; different means the PC is roaming (e.g. cycling through
+    // unmapped space via repeated line-F exceptions with an uninitialised
+    // vector). See pc_snapshot2_addr/word below for the mechanism. Kept as
+    // a single bit for now to fit the existing on-screen rows without a
+    // layout change; if this reads "different", a follow-up build can
+    // expose the full second snapshot the same way pc_snapshot_addr/word
+    // already work.
+    output              pc_stable,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -824,6 +839,45 @@ always @(posedge clk) begin
         pc_snapshot_word <= last_fetch_data;
     end
 end
+
+// pc_snapshot2_addr/word: a SECOND one-shot snapshot, ~5s after the first
+// (own timer, since POLL_SAMPLE_DELAY already sits close to the 28-bit
+// counter's ~5.6s ceiling at 48MHz -- 30 bits gives headroom to ~22s).
+// Internal only (not a port): only the single-bit comparison below,
+// pc_stable, is exposed to keep this round's on-screen display within the
+// existing 5 rows. If pc_stable reads "different" on hardware, these two
+// registers already exist and a follow-up build can expose them directly
+// the same way pc_snapshot_addr/word do.
+localparam [29:0] PC_SNAPSHOT2_DELAY = 30'd480_000_000; // ~10s at 48 MHz
+reg [29:0] pc_snap2_dly_cnt;
+wire       pc_snap2_armed = pc_snap2_dly_cnt == PC_SNAPSHOT2_DELAY;
+always @(posedge clk) begin
+    if( rst )                   pc_snap2_dly_cnt <= 30'd0;
+    else if( !pc_snap2_armed )  pc_snap2_dly_cnt <= pc_snap2_dly_cnt + 30'd1;
+end
+
+reg        pc_snap2_done;
+reg [23:0] pc_snapshot2_addr;
+reg [15:0] pc_snapshot2_word;
+always @(posedge clk) begin
+    if( rst ) begin
+        pc_snap2_done     <= 1'b0;
+        pc_snapshot2_addr <= 24'd0;
+        pc_snapshot2_word <= 16'd0;
+    end else if( pc_snap2_armed && !pc_snap2_done ) begin
+        pc_snap2_done     <= 1'b1;
+        pc_snapshot2_addr <= last_fetch_addr;
+        pc_snapshot2_word <= last_fetch_data;
+    end
+end
+
+// pc_stable: see the port comment above. Requires BOTH snapshots to have
+// completed before it can read 1 -- by the time the on-screen display is
+// actually observed (many seconds into the persistent stuck state), both
+// will certainly be done, so this is not a source of ambiguity in practice.
+assign pc_stable = pc_snap_done && pc_snap2_done
+                  && (pc_snapshot_addr == pc_snapshot2_addr)
+                  && (pc_snapshot_word == pc_snapshot2_word);
 
 wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2);
 always @(posedge clk) begin

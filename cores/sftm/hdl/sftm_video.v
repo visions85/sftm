@@ -152,6 +152,11 @@ module sftm_video(
     // AGENTS.md for why that data was unreliable).
     input      [23:0]   pc_snapshot_addr,
     input      [15:0]   pc_snapshot_word,
+    // pc_stable: does a SECOND PC snapshot, ~5s after the first, match it?
+    // See the detailed port comment in sftm_main.v. Drives row 1's
+    // previously-retracted exc_detail[2:0] slot (bit 0 only; bits 1-2 are
+    // now spare/zero) -- a fixed loop vs. a roaming PC in unmapped space.
+    input                pc_stable,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -962,12 +967,18 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // ends at x=152, leaving margin at both edges.
 //
 //   Row 1: 16 bits = { BUILD_ID[3:0], exc_vec_num[7:0], exc_last_ff,
-//                      exc_detail[2:0] }   <- build stamp is the LEFTMOST
+//                      2'b00, pc_stable }   <- build stamp is the LEFTMOST
 //                      nibble, so it can be checked at a glance. Only
-//                      BUILD_ID and exc_last_ff (bits 11 and the low 3 of
-//                      exc_detail's slot -- see caveat below) are trustworthy
-//                      here; exc_vec_num/exc_detail share exc_vec's
-//                      RETRACTED first-hit-on-address-match latch mechanism.
+//                      BUILD_ID and pc_stable (the very last bit) are
+//                      trustworthy here; exc_vec_num/exc_last_ff share
+//                      exc_vec's RETRACTED first-hit-on-address-match latch
+//                      mechanism (exc_last_ff is live rather than latched,
+//                      but still tears against the ~60Hz scan-out the same
+//                      way pc_snapshot_addr/word were built to avoid -- not
+//                      reliable to read off a photo). The low 3 bits were
+//                      exc_detail before this build; now only the last of
+//                      those three carries a signal (pc_stable), the other
+//                      two are spare/zero.
 //   Row 2: 12 bits = pc_snapshot_addr[23:12] (upper 3 hex digits)
 //   Row 3: 12 bits = pc_snapshot_addr[11:0]  (lower 3 hex digits)
 //   Row 4: 16 bits = pc_snapshot_word        (instruction word fetched there)
@@ -988,7 +999,7 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // BUILD_ID is hardcoded and incremented whenever this display changes, so
 // every reading is self-identifying and the "is the new core actually loaded?"
 // ambiguity can never recur.
-localparam [3:0] BUILD_ID  = 4'h8;
+localparam [3:0] BUILD_ID  = 4'h9;
 localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
@@ -1002,7 +1013,7 @@ wire bits_row4 = (vcnt >= 10'd160) && (vcnt < 10'd184);
 wire bits_row5 = (vcnt >= 10'd200) && (vcnt < 10'd224);
 
 wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
-wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, exc_detail }
+wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, 2'b00, pc_stable }
                      : bits_row2 ? { 12'd0, pc_snapshot_addr[23:12] }
                      : bits_row3 ? { 12'd0, pc_snapshot_addr[11:0]  }
                      : bits_row4 ? { 8'd0,  pc_snapshot_word }
