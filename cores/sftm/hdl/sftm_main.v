@@ -224,6 +224,9 @@ module sftm_main #(
     // whether the steady-state loop is a fault handler or normal flow.
     // Full category map documented at the exc_vec logic below.
     output reg [2:0]    exc_vec,
+    // exc_detail: finer split of exc_vec, now that hardware has narrowed the
+    // fault to the privilege/line-A/line-F group. See the logic below.
+    output reg [2:0]    exc_detail,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -704,14 +707,56 @@ end
 //       the loop is reached by NORMAL program flow. That would make it a
 //       deliberate wait/delay loop rather than a crash, and shift suspicion
 //       onto whatever condition the code expects something else to change.
+// last_fetch_ff: was the most recently fetched instruction word 0xFFFF?
+//
+// This matters because the CPU data-in mux above ends in
+// `default: inp_mux = 16'hffff`, so ANY read of an unmapped address returns
+// 0xFFFF -- and 0xFFFF is itself a line-F opcode. That gives a very specific
+// and very likely failure mode: if the CPU jumps into unmapped address space,
+// every instruction fetch returns 0xFFFF and it immediately takes a line-F
+// exception (vector 11). Distinguishing that from a genuine line-F opcode
+// inside real code is exactly what separates "our address decoding is wrong /
+// the CPU ran off into nothing" from "the game legitimately uses a
+// coprocessor instruction TG68K lacks".
+//
+// Sampled on clkena, which is the exact tick the CPU consumes data_in, and
+// only during instruction fetches (busstate==2'b00).
+//
+// HONEST CAVEAT: the 68k prefetches, and between the faulting opcode and the
+// vector read the CPU may fetch further words and push a stack frame. So this
+// is strictly "was the LAST fetch before the fault 0xFFFF", not a guaranteed
+// capture of the exact faulting word. That is fine for the hypothesis being
+// tested: if the CPU is executing in unmapped space then ALL nearby fetches
+// return 0xFFFF, so the flag holds regardless of prefetch timing. A single
+// stray line-F opcode inside otherwise-valid code could in principle read
+// either way, so treat 0xFFFF as strong evidence FOR the unmapped theory but
+// non-0xFFFF as only weak evidence against it.
+reg last_fetch_ff;
+always @(posedge clk) begin
+    if( rst )                                 last_fetch_ff <= 1'b0;
+    else if( clkena && busstate == 2'b00 )    last_fetch_ff <= (cpu_din == 16'hffff);
+end
+
 reg [7:0] exc_vec_num;
 wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2);
 always @(posedge clk) begin
     if( rst ) begin
         exc_vec     <= 3'd0;
+        exc_detail  <= 3'd0;
         exc_vec_num <= 8'd0;
     end else if( exc_vec == 3'd0 && exc_vec_rd ) begin
         exc_vec_num <= cpu_addr[9:2];   // raw vector number, for waveform debug
+        // exc_detail: finer-grained follow-up encoding, now that hardware has
+        // narrowed the fault to the 8/10/11 group. Splits that group into its
+        // individual vectors AND tests the unmapped-fetch theory in the same
+        // build, so no extra hardware round trip is needed.
+        case( cpu_addr[9:2] )
+            8'd8:  exc_detail <= 3'd1;                       // privilege violation
+            8'd10: exc_detail <= 3'd2;                       // line-A
+            8'd11: exc_detail <= last_fetch_ff ? 3'd3 : 3'd4; // line-F, split by 0xFFFF
+            8'd4:  exc_detail <= 3'd5;                       // illegal instruction
+            default: exc_detail <= 3'd6;                     // any other vector
+        endcase
         case( cpu_addr[9:2] )
             8'd2:                   exc_vec <= 3'd1; // bus error
             8'd3:                   exc_vec <= 3'd2; // address error
