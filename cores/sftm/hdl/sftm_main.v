@@ -303,6 +303,15 @@ module sftm_main #(
     // loop body (see RAM_TEST_LO/HI below) at the moment that exception
     // fired? Answers "during or after the RAM test" directly.
     output               fault_in_ramtest,
+    // genuine_exc_fetch_addr/word: exactly where (last instruction fetch
+    // address) and what (the opcode fetched there) at the moment of that
+    // same genuine exception. Captured alongside genuine_exc_vec_num above,
+    // same freeze. Together these identify the exact faulting instruction
+    // directly against the ROM disassembly -- confirms or refutes the
+    // "missing F-line/coprocessor instruction" theory precisely instead of
+    // by inference.
+    output reg [23:0]   genuine_exc_fetch_addr,
+    output reg [15:0]   genuine_exc_fetch_word,
 
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
@@ -1019,19 +1028,22 @@ localparam [23:0] RAM_TEST_LO = 24'h801580;
 localparam [23:0] RAM_TEST_HI = 24'h8015C0;
 
 reg        genuine_exc_seen;
-reg [23:0] genuine_exc_fetch_addr; // internal only; not yet a port -- see
-                                    // fault_in_ramtest below, which is the
-                                    // one derived bit exposed this round.
 always @(posedge clk) begin
     if( rst ) begin
         genuine_exc_seen       <= 1'b0;
         genuine_exc_vec_num    <= 8'd0;
         genuine_exc_fetch_addr <= 24'd0;
+        genuine_exc_fetch_word <= 16'd0;
     end else if( !genuine_exc_seen && exc_vec_rd
                  && (last_write_addr != {cpu_addr, 1'b0}) ) begin
         genuine_exc_seen       <= 1'b1;
         genuine_exc_vec_num    <= cpu_addr[9:2];
         genuine_exc_fetch_addr <= last_fetch_addr;
+        // The actual opcode that faulted (approximately -- same prefetch
+        // caveat already documented at last_fetch_ff): with the address
+        // this identifies the exact instruction directly from the ROM
+        // disassembly, no need to separately confirm it's an F-line word.
+        genuine_exc_fetch_word <= last_fetch_data;
     end
 end
 

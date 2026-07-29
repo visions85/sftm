@@ -76,6 +76,8 @@ wire [15:0] vecC_hi;             // diagnostic: live mirror of RAM[0x2C:0x2D], l
 wire [15:0] vecC_lo;             // diagnostic: live mirror of RAM[0x2E:0x2F], line-F vector low word (sftm_main → sftm_video)
 wire [ 7:0] genuine_exc_vec_num; // diagnostic: which vector genuinely fired first, filtered against the RAM-test's write-then-readback pattern (sftm_main → sftm_video)
 wire        fault_in_ramtest;    // diagnostic: was the CPU executing inside the RAM self-test's loop body when that exception fired? (sftm_main → sftm_video)
+wire [23:0] genuine_exc_fetch_addr; // diagnostic: exact instruction-fetch address at the moment of that same genuine exception (sftm_main → sftm_video)
+wire [15:0] genuine_exc_fetch_word; // diagnostic: the opcode fetched there (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -171,7 +173,9 @@ sftm_main u_main(
     .vecC_hi            ( vecC_hi             ),
     .vecC_lo            ( vecC_lo             ),
     .genuine_exc_vec_num( genuine_exc_vec_num ),
-    .fault_in_ramtest   ( fault_in_ramtest    )
+    .fault_in_ramtest   ( fault_in_ramtest    ),
+    .genuine_exc_fetch_addr( genuine_exc_fetch_addr ),
+    .genuine_exc_fetch_word( genuine_exc_fetch_word )
 );
 
 // ---------------------------------------------------------------------------
@@ -258,7 +262,9 @@ sftm_video u_video(
     .vecC_hi            ( vecC_hi             ),
     .vecC_lo            ( vecC_lo             ),
     .genuine_exc_vec_num( genuine_exc_vec_num ),
-    .fault_in_ramtest   ( fault_in_ramtest    )
+    .fault_in_ramtest   ( fault_in_ramtest    ),
+    .genuine_exc_fetch_addr( genuine_exc_fetch_addr ),
+    .genuine_exc_fetch_word( genuine_exc_fetch_word )
 );
 
 // ---------------------------------------------------------------------------

@@ -168,6 +168,15 @@ module sftm_video(
     // the false-positive mechanism that sank the original exc_vec).
     input      [ 7:0]   genuine_exc_vec_num,
     input                fault_in_ramtest,
+    // genuine_exc_fetch_addr/word: exact address and opcode of the same
+    // genuine exception above. See the detailed port comment in
+    // sftm_main.v. Drives rows 5-7 below, replacing exc_code_ram/vecC_hi/
+    // vecC_lo -- all three already answered and understood (row 5:
+    // 0x2700, rows 6-7: 0x002C2700, both confirmed on hardware and
+    // documented in AGENTS.md) and their underlying live-tracking logic in
+    // sftm_main.v is untouched, just no longer given screen space.
+    input      [23:0]   genuine_exc_fetch_addr,
+    input      [15:0]   genuine_exc_fetch_word,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -990,13 +999,20 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 //   Row 2: 12 bits = pc_snapshot_addr[23:12] (upper 3 hex digits)
 //   Row 3: 12 bits = pc_snapshot_addr[11:0]  (lower 3 hex digits)
 //   Row 4: 16 bits = pc_snapshot_word        (instruction word fetched there)
-//   Row 5: 16 bits = exc_code_ram            (RAM[0x0FBE] -- the game's OWN
-//                     recorded exception code; see sftm_main.v port comment)
-//   Row 6: 16 bits = vecC_hi                 (RAM[0x2C:0x2D] -- line-F vector
-//                     high word; see sftm_main.v port comment)
-//   Row 7: 16 bits = vecC_lo                 (RAM[0x2E:0x2F] -- line-F vector
-//                     low word; { vecC_hi, vecC_lo } is the full 32-bit
-//                     address a line-F fault would jump to RIGHT NOW)
+//   Row 5: 12 bits = genuine_exc_fetch_addr[23:12] (upper 3 hex digits --
+//                     exact ROM address of the CONFIRMED genuine exception's
+//                     last instruction fetch; see sftm_main.v port comment)
+//   Row 6: 12 bits = genuine_exc_fetch_addr[11:0]  (lower 3 hex digits)
+//   Row 7: 16 bits = genuine_exc_fetch_word  (the actual opcode fetched
+//                     there -- together with rows 5-6, identifies the exact
+//                     faulting instruction directly against the ROM
+//                     disassembly)
+//
+// Rows 5-7 previously showed exc_code_ram/vecC_hi/vecC_lo -- all three
+// already answered and confirmed on hardware (0x2700 and 0x002C2700
+// respectively, see AGENTS.md), so their screen space was repurposed for
+// the next open question. Their underlying live-tracking logic in
+// sftm_main.v is untouched, just no longer given a row here.
 //
 // Rows 2-4 previously showed exc_fetch_addr/exc_fetch_word, RETRACTED as
 // unreliable (AGENTS.md ROM CROSS-CHECK / "ROM fetch path cleared"): that
@@ -1005,6 +1021,11 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // address. pc_snapshot_addr/word instead freeze on a fixed TIME (~5s after
 // reset, sftm_main.v's poll_armed) regardless of which address is touched,
 // so they cannot be fooled the same way -- see the port comment there.
+// genuine_exc_fetch_addr/word (rows 5-7) use a THIRD, different fix (see
+// sftm_main.v): they freeze on the first vector-table read whose address
+// differs from the immediately preceding write's address, which the RAM
+// self-test's own write-then-read-SAME-address verify pattern can never
+// satisfy.
 //
 // The address is split across two 12-bit (or 16-bit) rows rather than one
 // wide row purely to respect the width limit above.
@@ -1012,7 +1033,7 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // BUILD_ID is hardcoded and incremented whenever this display changes, so
 // every reading is self-identifying and the "is the new core actually loaded?"
 // ambiguity can never recur.
-localparam [3:0] BUILD_ID  = 4'hB;
+localparam [3:0] BUILD_ID  = 4'hC;
 localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
@@ -1033,14 +1054,14 @@ wire bits_row5 = (vcnt >= 10'd136) && (vcnt < 10'd160);
 wire bits_row6 = (vcnt >= 10'd168) && (vcnt < 10'd192);
 wire bits_row7 = (vcnt >= 10'd200) && (vcnt < 10'd224);
 
-wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
+wire [4:0]  bits_n   = (bits_row2 || bits_row3 || bits_row5 || bits_row6) ? 5'd12 : 5'd16;
 wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, genuine_exc_vec_num, fault_in_ramtest, 2'b00, pc_stable }
                      : bits_row2 ? { 12'd0, pc_snapshot_addr[23:12] }
                      : bits_row3 ? { 12'd0, pc_snapshot_addr[11:0]  }
                      : bits_row4 ? { 8'd0,  pc_snapshot_word }
-                     : bits_row5 ? { 8'd0,  exc_code_ram }
-                     : bits_row6 ? { 8'd0,  vecC_hi }
-                     :             { 8'd0,  vecC_lo };
+                     : bits_row5 ? { 12'd0, genuine_exc_fetch_addr[23:12] }
+                     : bits_row6 ? { 12'd0, genuine_exc_fetch_addr[11:0]  }
+                     :             { 8'd0,  genuine_exc_fetch_word };
 
 // Two guards that are easy to get wrong and would each produce a WRONG but
 // plausible-looking display:
