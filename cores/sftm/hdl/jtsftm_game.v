@@ -74,6 +74,8 @@ wire [15:0] pc_snapshot_word;   // diagnostic: one-shot snapshot of the instruct
 wire        pc_stable;          // diagnostic: does a second, later PC snapshot match the first? (sftm_main → sftm_video)
 wire [15:0] vecC_hi;             // diagnostic: live mirror of RAM[0x2C:0x2D], line-F vector high word (sftm_main → sftm_video)
 wire [15:0] vecC_lo;             // diagnostic: live mirror of RAM[0x2E:0x2F], line-F vector low word (sftm_main → sftm_video)
+wire [ 7:0] genuine_exc_vec_num; // diagnostic: which vector genuinely fired first, filtered against the RAM-test's write-then-readback pattern (sftm_main → sftm_video)
+wire        fault_in_ramtest;    // diagnostic: was the CPU executing inside the RAM self-test's loop body when that exception fired? (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -167,7 +169,9 @@ sftm_main u_main(
     .pc_snapshot_word   ( pc_snapshot_word    ),
     .pc_stable          ( pc_stable           ),
     .vecC_hi            ( vecC_hi             ),
-    .vecC_lo            ( vecC_lo             )
+    .vecC_lo            ( vecC_lo             ),
+    .genuine_exc_vec_num( genuine_exc_vec_num ),
+    .fault_in_ramtest   ( fault_in_ramtest    )
 );
 
 // ---------------------------------------------------------------------------
@@ -252,7 +256,9 @@ sftm_video u_video(
     .pc_snapshot_word   ( pc_snapshot_word    ),
     .pc_stable          ( pc_stable           ),
     .vecC_hi            ( vecC_hi             ),
-    .vecC_lo            ( vecC_lo             )
+    .vecC_lo            ( vecC_lo             ),
+    .genuine_exc_vec_num( genuine_exc_vec_num ),
+    .fault_in_ramtest   ( fault_in_ramtest    )
 );
 
 // ---------------------------------------------------------------------------
