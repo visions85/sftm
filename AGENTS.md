@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default), not a fixed loop; `vecC_hi`/`vecC_lo` then **confirmed** the line-F exception vector table entry is genuinely corrupted (`0x002C2700`, not the ROM's real `0x8008F8` handler) — almost certainly by the RAM self-test's own write sweep across low RAM. **CONFIRMED (2026-07-29)**: `genuine_exc_vec_num`/`fault_in_ramtest` (build 0xB, row 1, filtered so the RAM-test's write-then-readback pattern genuinely cannot trigger it — verified in simulation) read `vec=11 (LINE-F)`, `fault_in_ramtest=0` on hardware. This is a real, confirmed exception — not a repeat false positive — and it fires AFTER the RAM test's loop completes, not during it. Leading explanation: TG68K lacks F-line (coprocessor) instruction support; a ROM that legitimately executes one shortly after the RAM test would fault here, fatally, only because the vector table hasn't been re-established since the RAM test clobbered it. **Must load via MRA** to use correct SWAB=0 ROM layout. **Current diagnostic**: `genuine_exc_fetch_addr`/`genuine_exc_fetch_word` (build 0xC, rows 5-7, repurposing three rows that already answered their questions) expose the exact ROM address and opcode of the confirmed line-F fault — cross-reference against the ROM disassembly to confirm the specific missing instruction. Next: read rows 5-7 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default), not a fixed loop; `vecC_hi`/`vecC_lo` then **confirmed** the line-F exception vector table entry is genuinely corrupted (`0x002C2700`, not the ROM's real `0x8008F8` handler) — almost certainly by the RAM self-test's own write sweep across low RAM. **CONFIRMED (2026-07-29)**: `genuine_exc_vec_num`/`fault_in_ramtest` (build 0xB, row 1, filtered so the RAM-test's write-then-readback pattern genuinely cannot trigger it — verified in simulation) read `vec=11 (LINE-F)`, `fault_in_ramtest=0` on hardware. This is a real, confirmed exception — not a repeat false positive — and it fires AFTER the RAM test's loop completes, not during it. Leading explanation: TG68K lacks F-line (coprocessor) instruction support; a ROM that legitimately executes one shortly after the RAM test would fault here, fatally, only because the vector table hasn't been re-established since the RAM test clobbered it. **Must load via MRA** to use correct SWAB=0 ROM layout. `genuine_exc_fetch_addr`/`genuine_exc_fetch_word` (build 0xC, rows 5-7) read `0x800410`/`0x003C` on hardware — the address precisely matches the tail of the already-disassembled `JMP $0080158A`, but the real ROM word there is `0x158A`, not `0x003C`. Simulated the exact scenario with the real ghdl-converted TG68K kernel and real PROM bytes: **the discrepancy does not reproduce** — both the ROM-fetch data path and `sftm_main.v`'s capture logic are confirmed correct and self-consistent. This one hardware reading wasn't independently photo-verified (unlike every other reading this session); next step is to re-observe it with a photo before concluding whether it's a transcription error or a real SDRAM/bcache timing hazard specific to the ROM longword-boundary crossing at that exact address. **Must load via MRA** to use correct SWAB=0 ROM layout. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -909,8 +909,57 @@ the vector number; hard reset clears both. **All 13 checks PASS** (up from
 `tb_vecC`, `tb_sftm_prot`, `tb_sftm_ram`, `tb_sftm_blitter`, `tb_sftm5506`,
 and the committed `tb_sftm_video` -- all still PASS (or fail with the same
 pre-existing, already-documented failures) -- no new regressions. Both
-`sftm_main.v` and `sftm_video.v` elaborate cleanly standalone. **Awaiting
-hardware observation of rows 5-7.**
+`sftm_main.v` and `sftm_video.v` elaborate cleanly standalone.
+
+- **HARDWARE RESULT (2026-07-29): `genuine_exc_fetch_addr=0x800410`,
+  `genuine_exc_fetch_word=0x003C`** (read from the user's direct colour
+  transcription of rows 6-7, no independent photo cross-check this round).
+  `0x800410` is exactly the tail two bytes of the already-disassembled
+  `JMP $0080158A` (`4EF9 0080158A`, spanning `0x80040C-0x800411`) -- a
+  precise, meaningful match: the confirmed genuine line-F exception fires
+  right as the CPU finishes fetching that JMP's own target-address operand.
+  But the REAL ROM word at `0x800410` (extracted directly from the actual
+  PROMs at `~/Library/Application Support/mame/roms/sftm.zip` on the user's
+  machine, assembled with `doc/rom_interleave.py`'s validated lane order) is
+  `0x158A`, not `0x003C` -- and `0x003C` doesn't match any nearby real ROM
+  word either; it IS the exact byte-swap of `0x3C00`, the real word at the
+  NEXT address, `0x800412`.
+- **Simulation check with the REAL TG68K kernel (this session) -- the
+  discrepancy does NOT reproduce.** Built `cores/sftm/hdl/tg68k/TG68KdotC_Kernel_conv.v`
+  locally (ghdl, `--std=08 -fsynopsys -frelaxed-rules`; required rebuilding
+  the Docker image with `--platform linux/amd64` explicitly -- the plain
+  `docker build`/`docker/run.sh` default to the host's native arch, and on
+  Apple Silicon that's arm64, where the Dockerfile's hardcoded
+  `/usr/lib/x86_64-linux-gnu/libLLVM.so.18.1` symlink source doesn't exist;
+  also needed `git submodule update --init --recursive` first, since
+  `cores/sftm/hdl/tg68k/` was an uninitialised empty submodule). New
+  testbench `/tmp/tb_fetch_desync.v`: a ROM model built from the ACTUAL
+  extracted PROM bytes for `0x800400-0x800444`, running the real kernel from
+  reset through the boot copy, the `ORI`/`MOVE.L`/`JMP` sequence, and several
+  instructions past the jump target, tracing every instruction-fetch bus
+  cycle. Confirms `cpu_din` correctly delivers `0x158A` the instant
+  `cpu_addr` hits `0x800410` (the ROM-fetch data path is not the bug), and
+  -- after fixing an off-by-one sampling bug in the testbench itself (reading
+  `last_fetch_addr`/`last_fetch_data` in the SAME cycle as the match, before
+  `sftm_main.v`'s own non-blocking assignment for that cycle had landed,
+  rather than the cycle after) -- that `last_fetch_addr`/`last_fetch_data`
+  correctly pair as `0x800410`/`0x158A`, fully self-consistent. **Neither the
+  ROM-fetch data path nor the capture logic in `sftm_main.v` is buggy for
+  this exact scenario, at least under an idealised always-ready ROM model.**
+- **Two explanations remain, not yet distinguished**: (a) this specific
+  hardware reading was a transcription error (plausible -- unlike every
+  other reading this session, it wasn't independently cross-checked against
+  a photo-decode); or (b) a genuine SDRAM/bcache timing hazard specific to
+  real hardware that this idealised simulation (constant `rom_ok=1`, no real
+  latency) cannot reproduce -- notably, `0x800410` is exactly a ROM
+  LONGWORD-boundary crossing (a new `rom_addr` request, the first word of a
+  fresh 32-bit burst), precisely the kind of transition `cpu_rom_gap`/the
+  `jtframe_romrq_bcache` module exist to handle carefully, and which a prior
+  entry in this log (`grom_cs`/`boot_cs` stale-cache bugs, both fixed
+  earlier) already showed this general class of hazard is not hypothetical
+  in this codebase. Next step: re-observe `genuine_exc_fetch_word` on
+  hardware once more, this time with a photo for independent verification,
+  before concluding either way.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
