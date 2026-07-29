@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space**, not a fixed loop; `vecC_hi`/`vecC_lo` **confirmed** the line-F vector table entry is genuinely corrupted (almost certainly by the RAM self-test's own write sweep); `genuine_exc_vec_num`/`fault_in_ramtest` then **confirmed a real line-F exception** (vec=11), firing after the RAM test completes, not during it. `genuine_exc_fetch_addr`/`word` pinned the exact fault location: `0x800410` (precisely the tail of the already-disassembled `JMP $0080158A`) / `0x003C` — **reconfirmed twice on hardware** (once via plain colour transcription, once independently via photo-decode, both agreeing exactly), but the real ROM word there is `0x158A`, and simulating this exact scenario with the real ghdl-converted TG68K kernel and real PROM bytes shows **no desync** — the RTL's ROM-fetch path and capture logic are both correct under an idealised always-ready ROM model. `0x003C = zero_extend(0x3C)`, the low byte alone of the NEXT longword's low half — a specific signature pointing at a real SDRAM/bcache timing hazard at this exact ROM longword-boundary crossing, not yet reproduced in simulation (would need a non-zero-latency ROM model to test directly). **Must load via MRA** to use correct SWAB=0 ROM layout. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space**, not a fixed loop; `vecC_hi`/`vecC_lo` **confirmed** the line-F vector table entry is genuinely corrupted (almost certainly by the RAM self-test's own write sweep); `genuine_exc_vec_num`/`fault_in_ramtest` then **confirmed a real line-F exception** (vec=11), firing after the RAM test completes, not during it. `genuine_exc_fetch_addr`/`word` pinned the exact fault location: `0x800410` (precisely the tail of the already-disassembled `JMP $0080158A`) / `0x003C` — **reconfirmed twice on hardware** (once via plain colour transcription, once independently via photo-decode, both agreeing exactly), but the real ROM word there is `0x158A`, and simulating this exact scenario with the real ghdl-converted TG68K kernel and real PROM bytes shows **no desync** — the RTL's ROM-fetch path and capture logic are both correct under an idealised always-ready ROM model. `0x003C = zero_extend(0x3C)`, the low byte alone of the NEXT longword's low half. A latency-swept realistic-ROM simulation (1-20 cycles) found no logic-level cause either. **Found and fixed a separate, real infrastructure bug while chasing this**: every Quartus build of this project has been running with NO timing constraints at all (`sys_top.sdc` never actually got copied into the project despite `mister.qsf` referencing it) — fixed via `docker/jtframe-patches/`, verified with a full rebuild on `gamingpc` (Tailscale-reachable, alias `gamingpc-ts`) that now correctly applies constraints and completes successfully. But even properly constrained, the worst timing paths are still PLL-internal, not on the CPU/ROM logic — so `genuine_exc_fetch_word`'s cause **remains unexplained**. Next: deploy the freshly-built, properly-constrained `.rbf` and re-observe on real hardware — the only way left to fully close this loop. **Must load via MRA** to use correct SWAB=0 ROM layout. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -984,6 +984,75 @@ pre-existing, already-documented failures) -- no new regressions. Both
     assembly under real wait states. Not yet investigated further this
     session; would need a more realistic (non-zero-latency) ROM model in
     simulation to test directly.
+
+### Missing SDC constraints fixed and verified with a full rebuild (this session)
+
+Chased the "real SDRAM/bcache timing hazard" hypothesis from the previous
+entry as far as it goes with the tooling available. Found something more
+fundamental first: **every Quartus build of this project has been running
+with NO timing constraints at all.** `mister.qsf` references `SDC_FILE
+sys_top.sdc` (bare filename, resolved relative to the Quartus project
+directory) with the comment "SDC file is copied and edited in the target
+folder" -- but nothing in the stock jtframe/jtcore project-generation flow
+actually performs that copy for this project, so every build reported
+`Critical Warning (332012): ... file not found: 'sys_top.sdc'` and proceeded
+with no `create_clock`/`derive_pll_clocks` for the entire design. This is
+separate from (but related to) the already-known `-1.15ns` PLL slack: that
+number was measured under this same unconstrained condition and, as it
+turns out, wasn't even the real worst path once constraints were correctly
+applied (see below).
+
+**Fix**: extended `build_id.tcl` (jtframe's own `PRE_FLOW_SCRIPT_FILE` hook,
+already used for the build-ID/CDF generation) to copy the vendored
+`sys_top.sdc` into the project directory before the rest of the flow runs.
+Applied via the existing `docker/jtframe-patches/` mechanism (same pattern
+as the `osd.sv`/`arcade_video.v` patches, copied over the jtframe module by
+`docker/entrypoint.sh` on every container start) -- see
+`docker/jtframe-patches/target/mister/hdl/sys/build_id.tcl`.
+
+**Also found and fixed while chasing this**: `sftm-quartus` is a fully
+standalone image (`Dockerfile.quartus`, not layered on `sftm-build`) with
+its own `entrypoint.sh` baked in at image-build time. The copy of that image
+present locally predated the jtframe-patches mechanism in its current form,
+so a full local rebuild was required to pick up the current logic --
+Quartus's own installer files (`docker/quartus-installers/`, 1.7GB + 600MB,
+gitignored, must be downloaded manually per Intel's CDN blocking automated
+downloads) weren't available on the machine this was first attempted on;
+completed instead on `gamingpc` (reachable via Tailscale, `100.89.211.23`,
+new SSH config alias `gamingpc-ts`) where they were already present.
+
+**Verified with a full rebuild (2026-07-29, gamingpc, ~10 minutes on native
+x86_64 hardware)**: `log/mister/sftm.log` line 35 now reads `Info: Copied
+.../sys_top.sdc -> .../cores/sftm/mister/sys_top.sdc`, no "file not found"
+warning, and the build completed (`Full Compilation was successful`,
+`release/mister/sftm.rbf` md5 `cedbb41eda02815e77bdfba7321633a3`, not yet
+deployed to hardware).
+
+**The timing picture changed, but not in the direction the previous entry's
+hypothesis needed.** Worst-case setup slack improved from `-1.150ns`
+(unconstrained, `pll_hdmi` internal counter) to `-0.339ns` (properly
+constrained) -- but the new worst path is `emu|pll|pll_inst`'s OWN internal
+PLL output-counter (`altera_pll_i|general[0].gpll~PLL_OUTPUT_COUNTER|divclk`),
+still a PLL-internal generator path, not a user-logic path. **None of the
+six worst-case setup-slack endpoints in the properly-constrained report
+reference `sftm_main`, `TG68KdotC_Kernel`, or anything in the ROM-fetch data
+path.** This weakens (does not fully rule out -- Quartus's summary only
+lists the worst few paths per category, not an exhaustive report) the
+"undetected real timing violation on the CPU/ROM path" theory from the
+previous entry: under correct constraints, that path is not among the worst
+in the design.
+
+**Where this leaves `genuine_exc_fetch_word`**: still unexplained. Neither
+idealised RTL simulation (multiple latencies, real TG68K kernel, real ROM
+bytes) nor a properly-constrained Quartus timing report point at a cause.
+The only way to fully close this loop now is to deploy this freshly-built,
+properly-constrained `.rbf` to real hardware and re-observe
+`genuine_exc_fetch_word` directly -- if it now reads `0x158A`, the missing
+constraints were somehow implicated after all (e.g. via a placement/routing
+difference Quartus made once it had real optimisation targets, not visible
+in the static slack summary alone); if it still reads `0x003C`, the mystery
+continues and the SDC fix, while a genuine and valuable infrastructure fix
+in its own right, is not the explanation.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
