@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default), not a fixed loop; `vecC_hi`/`vecC_lo` then **confirmed** the line-F exception vector table entry is genuinely corrupted (`0x002C2700`, not the ROM's real `0x8008F8` handler) — almost certainly by the RAM self-test's own write sweep across low RAM. **Current diagnostic**: `genuine_exc_vec_num`/`fault_in_ramtest` (build 0xB, row 1) — a CORRECTED version of the original retracted mechanism, this time filtered so the RAM-test's write-then-readback pattern genuinely cannot trigger it (verified in simulation against that exact pattern). Answers which vector actually fires first, and whether it happens during the RAM test's own loop or after it. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read row 1's middle byte + bit off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default), not a fixed loop; `vecC_hi`/`vecC_lo` then **confirmed** the line-F exception vector table entry is genuinely corrupted (`0x002C2700`, not the ROM's real `0x8008F8` handler) — almost certainly by the RAM self-test's own write sweep across low RAM. **CONFIRMED (2026-07-29)**: `genuine_exc_vec_num`/`fault_in_ramtest` (build 0xB, row 1, filtered so the RAM-test's write-then-readback pattern genuinely cannot trigger it — verified in simulation) read `vec=11 (LINE-F)`, `fault_in_ramtest=0` on hardware. This is a real, confirmed exception — not a repeat false positive — and it fires AFTER the RAM test's loop completes, not during it. Leading explanation: TG68K lacks F-line (coprocessor) instruction support; a ROM that legitimately executes one shortly after the RAM test would fault here, fatally, only because the vector table hasn't been re-established since the RAM test clobbered it. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: expose `genuine_exc_fetch_addr` (already computed internally, not yet a port) to find the exact ROM address/opcode that faults. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -839,8 +839,47 @@ checks PASS.** Re-ran `tb_sftm_main`, `tb_excoderam`, `tb_pcsnapshot`,
 `tb_sftm5506`, and the committed `tb_sftm_video` -- all still PASS (or fail
 with the same pre-existing, already-documented failures) -- no new
 regressions. Both `sftm_main.v` and `sftm_video.v` elaborate cleanly
-standalone. **Awaiting hardware observation of row 1's middle byte
-(`genuine_exc_vec_num`) and its `fault_in_ramtest` bit.**
+standalone.
+
+- **HARDWARE RESULT (2026-07-29): `genuine_exc_vec_num=11` (LINE-F),
+  `fault_in_ramtest=0`, `pc_stable=0`.** Read from the user's direct block
+  read of row 1 ("white, black, white, white, blue, blue, blue, blue,
+  white, black, white, white, blue, blue, blue, blue"), decoded by hand:
+  `BUILD_ID=1011=0xB` ✓ confirms the build, `genuine_exc_vec_num=00001011=11`,
+  `fault_in_ramtest=0`, spare bits `00` as expected, `pc_stable=0` (still
+  roaming, consistent with the earlier finding).
+  - **This is a GENUINELY confirmed line-F exception**, not a repeat of the
+    retracted false positive -- this mechanism was specifically built and
+    simulation-verified to reject the RAM self-test's write-then-readback
+    pattern that fooled the original `exc_vec`.
+  - **`fault_in_ramtest=0` means the fault happens AFTER the RAM test's own
+    loop body completes, not while still inside it.** Combined with
+    `vecC_hi/lo` from the previous entry (the vector table is already
+    corrupted by the time this fault reads it), the picture is now: the RAM
+    self-test runs and finishes, incidentally clobbering the low-RAM vector
+    table on the way (including line-F's entry) as an ordinary side effect
+    of testing all of RAM -- harmless BY ITSELF, since vectors are only read
+    on a real fault -- but SOMETHING after the test genuinely executes a
+    line-F-triggering instruction, and because the vector table was never
+    re-established first, that fault jumps into garbage instead of a real
+    handler.
+  - **Leading explanation for the fault itself**: `sftm_main.v`'s existing
+    "Also worth recording" note (see the earlier `exc_detail`/`0xFFFF`
+    section of this log) already established TG68K is instantiated in full
+    68020 integer mode (`MUL_Mode`/`DIV_Mode`/`BitField`/`extAddr_Mode`/
+    `BarrelShifter` all `=2`), ruling out the common "missing 68020 integer
+    instruction" explanations -- but **coprocessor (F-line) instructions
+    remain unimplemented**. A ROM that legitimately executes an F-line
+    opcode shortly after the RAM test (a real 68020 program construct, not
+    necessarily a bug in the ROM) would explain a genuine, otherwise-
+    survivable line-F trap that only becomes fatal here because the vector
+    table hasn't been re-initialised yet.
+  - **Next diagnostic**: expose `genuine_exc_fetch_addr` (already computed
+    internally this session, just not yet a port/row) -- the exact ROM
+    address executing right before this fault. That address can be looked
+    up directly in the ROM disassembly to identify the actual opcode,
+    turning "TG68K probably lacks some F-line instruction" into a specific,
+    actionable instruction to confirm or implement.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
