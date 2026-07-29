@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` ruled out "stuck in a dead-end handler". `pc_snapshot_addr`/`word` (time-triggered, immune to the address-sweep trap that sank the retracted diagnostics) found the CPU's PC executing from **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default) 5s after reset. `pc_stable` then found this is **not a fixed loop** — a second snapshot 5s later landed at a different address, and the same address drifts slightly (low byte only) across separate power cycles too. **Leading theory**: the CPU is cycling through unmapped space via repeated line-F exceptions on the `0xFFFF` it keeps fetching, jumping wherever the line-F vector-table entry (`RAM[0x2C]`) currently points — consistent with every fact gathered (fetches forever, zero I/O reads, interrupts masked, roaming). **Current diagnostic**: `vecC_hi`/`vecC_lo` (build 0xA, rows 6-7) — a live mirror of `RAM[0x2C:0x2F]` itself. If it reads the ROM's real handler address (`0x8008F8`), the vector is intact and the theory is wrong; if it reads anything else (especially near `0x336Bxx`), that's direct confirmation. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read rows 6-7 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` ruled out "stuck in a dead-end handler". `pc_snapshot_addr`/`word` (time-triggered, immune to the address-sweep trap that sank the retracted diagnostics) found the CPU's PC executing from **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default) 5s after reset. `pc_stable` then found this is **not a fixed loop** — a second snapshot 5s later landed at a different address, and the same address drifts slightly (low byte only) across separate power cycles too. **CONFIRMED (2026-07-29)**: `vecC_hi`/`vecC_lo` (build 0xA, rows 6-7, a live mirror of `RAM[0x2C:0x2F]`) read `0x002C2700` on hardware — NOT the ROM's real handler address `0x8008F8`. The line-F exception vector is genuinely corrupted (almost certainly by the power-on RAM self-test's own write sweep across low RAM, the same mechanism that produced two earlier retracted false positives). This directly confirms the roaming-PC theory at its source rather than by inference. **Open question**: the corrupted vector is the mechanism, not the root cause — why does an exception fire at all at a point where the vector table has already been swept over? Could be normal ROM behaviour that real hardware recovers from differently, or a core-specific fault. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: determine which vector is actually taken first, and whether it's during or after the RAM test. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -743,7 +743,50 @@ against); and hard reset clears both. **All 7 checks PASS.** Re-ran
 committed `tb_sftm_video` -- all still PASS (or fail with the same
 pre-existing, already-documented failures) -- no new regressions. Both
 `sftm_main.v` and `sftm_video.v` elaborate cleanly standalone.
-**Awaiting hardware observation of rows 6-7.**
+
+- **HARDWARE RESULT (2026-07-29): `{vecC_hi,vecC_lo} = 0x002C2700` -- the
+  line-F vector table entry is CONFIRMED CORRUPTED, not the ROM's real
+  `0x8008F8` handler.** Read via photo-decode (block-by-block, this photo
+  had heavier moiré than previous ones so the automated grid-fit alone was
+  lower-confidence -- resolved by asking the user to read rows 6 and 7 off
+  directly, which matched the photo-decode exactly on both rows, block for
+  block: `row6 = 0000000000101100 = 0x002C`, `row7 = 0010011100000000 =
+  0x2700`).
+  - **This directly confirms the leading theory from the previous two
+    entries** (inferred from `pc_snapshot_addr`/`pc_stable`, now verified at
+    the source): the line-F vector genuinely does not point to the ROM's
+    real handler. A line-F fault taken right now would jump to (an
+    address-decoded view of) `0x002C2700`, which is not in main RAM or
+    program ROM -- consistent with the CPU's PC being found roaming in
+    unmapped territory (`~0x336Bxx`).
+  - **`vecC_lo = 0x2700` is identical to `exc_code_ram` (row 5)**, a second,
+    independent address (`0x0FBE`) holding the exact same 16-bit value.
+    Given the RAM self-test writes 32-bit patterns drawn sequentially from a
+    pattern table across all 8192 longwords of RAM, and vector 11's
+    longword (`0x2C-0x2F`) and `exc_code_ram`'s word are swept at very
+    different points in that sequence, an exact match on the low half is a
+    real coincidence worth noting but does not change the core finding --
+    `vecC_hi=0x002C` (NOT matching `exc_code_ram`) already proves this is
+    sweep-pattern data, not the ROM's vector, regardless of how the low
+    half happens to line up.
+  - **Open question, not yet resolved**: this pins down the SYMPTOM (the
+    vector table has been overwritten with test-pattern data by the time a
+    fault reads it) but not the root cause. The power-on RAM self-test
+    overwriting its own low-RAM vector table is not inherently a bug --
+    vectors are only read when an exception actually fires, and if no
+    exception were expected during/after the test, a stale vector table
+    would be harmless. The real question is why an exception fires AT ALL
+    at a point where the vector table has already been swept over. Two
+    non-exclusive possibilities: (a) this is normal ROM behaviour and real
+    hardware also takes some exception here but recovers via a path our
+    core doesn't replicate correctly, or (b) something specific to this
+    core (timing, an SDRAM/RAM-test interaction, or another RTL bug)
+    triggers a fault the real chip would never take at this point. Next
+    diagnostic should determine which vector is actually taken first (not
+    necessarily line-F -- ANY vector clobbered by the same sweep would
+    produce the same downstream roaming-into-unmapped-space symptom once
+    read), and whether it happens during the RAM test's own execution or
+    afterward.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
