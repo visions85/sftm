@@ -293,6 +293,17 @@ module sftm_main #(
     output reg [15:0]   vecC_hi,
     output reg [15:0]   vecC_lo,
 
+    // genuine_exc_vec_num: which vector, if any, has genuinely fired --
+    // filtered so the RAM self-test's own write-then-readback pattern can't
+    // trigger it (see the detailed comment at the implementation below).
+    // Same numbering as the vector byte address / 4 (e.g. 11 = line-F).
+    // 0 = no genuine exception has fired yet.
+    output reg [ 7:0]   genuine_exc_vec_num,
+    // fault_in_ramtest: was the CPU executing inside the RAM self-test's own
+    // loop body (see RAM_TEST_LO/HI below) at the moment that exception
+    // fired? Answers "during or after the RAM test" directly.
+    output               fault_in_ramtest,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -960,6 +971,79 @@ always @(posedge clk) begin
         endcase
     end
 end
+
+// ---------------------------------------------------------------------------
+// genuine_exc_vec_num / fault_in_ramtest: a CORRECTED version of the
+// exc_vec mechanism above, which is retracted (see AGENTS.md ROM CROSS-CHECK
+// / "ROM fetch path cleared") because its trigger -- "any data read in the
+// vector table region" -- is exactly what the power-on RAM self-test does
+// on every pass while sweeping and verifying every address in RAM, without
+// ever taking a real exception.
+//
+// The fix: a genuine exception ALWAYS writes a stack frame (SR/PC/format-
+// vector word, at the descending supervisor stack pointer) immediately
+// before it reads the vector table. The RAM self-test's verify step instead
+// reads back the EXACT SAME address it just wrote (`MOVE.L D1,(A0)` then
+// `MOVE.L (A0),D0`) -- its "read" address is therefore always identical to
+// the immediately preceding write's address, while a real exception's stack
+// push is always at a completely different address (the stack, not the low
+// vector table). Requiring the two to differ cleanly separates them using
+// signals already on hand -- exc_vec_rd (reused as-is) for "a qualifying
+// vector-table read just happened", plus a new last_write_addr tracker.
+wire        raw_write_lvl = (busstate == 2'b11);
+reg         raw_write_lvl_d;
+always @(posedge clk) begin
+    if( rst ) raw_write_lvl_d <= 1'b0;
+    else      raw_write_lvl_d <= raw_write_lvl;
+end
+// Edge-detected on the RAW bus state, NOT cen-gated, same reason as poll_rd
+// above: a cen-gated level holds for several ticks per access under wait
+// states, which would make last_write_addr update mid-access instead of
+// once per genuine write.
+wire        write_edge = raw_write_lvl & ~raw_write_lvl_d;
+
+reg [23:0] last_write_addr;
+always @(posedge clk) begin
+    // Sentinel outside the 24-bit address space's low range so an
+    // exception's vector-table read can never accidentally match it before
+    // any write has happened yet.
+    if( rst )              last_write_addr <= 24'hFFFFFF;
+    else if( write_edge )  last_write_addr <= { cpu_addr, 1'b0 };
+end
+
+// RAM_TEST_LO/HI: the power-on RAM self-test's own loop body, per the ROM
+// CROSS-CHECK disassembly above (0x80158A LEA...DBF 0x8015A4). A few bytes
+// of slack on both ends for the prefetch caveat already documented at
+// last_fetch_ff.
+localparam [23:0] RAM_TEST_LO = 24'h801580;
+localparam [23:0] RAM_TEST_HI = 24'h8015C0;
+
+reg        genuine_exc_seen;
+reg [23:0] genuine_exc_fetch_addr; // internal only; not yet a port -- see
+                                    // fault_in_ramtest below, which is the
+                                    // one derived bit exposed this round.
+always @(posedge clk) begin
+    if( rst ) begin
+        genuine_exc_seen       <= 1'b0;
+        genuine_exc_vec_num    <= 8'd0;
+        genuine_exc_fetch_addr <= 24'd0;
+    end else if( !genuine_exc_seen && exc_vec_rd
+                 && (last_write_addr != {cpu_addr, 1'b0}) ) begin
+        genuine_exc_seen       <= 1'b1;
+        genuine_exc_vec_num    <= cpu_addr[9:2];
+        genuine_exc_fetch_addr <= last_fetch_addr;
+    end
+end
+
+// fault_in_ramtest: was the CPU executing inside the RAM self-test's own
+// loop body at the moment of the first genuine exception? Answers "during
+// or after the RAM test" directly rather than needing a second hardware
+// round trip to expose the full genuine_exc_fetch_addr. 0 before any
+// genuine exception is captured (matches genuine_exc_vec_num's own
+// not-yet-seen convention: vector 0 is never a real runtime vector either).
+assign fault_in_ramtest = genuine_exc_seen
+                         && (genuine_exc_fetch_addr >= RAM_TEST_LO)
+                         && (genuine_exc_fetch_addr <= RAM_TEST_HI);
 
 // ---------------------------------------------------------------------------
 // CPU data-in mux

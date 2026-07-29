@@ -162,6 +162,12 @@ module sftm_video(
     // Drives new rows 6-7 below.
     input      [15:0]   vecC_hi,
     input      [15:0]   vecC_lo,
+    // genuine_exc_vec_num/fault_in_ramtest: a CORRECTED replacement for
+    // exc_vec_num/exc_last_ff in row 1 below (both retracted -- see the
+    // detailed port comment in sftm_main.v for why the filter there fixes
+    // the false-positive mechanism that sank the original exc_vec).
+    input      [ 7:0]   genuine_exc_vec_num,
+    input                fault_in_ramtest,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -971,19 +977,16 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // inside about x=0..176. Max row is 16 blocks = 128 px starting at x=24, so it
 // ends at x=152, leaving margin at both edges.
 //
-//   Row 1: 16 bits = { BUILD_ID[3:0], exc_vec_num[7:0], exc_last_ff,
-//                      2'b00, pc_stable }   <- build stamp is the LEFTMOST
-//                      nibble, so it can be checked at a glance. Only
-//                      BUILD_ID and pc_stable (the very last bit) are
-//                      trustworthy here; exc_vec_num/exc_last_ff share
-//                      exc_vec's RETRACTED first-hit-on-address-match latch
-//                      mechanism (exc_last_ff is live rather than latched,
-//                      but still tears against the ~60Hz scan-out the same
-//                      way pc_snapshot_addr/word were built to avoid -- not
-//                      reliable to read off a photo). The low 3 bits were
-//                      exc_detail before this build; now only the last of
-//                      those three carries a signal (pc_stable), the other
-//                      two are spare/zero.
+//   Row 1: 16 bits = { BUILD_ID[3:0], genuine_exc_vec_num[7:0],
+//                      fault_in_ramtest, 2'b00, pc_stable }   <- build stamp
+//                      is the LEFTMOST nibble, so it can be checked at a
+//                      glance. Every field in this row is now trustworthy:
+//                      genuine_exc_vec_num/fault_in_ramtest replace the
+//                      retracted exc_vec_num/exc_last_ff this build (see
+//                      sftm_main.v port comment for the filter that fixes
+//                      the false-positive mechanism), and pc_stable was
+//                      already live/reliable. Only the middle 2 bits (was
+//                      exc_detail's top 2) are spare/zero.
 //   Row 2: 12 bits = pc_snapshot_addr[23:12] (upper 3 hex digits)
 //   Row 3: 12 bits = pc_snapshot_addr[11:0]  (lower 3 hex digits)
 //   Row 4: 16 bits = pc_snapshot_word        (instruction word fetched there)
@@ -1009,7 +1012,7 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // BUILD_ID is hardcoded and incremented whenever this display changes, so
 // every reading is self-identifying and the "is the new core actually loaded?"
 // ambiguity can never recur.
-localparam [3:0] BUILD_ID  = 4'hA;
+localparam [3:0] BUILD_ID  = 4'hB;
 localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
@@ -1031,7 +1034,7 @@ wire bits_row6 = (vcnt >= 10'd168) && (vcnt < 10'd192);
 wire bits_row7 = (vcnt >= 10'd200) && (vcnt < 10'd224);
 
 wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
-wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, 2'b00, pc_stable }
+wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, genuine_exc_vec_num, fault_in_ramtest, 2'b00, pc_stable }
                      : bits_row2 ? { 12'd0, pc_snapshot_addr[23:12] }
                      : bits_row3 ? { 12'd0, pc_snapshot_addr[11:0]  }
                      : bits_row4 ? { 8'd0,  pc_snapshot_word }
