@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Chased the resulting trail: `exc_code_ram` ruled out "stuck in a dead-end handler"; `pc_snapshot_addr`/`pc_stable` found the CPU's PC roaming through **unmapped address space**, not a fixed loop; `vecC_hi`/`vecC_lo` **confirmed** the line-F vector table entry is genuinely corrupted (almost certainly by the RAM self-test's own write sweep); `genuine_exc_vec_num`/`fault_in_ramtest` then **confirmed a real line-F exception** (vec=11), firing after the RAM test completes, not during it. `genuine_exc_fetch_addr`/`word` pinned the exact fault location: `0x800410` (precisely the tail of the already-disassembled `JMP $0080158A`) / `0x003C` — **reconfirmed twice on hardware** (once via plain colour transcription, once independently via photo-decode, both agreeing exactly), but the real ROM word there is `0x158A`, and simulating this exact scenario with the real ghdl-converted TG68K kernel and real PROM bytes shows **no desync** — the RTL's ROM-fetch path and capture logic are both correct under an idealised always-ready ROM model. `0x003C = zero_extend(0x3C)`, the low byte alone of the NEXT longword's low half. A latency-swept realistic-ROM simulation (1-20 cycles) found no logic-level cause either. **Found and fixed a separate, real infrastructure bug while chasing this**: every Quartus build of this project has been running with NO timing constraints at all (`sys_top.sdc` never actually got copied into the project despite `mister.qsf` referencing it) — fixed via `docker/jtframe-patches/`, verified with a full rebuild on `gamingpc` (Tailscale-reachable, alias `gamingpc-ts`) that now correctly applies constraints and completes successfully. But even properly constrained, the worst timing paths are still PLL-internal, not on the CPU/ROM logic — so `genuine_exc_fetch_word`'s cause **remains unexplained**. Next: deploy the freshly-built, properly-constrained `.rbf` and re-observe on real hardware — the only way left to fully close this loop. **Must load via MRA** to use correct SWAB=0 ROM layout. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics turned out to trigger on the game's own power-on RAM self-test verifying its writes, not on real exceptions — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. Solidly established: the CPU roams **unmapped address space**; the line-F vector table entry is genuinely corrupted (almost certainly by the RAM self-test's write sweep); `genuine_exc_vec_num`/`fault_in_ramtest` **confirmed a real line-F exception** (vec=11) firing after the RAM test, not during it, at ROM address `~0x800410` (precisely the tail of the already-disassembled `JMP $0080158A`). **Open sub-mystery, likely a dead end**: the captured opcode word there (`0x003C`) doesn't match the real ROM content (`0x158A`) — reproduced identically twice on hardware, but does NOT reproduce in idealised simulation, latency-swept simulation (1-20 cycles), or under a from-scratch Quartus rebuild with previously-missing timing constraints now correctly applied and verified (the constraints fix is real and valuable on its own — every prior build had silently run with none at all — but re-deploying and re-observing on hardware gave byte-identical `0x800410`/`0x003C`, ruling it out as the explanation). Every avenue reachable via RTL simulation and static timing analysis is now exhausted; the only remaining tool is SignalTap (real in-system capture, not yet attempted). **Recommended next direction**: set the `0x003C` puzzle aside and pursue the larger, independently-solid question directly — why does the ROM take an F-line trap at all right after the RAM test. **Must load via MRA** to use correct SWAB=0 ROM layout. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -1053,6 +1053,39 @@ difference Quartus made once it had real optimisation targets, not visible
 in the static slack summary alone); if it still reads `0x003C`, the mystery
 continues and the SDC fix, while a genuine and valuable infrastructure fix
 in its own right, is not the explanation.
+
+- **HARDWARE RESULT (2026-07-29): deployed the properly-constrained `.rbf`
+  (md5 `cedbb41eda02815e77bdfba7321633a3`) and re-observed. `BUILD_ID=1100=0xC`
+  confirmed (same build, SDC fix doesn't touch the diagnostic display), and
+  rows 5-7 read the EXACT SAME values as before the fix:
+  `genuine_exc_fetch_addr=0x800410`, `genuine_exc_fetch_word=0x003C`. This
+  **definitively rules out the missing timing constraints as the cause** --
+  the bug is byte-for-bit identical on hardware that now has correct
+  `create_clock`/`derive_pll_clocks` applied and passes Full Compilation.
+  Combined with the earlier findings (idealised simulation: no desync;
+  latency-swept simulation 1-20 cycles: no desync; static timing analysis:
+  CPU/ROM path not among the worst even when properly constrained), every
+  avenue reachable through RTL simulation and static analysis is now
+  exhausted without an explanation.
+  - **What's left**: SignalTap (Intel's in-system logic analyzer,
+    `jtcore --signaltap` support already exists per its own `--help` output
+    -- "Merge syn/signaltap.qsf and enable SignalTap") would capture the
+    ACTUAL internal signals (`rom_data`, `rom_ok`, `cpu_a`, `cpu_din`)
+    cycle-by-cycle on real hardware during the real fault, with no
+    simulation modelling assumptions at all -- the only tool left that could
+    plausibly resolve this. Substantial additional setup (a `signaltap.qsf`
+    defining capture signals/trigger conditions, a rebuild, and JTAG access
+    to read back the captured waveform) not yet attempted this session.
+  - Given the effort already spent without resolution, and that
+    `genuine_exc_fetch_word`'s exact value doesn't change the ALREADY-SOLID
+    finding that the CPU takes a genuine, confirmed line-F exception at
+    `~0x800410` after the RAM test with a corrupted vector table (see the
+    `genuine_exc_vec_num`/`vecC_hi`/`vecC_lo` entries above, all of which
+    stand independent of this specific byte value), this specific
+    sub-mystery may be worth setting aside in favour of pursuing the
+    original, larger question directly: WHY does the ROM take an F-line
+    trap at all right after the RAM test. That question doesn't depend on
+    resolving the `0x003C` discrepancy first.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
