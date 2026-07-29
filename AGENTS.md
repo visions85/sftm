@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-28): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop (`wdog_kick_ever` never fires) — deterministic hang, same on every boot. Two rounds of address-match "exception vector" diagnostics (`exc_vec`/`exc_detail`/`exc_fetch_addr`) produced false positives, both **retracted** — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` (RAM[0x0FBE], row 5) read `0x2700` on hardware (build 0x7) — not one of the four real exception codes, ruling out the "stuck in a dead-end handler" theory. Follow-up `pc_snapshot_addr`/`pc_snapshot_word` (build 0x8, a one-shot ~5s-post-reset, time-triggered snapshot of the CPU's live instruction-fetch address/word — immune to the address-sweep trap that sank two earlier diagnostics) read **`0x336BAC` / `0xFFFF`** on hardware, confirmed via photo-decode (26px-wide stable plateau) plus direct user observation of row 4 (all-white = `0xFFFF`). `0xFFFF` is the bus's unmapped-read default and `0x336BAC` is outside both main RAM and program ROM — **direct evidence the CPU's PC is executing from unmapped address space**, reopening the original "CPU ran off into nothing" theory. Not yet resolved: single wild jump vs. a repeating unmapped-space/line-F-exception cycle. **Current diagnostic**: `pc_stable` (build 0x9, row 1's last bit) — a second PC snapshot ~5s after the first; equal means a fixed loop, different means the PC is roaming. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read row 1's last bit off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` ruled out "stuck in a dead-end handler". `pc_snapshot_addr`/`word` (time-triggered, immune to the address-sweep trap that sank the retracted diagnostics) found the CPU's PC executing from **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default) 5s after reset. `pc_stable` then found this is **not a fixed loop** — a second snapshot 5s later landed at a different address, and the same address drifts slightly (low byte only) across separate power cycles too. **Leading theory**: the CPU is cycling through unmapped space via repeated line-F exceptions on the `0xFFFF` it keeps fetching, jumping wherever an uninitialised vector-table entry (`RAM[0x2C]`) happens to point each time — consistent with every fact gathered (fetches forever, zero I/O reads, interrupts masked, roaming). **Not yet confirmed directly.** **Must load via MRA** to use correct SWAB=0 ROM layout. Next: expose the full second PC snapshot and/or check `RAM[0x2C]` directly. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -645,6 +645,52 @@ already-documented failures) -- no new regressions. Both `sftm_main.v` and
 `sftm_video.v` elaborate cleanly standalone. **Awaiting hardware observation
 of row 1's last bit** (should render as one extra light/dark block at the
 end of row 1, block 15).
+
+- **HARDWARE RESULT (2026-07-29): `pc_stable=0` -- the PC is ROAMING, not a
+  fixed loop.** Read via the same photo-decode method (joint gutter fit
+  across all 5 rows, resolved against `BUILD_ID=1001=0x9` -- the correct
+  alignment produced a 27px-wide stable plateau, ~45x wider than any
+  incidental match at the wrong alignment) and independently confirmed by
+  direct user observation of row 1's last block (dark). Full row 1:
+  `BUILD_ID=0x9` (bits 0-3) ✓, `exc_vec_num`/`exc_last_ff` (retracted/
+  unreliable, unchanged from before), spare bits 0 as expected, `pc_stable`
+  (last bit) = **0**.
+  - **This rules out a fixed repeating loop at `0x336BAC`.** The CPU's PC at
+    the ~5s and ~10s marks within the SAME boot were at different addresses.
+  - **Independent corroboration from the OTHER rows this same reading**:
+    `pc_snapshot_addr` (the first, ~5s snapshot) this boot read
+    `0x336BAA` -- close to but NOT identical to the previous boot's
+    `0x336BAC` (differs by 2). `exc_code_ram` (row 5) and `pc_snapshot_word`
+    (row 4, `0xFFFF`) were identical to the previous boot both times.
+    A PC that lands at slightly different-but-nearby unmapped addresses
+    across separate power cycles, combined with moving between two
+    time-separated samples within one power cycle, is consistent with the
+    CPU genuinely drifting/roaming through unmapped space rather than
+    resting at one fixed address -- not just measurement noise (the
+    address is stable to the byte in the high 20 bits across every
+    reading so far; only the low few bits vary).
+  - **Leading explanation, matches every fact gathered so far**: the CPU is
+    likely cycling through unmapped space via repeated line-F exceptions.
+    Every fetch in unmapped space returns `0xFFFF` (the bus default), which
+    is itself a line-F opcode; if the line-F vector table entry (a fixed
+    address in main RAM, byte `0x2C`) hasn't been properly initialised by
+    this point in boot, each exception reads back whatever garbage sits
+    there and jumps to it -- landing back in unmapped space, at a slightly
+    different address depending on stack/timing state, and immediately
+    faulting again. This explains fetching forever, zero I/O reads (main-RAM
+    vector-table reads are excluded from `poll_region` the same way they
+    always have been), interrupts staying masked (never reached), AND now
+    the roaming behaviour, all from one mechanism.
+  - **Next diagnostic**: expose the full second snapshot
+    (`pc_snapshot2_addr`/`pc_snapshot2_word`, already implemented internally
+    in `sftm_main.v` this session, just not yet wired to the display) to see
+    exactly where the PC moved to by the ~10s mark -- confirming whether it's
+    bouncing between a small number of nearby unmapped addresses (consistent
+    with the line-F/uninitialised-vector cycle above) or drifting further
+    afield. Also worth checking: `RAM[0x2C]` (the line-F vector itself) via
+    the same kind of live/one-shot-snapshot technique used for
+    `exc_code_ram`/`pc_snapshot_addr`, which would confirm or rule out the
+    "uninitialised vector" mechanism directly rather than inferring it.
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)
