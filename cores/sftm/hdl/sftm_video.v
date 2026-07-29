@@ -157,6 +157,11 @@ module sftm_video(
     // previously-retracted exc_detail[2:0] slot (bit 0 only; bits 1-2 are
     // now spare/zero) -- a fixed loop vs. a roaming PC in unmapped space.
     input                pc_stable,
+    // vecC_hi/vecC_lo: live mirror of RAM[0x2C:0x2F], the line-F exception
+    // vector table entry. See the detailed port comment in sftm_main.v.
+    // Drives new rows 6-7 below.
+    input      [15:0]   vecC_hi,
+    input      [15:0]   vecC_lo,
 
     // Diagnostic: boot copy completed at least once.
     // G=0 → CPU never accessed ROM after boot copy (wrong reset vector or SDRAM issue).
@@ -984,6 +989,11 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 //   Row 4: 16 bits = pc_snapshot_word        (instruction word fetched there)
 //   Row 5: 16 bits = exc_code_ram            (RAM[0x0FBE] -- the game's OWN
 //                     recorded exception code; see sftm_main.v port comment)
+//   Row 6: 16 bits = vecC_hi                 (RAM[0x2C:0x2D] -- line-F vector
+//                     high word; see sftm_main.v port comment)
+//   Row 7: 16 bits = vecC_lo                 (RAM[0x2E:0x2F] -- line-F vector
+//                     low word; { vecC_hi, vecC_lo } is the full 32-bit
+//                     address a line-F fault would jump to RIGHT NOW)
 //
 // Rows 2-4 previously showed exc_fetch_addr/exc_fetch_word, RETRACTED as
 // unreliable (AGENTS.md ROM CROSS-CHECK / "ROM fetch path cleared"): that
@@ -993,31 +1003,41 @@ wire flash_white = show_stuck & flash_on & ~BITS_MODE;
 // reset, sftm_main.v's poll_armed) regardless of which address is touched,
 // so they cannot be fooled the same way -- see the port comment there.
 //
-// The address is split across two 12-bit rows rather than one 24-bit row
-// purely to respect the width limit above.
+// The address is split across two 12-bit (or 16-bit) rows rather than one
+// wide row purely to respect the width limit above.
 //
 // BUILD_ID is hardcoded and incremented whenever this display changes, so
 // every reading is self-identifying and the "is the new core actually loaded?"
 // ambiguity can never recur.
-localparam [3:0] BUILD_ID  = 4'h9;
+localparam [3:0] BUILD_ID  = 4'hA;
 localparam [9:0] BITS_H0   = 10'd24;
 
 wire [9:0] bits_x    = hcnt - BITS_H0;
 wire [4:0] bit_slot  = bits_x[7:3];        // which block: (hcnt-BITS_H0)/8
 wire [2:0] bits_sub  = bits_x[2:0];        // position within the block
 
-wire bits_row1 = (vcnt >= 10'd40)  && (vcnt < 10'd64);
-wire bits_row2 = (vcnt >= 10'd80)  && (vcnt < 10'd104);
-wire bits_row3 = (vcnt >= 10'd120) && (vcnt < 10'd144);
-wire bits_row4 = (vcnt >= 10'd160) && (vcnt < 10'd184);
-wire bits_row5 = (vcnt >= 10'd200) && (vcnt < 10'd224);
+// Vertical layout: 7 rows now (was 5). Tightened from a 40px to a 32px
+// period (24px-tall blocks + 8px gap, was 16px) to fit within the 240-line
+// active area (JTFRAME_HEIGHT) -- ends at vcnt 224, the same bottom margin
+// the original 5-row layout had. Row Y-position is independent of the
+// horizontal grid (BITS_H0/block pitch), so retiming rows here carries no
+// risk to the already hardware-validated X alignment.
+wire bits_row1 = (vcnt >= 10'd8)   && (vcnt < 10'd32);
+wire bits_row2 = (vcnt >= 10'd40)  && (vcnt < 10'd64);
+wire bits_row3 = (vcnt >= 10'd72)  && (vcnt < 10'd96);
+wire bits_row4 = (vcnt >= 10'd104) && (vcnt < 10'd128);
+wire bits_row5 = (vcnt >= 10'd136) && (vcnt < 10'd160);
+wire bits_row6 = (vcnt >= 10'd168) && (vcnt < 10'd192);
+wire bits_row7 = (vcnt >= 10'd200) && (vcnt < 10'd224);
 
 wire [4:0]  bits_n   = (bits_row2 || bits_row3) ? 5'd12 : 5'd16;
 wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, 2'b00, pc_stable }
                      : bits_row2 ? { 12'd0, pc_snapshot_addr[23:12] }
                      : bits_row3 ? { 12'd0, pc_snapshot_addr[11:0]  }
                      : bits_row4 ? { 8'd0,  pc_snapshot_word }
-                     :             { 8'd0,  exc_code_ram };
+                     : bits_row5 ? { 8'd0,  exc_code_ram }
+                     : bits_row6 ? { 8'd0,  vecC_hi }
+                     :             { 8'd0,  vecC_lo };
 
 // Two guards that are easy to get wrong and would each produce a WRONG but
 // plausible-looking display:
@@ -1027,7 +1047,8 @@ wire [23:0] bits_val = bits_row1 ? { 8'd0, BUILD_ID, exc_vec_num, exc_last_ff, 2
 //     ALIASES every 256 pixels -- without this the rows would be redrawn a
 //     second time further right, which could easily be misread as extra bits.
 wire bits_active = BITS_MODE && diag_phase
-                   && (bits_row1 || bits_row2 || bits_row3 || bits_row4 || bits_row5)
+                   && (bits_row1 || bits_row2 || bits_row3 || bits_row4 || bits_row5
+                       || bits_row6 || bits_row7)
                    && (hcnt >= BITS_H0) && (bits_x < 10'd128)
                    && (bit_slot < bits_n) && (bits_sub < 3'd6);
 wire bits_one    = bits_val[ bits_n - 5'd1 - bit_slot ];   // MSB leftmost
