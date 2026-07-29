@@ -72,6 +72,8 @@ wire [15:0] exc_code_ram;      // diagnostic: live mirror of RAM[0x0FBE], the ga
 wire [23:0] pc_snapshot_addr;   // diagnostic: one-shot snapshot of the CPU's instruction-fetch address, ~5s after reset (sftm_main → sftm_video)
 wire [15:0] pc_snapshot_word;   // diagnostic: one-shot snapshot of the instruction word fetched at that address (sftm_main → sftm_video)
 wire        pc_stable;          // diagnostic: does a second, later PC snapshot match the first? (sftm_main → sftm_video)
+wire [15:0] vecC_hi;             // diagnostic: live mirror of RAM[0x2C:0x2D], line-F vector high word (sftm_main → sftm_video)
+wire [15:0] vecC_lo;             // diagnostic: live mirror of RAM[0x2E:0x2F], line-F vector low word (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -163,7 +165,9 @@ sftm_main u_main(
     .exc_code_ram       ( exc_code_ram        ),
     .pc_snapshot_addr   ( pc_snapshot_addr    ),
     .pc_snapshot_word   ( pc_snapshot_word    ),
-    .pc_stable          ( pc_stable           )
+    .pc_stable          ( pc_stable           ),
+    .vecC_hi            ( vecC_hi             ),
+    .vecC_lo            ( vecC_lo             )
 );
 
 // ---------------------------------------------------------------------------
@@ -246,7 +250,9 @@ sftm_video u_video(
     .exc_code_ram       ( exc_code_ram        ),
     .pc_snapshot_addr   ( pc_snapshot_addr    ),
     .pc_snapshot_word   ( pc_snapshot_word    ),
-    .pc_stable          ( pc_stable           )
+    .pc_stable          ( pc_stable           ),
+    .vecC_hi            ( vecC_hi             ),
+    .vecC_lo            ( vecC_lo             )
 );
 
 // ---------------------------------------------------------------------------

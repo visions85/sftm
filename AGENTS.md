@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project overview
 
-SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` ruled out "stuck in a dead-end handler". `pc_snapshot_addr`/`word` (time-triggered, immune to the address-sweep trap that sank the retracted diagnostics) found the CPU's PC executing from **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default) 5s after reset. `pc_stable` then found this is **not a fixed loop** — a second snapshot 5s later landed at a different address, and the same address drifts slightly (low byte only) across separate power cycles too. **Leading theory**: the CPU is cycling through unmapped space via repeated line-F exceptions on the `0xFFFF` it keeps fetching, jumping wherever an uninitialised vector-table entry (`RAM[0x2C]`) happens to point each time — consistent with every fact gathered (fetches forever, zero I/O reads, interrupts masked, roaming). **Not yet confirmed directly.** **Must load via MRA** to use correct SWAB=0 ROM layout. Next: expose the full second PC snapshot and/or check `RAM[0x2C]` directly. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
+SFTM is a work-in-progress FPGA core for **Street Fighter: The Movie** (Incredible Technologies itech32 arcade platform), built on [JTFRAME](https://github.com/jotego/jtcores) for the MiSTer FPGA target. Status (2026-07-29): CPU is confirmed alive and executing indefinitely, but never reaches its outer main loop — deterministic hang, same on every boot. Multiple retracted diagnostics along the way (`exc_vec`/`exc_detail`/`exc_fetch_addr`) — see "ROM CROSS-CHECK" / "ROM fetch path cleared" below. `exc_code_ram` ruled out "stuck in a dead-end handler". `pc_snapshot_addr`/`word` (time-triggered, immune to the address-sweep trap that sank the retracted diagnostics) found the CPU's PC executing from **unmapped address space** (`~0x336Bxx`, reading the bus's `0xFFFF` default) 5s after reset. `pc_stable` then found this is **not a fixed loop** — a second snapshot 5s later landed at a different address, and the same address drifts slightly (low byte only) across separate power cycles too. **Leading theory**: the CPU is cycling through unmapped space via repeated line-F exceptions on the `0xFFFF` it keeps fetching, jumping wherever the line-F vector-table entry (`RAM[0x2C]`) currently points — consistent with every fact gathered (fetches forever, zero I/O reads, interrupts masked, roaming). **Current diagnostic**: `vecC_hi`/`vecC_lo` (build 0xA, rows 6-7) — a live mirror of `RAM[0x2C:0x2F]` itself. If it reads the ROM's real handler address (`0x8008F8`), the vector is intact and the theory is wrong; if it reads anything else (especially near `0x336Bxx`), that's direct confirmation. **Must load via MRA** to use correct SWAB=0 ROM layout. Next: read rows 6-7 off real hardware. All RTL is Verilog (GPLv3) except TG68K.C (VHDL, LGPL), vendored as a git submodule at `cores/sftm/hdl/tg68k/`.
 
 ## Commands
 
@@ -691,6 +691,59 @@ end of row 1, block 15).
     the same kind of live/one-shot-snapshot technique used for
     `exc_code_ram`/`pc_snapshot_addr`, which would confirm or rule out the
     "uninitialised vector" mechanism directly rather than inferring it.
+
+### `vecC_hi`/`vecC_lo` implemented -- live mirror of the line-F vector table entry (this session, build 0xA)
+
+Checks the leading theory directly rather than continuing to infer it:
+`RAM[0x2C:0x2F]` is the line-F (vector 11) exception vector table entry, a
+32-bit jump target address. Added `vecC_hi`/`vecC_lo` in `sftm_main.v`,
+following `exc_code_ram`'s exact live-mirror pattern (full-word write only,
+`boot_done`-gated) but split across two word addresses (`0x16`/`0x17` for
+byte `0x2C`/`0x2E`) since this is a 32-bit value on a 16-bit bus.
+
+**Important wrinkle documented in the RTL**: unlike `exc_code_ram` (word
+`0x07DF`, safely outside the boot-copy FSM's own address range), this vector
+sits INSIDE it -- `LW11` (byte `0x2C`) is within the `LW0-31` span the boot
+FSM copies from ROM before releasing the CPU, the same mechanism that
+supplies the correct reset SSP/PC. That's exactly the right behaviour here:
+`boot_done`-gating means the tracker starts right after the boot FSM has
+already written the ROM's real vector, so what's displayed is the CURRENT
+value post-boot -- if the RAM self-test's write sweep later clobbers it (the
+same mechanism already proven to cause two prior false positives, see the
+retractions above), that's what shows, which is exactly what we want to
+know: what would a fault actually jump to right now. Per the ROM
+CROSS-CHECK disassembly, the ROM's real vector 8/10/11 handler lives at
+`0x8008F8` -- if this reads that, the vector is intact and something else
+is wrong; if it reads something else (especially anything resembling the
+`~0x336Bxx` unmapped region `pc_snapshot_addr` already found the CPU roaming
+in), that's strong confirmation of the clobbered-vector theory.
+
+`sftm_video.v` gets two new rows (6-7) showing `vecC_hi`/`vecC_lo`. To fit
+7 rows total in the 240-line active area, ALL rows were retimed from a 40px
+to a 32px period (24px-tall blocks + 8px gap, was 16px) -- ends at the same
+vcnt 224 the old 5-row layout did. Row Y-position is independent of the
+horizontal grid (`BITS_H0`/block pitch), so this carries no risk to the
+already hardware-validated X alignment; the row Y-bands are also detected
+programmatically (not hardcoded) by whichever photo-decode script reads the
+result. `BUILD_ID` bumped to `0xA`.
+
+New testbench `/tmp/tb_vecC.v` (same `force`/`release` technique as
+`tb_excoderam.v`): confirms both halves are 0 right after boot (nothing
+written post-boot yet -- indirectly demonstrates the boot-copy FSM's own
+legitimate write is correctly NOT captured, since capturing it would show
+something other than RAM's power-on 0); a write to an unrelated word doesn't
+update either half; a partial (byte-lane-only) write doesn't update; a
+full-word write to the hi-word address updates only `vecC_hi`; a full-word
+write to the lo-word address updates only `vecC_lo` (`vecC_hi` unchanged,
+combining to the expected `0x008008F8` test value); a later write beats an
+earlier sweep-like write (the same regression `tb_excoderam.v` guards
+against); and hard reset clears both. **All 7 checks PASS.** Re-ran
+`tb_sftm_main`, `tb_excoderam`, `tb_pcsnapshot`, `tb_pcstable`,
+`tb_sftm_prot`, `tb_sftm_ram`, `tb_sftm_blitter`, `tb_sftm5506`, and the
+committed `tb_sftm_video` -- all still PASS (or fail with the same
+pre-existing, already-documented failures) -- no new regressions. Both
+`sftm_main.v` and `sftm_video.v` elaborate cleanly standalone.
+**Awaiting hardware observation of rows 6-7.**
 
 **Not yet implemented / validated:**
 - ~~TG68K.C VHDL→Verilog conversion for iverilog sim~~ — DONE (see ghdl command above; `--std=08 -fsynopsys -frelaxed-rules`)

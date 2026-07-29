@@ -286,6 +286,13 @@ module sftm_main #(
     // already work.
     output              pc_stable,
 
+    // vecC_hi/vecC_lo: live mirror of RAM[0x2C:0x2F], the line-F (vector 11)
+    // exception vector table entry -- the 32-bit address a line-F fault
+    // would actually jump to right now. See the detailed comment at the
+    // implementation below (near EXC_CODE_WORD/VEC_LINEF_HI_WORD).
+    output reg [15:0]   vecC_hi,
+    output reg [15:0]   vecC_lo,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -524,6 +531,40 @@ always @(posedge clk) begin
         exc_code_ram <= 16'd0;
     else if( boot_done && ram_we_lo && ram_we_hi && ram_addr == EXC_CODE_WORD )
         exc_code_ram <= ram_din;
+end
+
+// vecC_hi/vecC_lo: live mirror of the line-F (vector 11) exception vector
+// table entry, byte address 0x2C-0x2F (a 32-bit jump target address, split
+// across word addresses 0x16/0x17 the same way TG68K's 16-bit external bus
+// would write it as two separate word cycles for one CPU-side MOVE.L).
+//
+// This vector is INSIDE the boot-copy FSM's range (LW0-31, ram_addr up to
+// 14'h003F -- LW11 = byte 0x2C = word addrs 0x16/0x17), so boot_done
+// correctly starts RIGHT after the boot FSM has copied the ROM's own
+// line-F vector into RAM (the same mechanism that gives the correct reset
+// SSP/PC). Per the ROM CROSS-CHECK disassembly, the ROM's real vector 8/10/
+// 11 handler lives at 0x8008F8 -- if this reads that, the vector was copied
+// correctly and something else is wrong; if it reads anything else
+// (especially something resembling the unmapped region pc_snapshot_addr
+// found the CPU roaming in), the most likely explanation is the power-on
+// RAM self-test's own write sweep (0x80158A, MOVE.L-per-iteration across
+// all 32KB) clobbering the vector table on its way through low RAM -- the
+// same mechanism already proven to have produced two prior false positives
+// (see the ROM CROSS-CHECK / "ROM fetch path cleared" retractions), just
+// now checked directly instead of inferred. Gated identically to
+// exc_code_ram (full-word write only, boot_done islands out the boot-copy
+// FSM's own legitimate initial write) so this shows the CURRENT value --
+// exactly what a fault taken right now would actually jump to.
+localparam [13:0] VEC_LINEF_HI_WORD = 14'h0016; // byte 0x2C >> 1
+localparam [13:0] VEC_LINEF_LO_WORD = 14'h0017; // byte 0x2E >> 1
+always @(posedge clk) begin
+    if( rst ) begin
+        vecC_hi <= 16'd0;
+        vecC_lo <= 16'd0;
+    end else if( boot_done && ram_we_lo && ram_we_hi ) begin
+        if( ram_addr == VEC_LINEF_HI_WORD ) vecC_hi <= ram_din;
+        if( ram_addr == VEC_LINEF_LO_WORD ) vecC_lo <= ram_din;
+    end
 end
 
 // ---------------------------------------------------------------------------
