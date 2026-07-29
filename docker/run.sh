@@ -34,7 +34,16 @@ docker volume inspect "$VOLUME" &>/dev/null \
     || docker volume create "$VOLUME" >/dev/null
 
 # ---- Run ----
-exec docker run --rm -it \
+# -it only when actually attached to a terminal: unconditional -it fails
+# outright ("cannot attach stdin to a TTY-enabled container") when this
+# script runs non-interactively (CI, a background task, an agent). Mirrors
+# the fix already applied to run-synth.sh for the same reason.
+TTY_FLAGS=()
+if [[ -t 0 && -t 1 ]]; then
+    TTY_FLAGS=(-it)
+fi
+
+exec docker run --rm --platform linux/amd64 "${TTY_FLAGS[@]}" \
     -v "${REPO_DIR}:/workspace" \
     -v "${VOLUME}:/workspace/modules/jtframe" \
     -e JTROOT=/workspace \

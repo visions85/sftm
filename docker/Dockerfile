@@ -1,4 +1,11 @@
-FROM ubuntu:24.04
+# Pinned to amd64 regardless of host architecture. The apt packages this
+# image installs (ghdl-llvm, libllvm18) are only usable here via a hardcoded
+# x86_64 library symlink below; on an Apple Silicon host, a plain
+# `docker build` without this pin targets the native arm64 image, where that
+# symlink's source path doesn't exist and the RUN step fails. This matches
+# the rest of the project anyway -- Quartus (Dockerfile.quartus) requires
+# amd64 already (see the Rosetta 2 bss_size overflow note in git history).
+FROM --platform=linux/amd64 ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
