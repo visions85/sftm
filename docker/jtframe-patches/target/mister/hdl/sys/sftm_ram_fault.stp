@@ -1,0 +1,116 @@
+<session jtag_chain="DE-SoC [1-2]" jtag_device="@2: 5CSEBA6(.|ES)/5CSEMA6/.. (0x02D020DD)" sof_file="output_files/sftm.sof">
+  <display_tree gui_logging_enabled="0">
+    <display_branch instance="auto_signaltap_0" log="USE_GLOBAL_TEMP" signal_set="USE_GLOBAL_TEMP" trigger="USE_GLOBAL_TEMP"/>
+  </display_tree>
+  <instance enabled="true" entity_name="sld_signaltap" is_auto_node="yes" is_expanded="true" name="auto_signaltap_0" source_file="sld_signaltap.vhd">
+    <node_ip_info instance_id="0" mfg_id="110" node_id="0" version="6"/>
+    <signal_set global_temp="1" name="signal_set: sftm_ram_fault">
+      <clock name="emu:emu|clk_sys" polarity="posedge" tap_mode="classic"/>
+      <config pipeline_level="0" ram_type="AUTO" reserved_data_nodes="0" reserved_storage_qualifier_nodes="0" reserved_trigger_nodes="0" sample_depth="1024" trigger_in_enable="no" trigger_out_enable="no"/>
+      <top_entity/>
+      <signal_vec>
+        <trigger_input_vec>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|genuine_exc_seen2" tap_mode="classic"/>
+        </trigger_input_vec>
+        <data_input_vec>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[0]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[1]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[2]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[3]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[4]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[5]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[6]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[7]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[8]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[9]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[10]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[11]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[12]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[13]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[14]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[15]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[16]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_addr[17]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[0]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[1]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[2]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[3]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[4]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[5]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[6]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[7]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[8]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[9]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[10]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[11]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[12]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[13]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[14]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_data[15]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_cs" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|rom_ok" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cen" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|clkena" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|busstate[0]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|busstate[1]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[1]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[2]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[3]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[4]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[5]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[6]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[7]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[8]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[9]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[10]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[11]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[12]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[13]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[14]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[15]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[16]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[17]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[18]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[19]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[20]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[21]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[22]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_addr[23]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[0]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[1]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[2]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[3]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[4]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[5]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[6]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[7]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[8]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[9]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[10]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[11]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[12]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[13]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[14]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|cpu_din[15]" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|genuine_exc_seen2" tap_mode="classic"/>
+          <wire name="emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|exc_vec_rd" tap_mode="classic"/>
+        </data_input_vec>
+      </signal_vec>
+      <trigger_flow_control_data>
+        <trigger_flow_control levels="1"/>
+        <trigger_in_data enable="no"/>
+        <trigger_out_data enable="no"/>
+      </trigger_flow_control_data>
+      <power_up_trigger position="pre" storage_qualifier_disabled="no"/>
+      <events use_custom_flow_control="no">
+        <level enabled="yes" name="condition1" type="basic">'emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|genuine_exc_seen2' == high
+          <power_up enabled="yes">
+          </power_up>
+          <op_node>
+            <op_node left="691" top="210" type="Advanced Trigger Level Result"/>
+          </op_node>
+        </level>
+      </events>
+    </signal_set>
+  </instance>
+</session>

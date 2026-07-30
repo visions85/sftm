@@ -391,8 +391,8 @@ wire        w_rst = rst | wdog_rst;
 // TG68K.C kernel signals
 // ---------------------------------------------------------------------------
 wire [31:0] cpu_a;
-wire [15:0] cpu_din, cpu_do16;
-wire [ 1:0] busstate;
+wire [15:0] cpu_din /* synthesis keep */, cpu_do16;
+wire [ 1:0] busstate /* synthesis keep */;
 wire        cpu_wr_n;
 // TG68KdotC_Kernel busstate encoding (from VHDL source):
 //   00 = fetch code (instruction read)
@@ -961,7 +961,7 @@ assign pc_stable = pc_snap_done && pc_snap2_done
 // AGENTS.md. That pulse is deliberately unmaskable by design (it must
 // fire regardless of the ROM's own SR mask), so excluding it here, rather
 // than trying to suppress the pulse itself, is the correct fix.
-wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2)
+wire      exc_vec_rd /* synthesis keep */ = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2)
                        & ~(cpu_addr[9:2] >= 8'd24 && cpu_addr[9:2] <= 8'd31);
 always @(posedge clk) begin
     if( rst ) begin
