@@ -78,6 +78,10 @@ wire [ 7:0] genuine_exc_vec_num; // diagnostic: which vector genuinely fired fir
 wire        fault_in_ramtest;    // diagnostic: was the CPU executing inside the RAM self-test's loop body when that exception fired? (sftm_main → sftm_video)
 wire [23:0] genuine_exc_fetch_addr; // diagnostic: exact instruction-fetch address at the moment of that same genuine exception (sftm_main → sftm_video)
 wire [15:0] genuine_exc_fetch_word; // diagnostic: the opcode fetched there (sftm_main → sftm_video)
+wire [ 7:0] genuine_exc_vec_num2;   // diagnostic: same as genuine_exc_vec_num but reset on w_rst -- captures the MOST RECENT boot attempt (sftm_main → sftm_video)
+wire        fault_in_ramtest2;      // diagnostic: fault_in_ramtest for the w_rst-resetting capture above (sftm_main → sftm_video)
+wire [23:0] genuine_exc_fetch_addr2; // diagnostic: genuine_exc_fetch_addr for the w_rst-resetting capture above (sftm_main → sftm_video)
+wire [15:0] genuine_exc_fetch_word2; // diagnostic: genuine_exc_fetch_word for the w_rst-resetting capture above (sftm_main → sftm_video)
 
 // ---------------------------------------------------------------------------
 // Sound: main->sound command latch + ES5506 stereo mix
@@ -175,7 +179,11 @@ sftm_main u_main(
     .genuine_exc_vec_num( genuine_exc_vec_num ),
     .fault_in_ramtest   ( fault_in_ramtest    ),
     .genuine_exc_fetch_addr( genuine_exc_fetch_addr ),
-    .genuine_exc_fetch_word( genuine_exc_fetch_word )
+    .genuine_exc_fetch_word( genuine_exc_fetch_word ),
+    .genuine_exc_vec_num2( genuine_exc_vec_num2 ),
+    .fault_in_ramtest2   ( fault_in_ramtest2    ),
+    .genuine_exc_fetch_addr2( genuine_exc_fetch_addr2 ),
+    .genuine_exc_fetch_word2( genuine_exc_fetch_word2 )
 );
 
 // ---------------------------------------------------------------------------
@@ -264,7 +272,11 @@ sftm_video u_video(
     .genuine_exc_vec_num( genuine_exc_vec_num ),
     .fault_in_ramtest   ( fault_in_ramtest    ),
     .genuine_exc_fetch_addr( genuine_exc_fetch_addr ),
-    .genuine_exc_fetch_word( genuine_exc_fetch_word )
+    .genuine_exc_fetch_word( genuine_exc_fetch_word ),
+    .genuine_exc_vec_num2( genuine_exc_vec_num2 ),
+    .fault_in_ramtest2   ( fault_in_ramtest2    ),
+    .genuine_exc_fetch_addr2( genuine_exc_fetch_addr2 ),
+    .genuine_exc_fetch_word2( genuine_exc_fetch_word2 )
 );
 
 // ---------------------------------------------------------------------------
