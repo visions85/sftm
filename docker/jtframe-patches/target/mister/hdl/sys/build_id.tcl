@@ -131,7 +131,6 @@ catch { set_user_option -name TALKBACK_ENABLED on }
 set_global_assignment -name ENABLE_SIGNALTAP ON
 set_global_assignment -name USE_SIGNALTAP_FILE sftm_ram_fault.stp
 set_global_assignment -name SIGNALTAP_FILE sftm_ram_fault.stp
-export_assignments
 
 set device  [get_global_assignment -name DEVICE]
 set outpath [get_global_assignment -name PROJECT_OUTPUT_DIRECTORY]
