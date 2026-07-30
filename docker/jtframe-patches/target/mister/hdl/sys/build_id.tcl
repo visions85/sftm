@@ -128,9 +128,18 @@ if {[project_exists $project_name]} {
 # unverified -- if it errors, the build should still proceed rather than
 # abort on an instrumentation nicety.
 catch { set_user_option -name TALKBACK_ENABLED on }
-set_global_assignment -name ENABLE_SIGNALTAP ON
-set_global_assignment -name USE_SIGNALTAP_FILE sftm_ram_fault.stp
-set_global_assignment -name SIGNALTAP_FILE sftm_ram_fault.stp
+# Idempotent: PRE_FLOW_SCRIPT_FILE fires before each stage of a multi-stage
+# flow (map, fit, asm, sta), not just once. Unconditionally re-calling
+# set_global_assignment on every invocation touches the QSF repeatedly
+# mid-flow and triggers "Settings File changed outside of the Quartus
+# Prime software" -> "Full Compilation ended unexpectedly" even though
+# every individual stage (synthesis/fit/asm/sta) succeeds on its own.
+# Only assign on the first invocation, when it's not already set.
+if { [catch { get_global_assignment -name ENABLE_SIGNALTAP } current_stp] || $current_stp != "ON" } {
+    set_global_assignment -name ENABLE_SIGNALTAP ON
+    set_global_assignment -name USE_SIGNALTAP_FILE sftm_ram_fault.stp
+    set_global_assignment -name SIGNALTAP_FILE sftm_ram_fault.stp
+}
 
 set device  [get_global_assignment -name DEVICE]
 set outpath [get_global_assignment -name PROJECT_OUTPUT_DIRECTORY]
