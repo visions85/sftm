@@ -91,15 +91,25 @@ proc generateCDF {revision device outpath} {
 # AGENTS.md, 2026-07-30) -- REMOVE this call (and the ENABLE_SIGNALTAP
 # block below) once that investigation concludes, since SignalTap adds
 # real ALM/M10K overhead and JTAG compile time to every build.
-proc copyStpFile {} {
+#
+# Two capture files are staged: sftm_ram_fault.stp (sftm_main-level ROM
+# bus/CPU signals) and sftm_bcache_fault.stp (jtframe_romrq_bcache
+# internals -- we/dst/dend/din/cached_data0/cached_addr0/good/hit0/hit1 --
+# added after finding that genuine_exc_fetch_word=0x003C is EXACTLY
+# byte-swap(low half of the correct longword), pointing at bcache's
+# two-stage dst/dend burst-reassembly shift register as the likely
+# mechanism -- see AGENTS.md, 2026-07-30). Both use the same trigger
+# (genuine_exc_seen2) and clock (emu:emu|clk_sys); pick whichever via
+# Assignments -> Settings -> SignalTap Logic Analyzer in the GUI.
+proc copyStpFile {name} {
     set srcDir [file dirname [info script]]
-    set src [file join $srcDir sftm_ram_fault.stp]
-    set dst [file join [pwd] sftm_ram_fault.stp]
+    set src [file join $srcDir $name]
+    set dst [file join [pwd] $name]
     if { [file exists $src] } {
         file copy -force $src $dst
         post_message "Copied $src -> $dst"
     } else {
-        post_message -type error "sftm_ram_fault.stp not found at $src (expected alongside build_id.tcl)"
+        post_message -type error "$name not found at $src (expected alongside build_id.tcl)"
     }
 }
 
@@ -149,7 +159,8 @@ proc enableSignalTap {} {
 catch { set_user_option -name TALKBACK_ENABLED on }
 
 copySysTopSdc
-copyStpFile
+copyStpFile sftm_ram_fault.stp
+copyStpFile sftm_bcache_fault.stp
 # enableSignalTap intentionally NOT called here (2026-07-30 finding):
 # tried four different mechanisms to enable it through this scripted
 # per-stage build (API calls inside project_open/close, the same but
