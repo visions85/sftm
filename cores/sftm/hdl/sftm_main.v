@@ -313,6 +313,17 @@ module sftm_main #(
     output reg [23:0]   genuine_exc_fetch_addr,
     output reg [15:0]   genuine_exc_fetch_word,
 
+    // genuine_exc_*2: identical semantics to genuine_exc_vec_num/
+    // fault_in_ramtest/genuine_exc_fetch_addr/genuine_exc_fetch_word above,
+    // but reset on w_rst (hard OR watchdog-triggered soft reboot) instead
+    // of only hard rst -- captures the MOST RECENT boot attempt's genuine
+    // exception rather than freezing forever on the first one since
+    // power-on. See the detailed comment at the implementation below.
+    output reg [ 7:0]   genuine_exc_vec_num2,
+    output               fault_in_ramtest2,
+    output reg [23:0]   genuine_exc_fetch_addr2,
+    output reg [15:0]   genuine_exc_fetch_word2,
+
     // LVBL from sftm_video — used for the DIPS vblank status bit (bit 2,
     // active-low: 1=active display, 0=in vertical blank).
     input               LVBL
@@ -940,7 +951,18 @@ assign pc_stable = pc_snap_done && pc_snap2_done
                   && (pc_snapshot_addr == pc_snapshot2_addr)
                   && (pc_snapshot_word == pc_snapshot2_word);
 
-wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2);
+// Excludes vectors 24-31 (interrupt autovectors, levels 1-7 + spurious):
+// those fire because of an EXTERNAL interrupt request, not a CPU-detected
+// fault, so they don't belong in an "exception" filter. Concretely, this
+// design's own deliberate IPL7 test pulse (ipl7_pulse, ~1s post-reset,
+// vector 31) was found (via full-ROM simulation, 2026-07-30) to trigger
+// this filter during an otherwise-clean boot, silently consuming
+// genuine_exc_seen's one-shot latch before any real exception -- see
+// AGENTS.md. That pulse is deliberately unmaskable by design (it must
+// fire regardless of the ROM's own SR mask), so excluding it here, rather
+// than trying to suppress the pulse itself, is the correct fix.
+wire      exc_vec_rd  = poll_rd & (cpu_addr[23:10] == 14'd0) & (cpu_addr[9:2] >= 8'd2)
+                       & ~(cpu_addr[9:2] >= 8'd24 && cpu_addr[9:2] <= 8'd31);
 always @(posedge clk) begin
     if( rst ) begin
         exc_vec        <= 3'd0;
@@ -1056,6 +1078,40 @@ end
 assign fault_in_ramtest = genuine_exc_seen
                          && (genuine_exc_fetch_addr >= RAM_TEST_LO)
                          && (genuine_exc_fetch_addr <= RAM_TEST_HI);
+
+// genuine_exc_vec_num2/fetch_addr2/fetch_word2/fault_in_ramtest2: same
+// filter as genuine_exc_* above, but reset on w_rst (any reset -- hard OR
+// watchdog-triggered soft reboot), not just hard rst. genuine_exc_* itself
+// deliberately only resets on hard rst ("capture the ORIGINAL fault"), but
+// that means it freezes on the FIRST-EVER qualifying event since power-on
+// and is never re-armed across any number of subsequent soft reboots --
+// so on a board that's already cycled through several watchdog reboots by
+// the time it's observed, it may be showing a stale, possibly one-time,
+// early-boot event rather than the exception that's actually recurring on
+// every attempt. This variant answers "what did the MOST RECENT boot
+// attempt fault on", which is the more relevant question once
+// wdog_fired_ever=1. Deliberately does NOT special-case the RAM test the
+// way exc_vec_rd's caller filters false positives elsewhere -- it reuses
+// the exact same last_write_addr-differs filter, already proven correct.
+reg        genuine_exc_seen2;
+always @(posedge clk) begin
+    if( w_rst ) begin
+        genuine_exc_seen2       <= 1'b0;
+        genuine_exc_vec_num2    <= 8'd0;
+        genuine_exc_fetch_addr2 <= 24'd0;
+        genuine_exc_fetch_word2 <= 16'd0;
+    end else if( !genuine_exc_seen2 && exc_vec_rd
+                 && (last_write_addr != {cpu_addr, 1'b0}) ) begin
+        genuine_exc_seen2       <= 1'b1;
+        genuine_exc_vec_num2    <= cpu_addr[9:2];
+        genuine_exc_fetch_addr2 <= last_fetch_addr;
+        genuine_exc_fetch_word2 <= last_fetch_data;
+    end
+end
+
+assign fault_in_ramtest2 = genuine_exc_seen2
+                          && (genuine_exc_fetch_addr2 >= RAM_TEST_LO)
+                          && (genuine_exc_fetch_addr2 <= RAM_TEST_HI);
 
 // ---------------------------------------------------------------------------
 // CPU data-in mux
