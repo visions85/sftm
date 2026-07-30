@@ -103,8 +103,54 @@ proc copyStpFile {} {
     }
 }
 
+# Enable SignalTap by appending plain lines directly to the .qsf TEXT FILE
+# (matching copySysTopSdc/copyStpFile's own "just touch files on disk"
+# style) instead of calling set_global_assignment through the API inside
+# a project_open/project_close block. Tried the API approach first: it
+# works (Analysis & Synthesis/Fitter/Assembler/Timing Analyzer each
+# succeeded individually), but jtcore invokes each stage as a SEPARATE
+# quartus_map/quartus_fit/quartus_asm/quartus_sta process, and modifying
+# the QSF's assignments mid-flow (after the first stage already ran) makes
+# each SUBSEQUENT stage's fresh process detect "Settings File changed
+# outside of the Quartus Prime software", which cascades into "Full
+# Compilation ended unexpectedly" at the very end despite every stage
+# passing. Writing the lines into the QSF before the flow ever starts (this
+# proc always runs before the very first project_open below) means nothing
+# ever modifies the file mid-flow, so there's nothing for a later stage to
+# detect as an external change. Idempotent via a plain text search so
+# repeated invocations across stages don't duplicate the lines.
+proc enableSignalTap {} {
+    set qsfPath [file join [pwd] "sftm.qsf"]
+    if { ![file exists $qsfPath] } {
+        post_message -type error "sftm.qsf not found at $qsfPath -- cannot enable SignalTap"
+        return
+    }
+    set f [open $qsfPath "r"]
+    set content [read $f]
+    close $f
+    if { [string first "ENABLE_SIGNALTAP" $content] == -1 } {
+        set f [open $qsfPath "a"]
+        puts $f "set_global_assignment -name ENABLE_SIGNALTAP ON"
+        puts $f "set_global_assignment -name USE_SIGNALTAP_FILE sftm_ram_fault.stp"
+        puts $f "set_global_assignment -name SIGNALTAP_FILE sftm_ram_fault.stp"
+        close $f
+        post_message "Appended SignalTap assignments to $qsfPath"
+    }
+}
+
+# TalkBack (Intel's opt-in usage-telemetry) must be enabled for SignalTap
+# to work at all on Quartus Prime LITE (the free edition this project
+# uses -- see docker/Dockerfile.quartus). This is a global Quartus
+# preference, not a project assignment, so it's safe to call on every
+# invocation (no QSF mid-flow modification involved). Wrapped in catch
+# since its exact headless behaviour across containers is unverified --
+# if it errors, the build should still proceed rather than abort on an
+# instrumentation nicety.
+catch { set_user_option -name TALKBACK_ENABLED on }
+
 copySysTopSdc
 copyStpFile
+enableSignalTap
 
 set project_name [lindex $quartus(args) 1]
 set revision [lindex $quartus(args) 2]
@@ -118,27 +164,6 @@ if {[project_exists $project_name]} {
 } else {
     post_message -type error "Project $project_name does not exist"
     exit
-}
-
-# Enable SignalTap for this build. SignalTap on Quartus Prime LITE (the
-# free edition, which this project uses -- see docker/Dockerfile.quartus)
-# requires TalkBack (Intel's opt-in usage-telemetry feature) to be enabled;
-# without it Quartus silently ignores USE_SIGNALTAP_FILE. Wrapped in catch
-# since set_user_option's exact headless behaviour across containers is
-# unverified -- if it errors, the build should still proceed rather than
-# abort on an instrumentation nicety.
-catch { set_user_option -name TALKBACK_ENABLED on }
-# Idempotent: PRE_FLOW_SCRIPT_FILE fires before each stage of a multi-stage
-# flow (map, fit, asm, sta), not just once. Unconditionally re-calling
-# set_global_assignment on every invocation touches the QSF repeatedly
-# mid-flow and triggers "Settings File changed outside of the Quartus
-# Prime software" -> "Full Compilation ended unexpectedly" even though
-# every individual stage (synthesis/fit/asm/sta) succeeds on its own.
-# Only assign on the first invocation, when it's not already set.
-if { [catch { get_global_assignment -name ENABLE_SIGNALTAP } current_stp] || $current_stp != "ON" } {
-    set_global_assignment -name ENABLE_SIGNALTAP ON
-    set_global_assignment -name USE_SIGNALTAP_FILE sftm_ram_fault.stp
-    set_global_assignment -name SIGNALTAP_FILE sftm_ram_fault.stp
 }
 
 set device  [get_global_assignment -name DEVICE]
