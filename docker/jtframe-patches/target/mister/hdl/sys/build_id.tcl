@@ -150,7 +150,31 @@ catch { set_user_option -name TALKBACK_ENABLED on }
 
 copySysTopSdc
 copyStpFile
-enableSignalTap
+# enableSignalTap intentionally NOT called here (2026-07-30 finding):
+# tried four different mechanisms to enable it through this scripted
+# per-stage build (API calls inside project_open/close, the same but
+# idempotent, plain QSF text append before the first project_open at
+# all) -- all four failed IDENTICALLY with "Settings File changed
+# outside of the Quartus Prime software" -> "Full Compilation ended
+# unexpectedly", even though every individual stage (Analysis &
+# Synthesis, Fitter, Assembler, Timing Analyzer) succeeded on its own
+# every time. Confirmed via a controlled A/B: commenting out this one
+# call restores a clean 0-error build with everything else unchanged.
+# Conclusion: this is a genuine structural incompatibility between
+# SignalTap and jtcore's build methodology (each stage invoked as a
+# SEPARATE quartus_map/quartus_fit/quartus_asm/quartus_sta process),
+# not a bug in how/where the enable flag gets set. The GUI's own
+# "Start Compilation" runs the whole flow as one session (execute_flow
+# within a single quartus_sh/GUI process) and should not hit this --
+# gamingpc has a real desktop (KDE/Wayland) capable of running the
+# Quartus GUI directly, so the practical path is to enable SignalTap
+# there once JTAG hardware is available, using the already-verified
+# sftm_ram_fault.stp (its node references and hierarchy paths ARE
+# confirmed correct -- Analysis & Synthesis/Fitter both accepted them
+# without error across all four attempts). copyStpFile above still
+# places the file in the project directory on every scripted build, so
+# it's there and current whenever that GUI session happens.
+#enableSignalTap
 
 set project_name [lindex $quartus(args) 1]
 set revision [lindex $quartus(args) 2]
