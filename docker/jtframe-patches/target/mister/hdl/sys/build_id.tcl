@@ -81,7 +81,30 @@ proc generateCDF {revision device outpath} {
 	puts $outputFile "AlteraEnd;"
 }
 
+# SFTM-specific: copy the SignalTap capture file (sftm_ram_fault.stp) into
+# the Quartus project directory and enable it for this build, same
+# rationale/mechanism as copySysTopSdc above -- cores/sftm/mister/ is
+# entirely gitignored (jtcore regenerates it from scratch every build), so
+# a hand-authored .stp placed there directly would never survive a
+# rebuild. This is temporary debugging instrumentation for the
+# genuine_exc_fetch_addr=0x800410/word=0x003C investigation (see
+# AGENTS.md, 2026-07-30) -- REMOVE this call (and the ENABLE_SIGNALTAP
+# block below) once that investigation concludes, since SignalTap adds
+# real ALM/M10K overhead and JTAG compile time to every build.
+proc copyStpFile {} {
+    set srcDir [file dirname [info script]]
+    set src [file join $srcDir sftm_ram_fault.stp]
+    set dst [file join [pwd] sftm_ram_fault.stp]
+    if { [file exists $src] } {
+        file copy -force $src $dst
+        post_message "Copied $src -> $dst"
+    } else {
+        post_message -type error "sftm_ram_fault.stp not found at $src (expected alongside build_id.tcl)"
+    }
+}
+
 copySysTopSdc
+copyStpFile
 
 set project_name [lindex $quartus(args) 1]
 set revision [lindex $quartus(args) 2]
@@ -96,6 +119,19 @@ if {[project_exists $project_name]} {
     post_message -type error "Project $project_name does not exist"
     exit
 }
+
+# Enable SignalTap for this build. SignalTap on Quartus Prime LITE (the
+# free edition, which this project uses -- see docker/Dockerfile.quartus)
+# requires TalkBack (Intel's opt-in usage-telemetry feature) to be enabled;
+# without it Quartus silently ignores USE_SIGNALTAP_FILE. Wrapped in catch
+# since set_user_option's exact headless behaviour across containers is
+# unverified -- if it errors, the build should still proceed rather than
+# abort on an instrumentation nicety.
+catch { set_user_option -name TALKBACK_ENABLED on }
+set_global_assignment -name ENABLE_SIGNALTAP ON
+set_global_assignment -name USE_SIGNALTAP_FILE sftm_ram_fault.stp
+set_global_assignment -name SIGNALTAP_FILE sftm_ram_fault.stp
+export_assignments
 
 set device  [get_global_assignment -name DEVICE]
 set outpath [get_global_assignment -name PROJECT_OUTPUT_DIRECTORY]
