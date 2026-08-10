@@ -97,6 +97,35 @@ RUN chmod +x /tmp/qinstall/QuartusLiteSetup.run && \
 ENV PATH="/opt/intelFPGA_lite/21.1/quartus/bin:${PATH}"
 ENV QUARTUS_ROOTDIR="/opt/intelFPGA_lite/21.1/quartus"
 
+# ---- Qt5 xcb platform plugin dependencies (GUI support) ----
+# This image was originally headless-only (quartus_sh/quartus_map/quartus_fit,
+# no display). Running the actual `quartus` GUI (needed for SignalTap, since
+# it can't be enabled through the headless per-stage build flow -- see
+# AGENTS.md, 2026-08-10) crashes immediately in
+# QGuiApplicationPrivate::createPlatformIntegration() with the earlier
+# package set: libxcb1/libxkbcommon0 alone are not enough for Qt5's xcb
+# platform plugin, which also needs libxkbcommon-x11-0 specifically (the
+# X11-integration variant, distinct from the base libxkbcommon0 already
+# installed above) plus the libxcb-* extension libraries. This is a
+# separate RUN layer, added AFTER the Quartus install, so it doesn't
+# invalidate that ~15-minute layer's Docker cache.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxkbcommon-x11-0 \
+    libxcb-cursor0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-render0 \
+    libxcb-shape0 \
+    libxcb-shm0 \
+    libxcb-sync1 \
+    libxcb-xfixes0 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Reuse the same entrypoint to auto-clone/build jtframe on first run
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
