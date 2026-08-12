@@ -275,33 +275,49 @@ sftm_vram u_vram(
 // ---------------------------------------------------------------------------
 // Palette RAM: 32768 x 32-bit, full readback (MAME maps it .ram()). Port A:
 // CPU. Port B: scanout pen lookup. xRGB_888: R=pal[23:16] G=[15:8] B=[7:0].
+//
+// Structured as four 8-bit lane arrays, whole-byte writes only, and one
+// always block per port: the Quartus true-dual-port inference template.
+// The first version used part-select writes into 16-bit arrays with three
+// access ports, which quartus_map tried to elaborate as half a million
+// discrete registers and died (crash confirmed in Phase 4 bring-up).
 // ---------------------------------------------------------------------------
-reg [15:0] pal_hi[0:32767], pal_lo[0:32767];  // hi = D31:16 (A[1]=0)
-reg [15:0] pal_hi_q, pal_lo_q;
-reg [15:0] pal_hi_s, pal_lo_s;                // scanout port
+reg [7:0] pal_b3[0:32767];   // D31:24 (A[1]=0, UDS lane)
+reg [7:0] pal_b2[0:32767];   // D23:16 = R
+reg [7:0] pal_b1[0:32767];   // D15:8  = G
+reg [7:0] pal_b0[0:32767];   // D7:0   = B
+reg [7:0] pal_b3_qa, pal_b2_qa, pal_b1_qa, pal_b0_qa;   // CPU port
+reg [7:0] pal_b2_qb, pal_b1_qb, pal_b0_qb;              // scanout port
 
 wire [14:0] pal_addr = cpu_addr[16:2];
 wire        pal_wr   = bus_wstb && pal_cs;
 wire [14:0] pen      = scan_pen[14:0];
 
+// port A: CPU read/write
 always @(posedge clk) begin
-    if( pal_wr && !cpu_addr[1] ) begin
-        if( !cpu_uds_n ) pal_hi[pal_addr][15:8] <= cpu_dout[15:8];
-        if( !cpu_lds_n ) pal_hi[pal_addr][ 7:0] <= cpu_dout[ 7:0];
-    end
-    pal_hi_q <= pal_hi[pal_addr];
-    pal_hi_s <= pal_hi[pen];
+    if( pal_wr && !cpu_addr[1] && !cpu_uds_n ) pal_b3[pal_addr] <= cpu_dout[15:8];
+    pal_b3_qa <= pal_b3[pal_addr];
 end
 always @(posedge clk) begin
-    if( pal_wr && cpu_addr[1] ) begin
-        if( !cpu_uds_n ) pal_lo[pal_addr][15:8] <= cpu_dout[15:8];
-        if( !cpu_lds_n ) pal_lo[pal_addr][ 7:0] <= cpu_dout[ 7:0];
-    end
-    pal_lo_q <= pal_lo[pal_addr];
-    pal_lo_s <= pal_lo[pen];
+    if( pal_wr && !cpu_addr[1] && !cpu_lds_n ) pal_b2[pal_addr] <= cpu_dout[7:0];
+    pal_b2_qa <= pal_b2[pal_addr];
+end
+always @(posedge clk) begin
+    if( pal_wr && cpu_addr[1] && !cpu_uds_n ) pal_b1[pal_addr] <= cpu_dout[15:8];
+    pal_b1_qa <= pal_b1[pal_addr];
+end
+always @(posedge clk) begin
+    if( pal_wr && cpu_addr[1] && !cpu_lds_n ) pal_b0[pal_addr] <= cpu_dout[7:0];
+    pal_b0_qa <= pal_b0[pal_addr];
+end
+// port B: scanout pen lookup (b3 is the unused x byte, no read port)
+always @(posedge clk) begin
+    pal_b2_qb <= pal_b2[pen];
+    pal_b1_qb <= pal_b1[pen];
+    pal_b0_qb <= pal_b0[pen];
 end
 
-assign pal_dout = !cpu_addr[1] ? pal_hi_q : pal_lo_q;
+assign pal_dout = !cpu_addr[1] ? {pal_b3_qa, pal_b2_qa} : {pal_b1_qa, pal_b0_qa};
 
 // ---------------------------------------------------------------------------
 // CRT timing + scanout. Pipeline: scan_x -> scan_pen (1 clk) -> palette
@@ -348,9 +364,9 @@ always @(posedge clk) begin
             end
             // output the pixel (single plane, screen_update :1510)
             if( LVBL && LHBL && gfx_en[0] ) begin
-                red   <= pal_hi_s[ 7:3];              // R = pal[23:16]
-                green <= pal_lo_s[15:11];             // G = pal[15:8]
-                blue  <= pal_lo_s[ 7:3];              // B = pal[7:0]
+                red   <= pal_b2_qb[7:3];              // R = pal[23:16]
+                green <= pal_b1_qb[7:3];              // G = pal[15:8]
+                blue  <= pal_b0_qb[7:3];              // B = pal[7:0]
             end else
                 {red, green, blue} <= 0;
         end
