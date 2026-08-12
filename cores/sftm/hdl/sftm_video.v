@@ -5,32 +5,31 @@
     Foundation, either version 3 of the License, or (at your option) any later
     version. See the LICENSE file.
 
-    Street Fighter: The Movie -- IT42 video. PHASE 2 IS NOT DONE YET.
+    Street Fighter: The Movie -- IT42 video. Literal port of MAME
+    src/mame/itech/itech32_v.cpp (see doc/PHASE2-DESIGN.md).
 
-    What IS implemented (literal from MAME src/mame/itech/itech32_v.cpp):
+    This module owns:
       - the m_video[] register file with bloodstm addressing: CPU longword
         address 0x500000 + 4*k maps to 16-bit register k, mirrored in both
-        halves of the longword (bloodstm_video_w -> video_w(offset/2),
-        itech32_v.cpp:1460)
-      - video_w side effects (itech32_v.cpp:1335): INTACK (intstate = old &
-        ~data), INTENABLE recompute, INTSCANLINE compare
-      - video_r (itech32_v.cpp:1438): reg 0 reads (val & ~8) | 4 | 1 =
-        "blitter idle"; reg 3 reads 0xef
-      - handle_video_command (itech32_v.cpp:1233): commands complete
-        instantly and set VIDEOINT_BLITTER, exactly as MAME does
-        synchronously -- but NO PIXELS ARE DRAWN yet
-      - interrupt levels: scan_irq/blit_irq = INTSTATE & INTENABLE & bit
-        (update_interrupts, itech32_v.cpp:367)
-      - vblank_irq pulse at vblank start (generate_int1 hook)
-      - palette RAM 0x580000-0x59ffff: full 32-bit readback BRAM so the
-        game's power-on RAM test passes (MAME maps it as plain .ram())
+        halves (bloodstm_video_w -> video_w(offset/2), :1460)
+      - video_w side effects (:1335): INTACK, INTENABLE, INTSCANLINE, and
+        command dispatch into sftm_blit
+      - video_r (:1438): reg 0 = (val & ~8)|4|1, reg 3 = 0xef
+      - interrupt levels (update_interrupts, :367)
+      - palette RAM (0x580000-0x59ffff, 32-bit readback; pens are xRGB_888,
+        itech32.cpp:1902) and the pen->RGB scanout lookup
+      - CRT timing (fixed 508x286 / visible 384x256, the sftm raw params,
+        itech32.cpp:1785) and single-plane scanout (screen_update :1510;
+        sftm has m_planes = 1)
 
-    NOT implemented (Phase 2): draw_raw, draw_raw_widthpix, draw_rle_*,
-    shiftreg_clear, VRAM planes, GROM fetch, dynamic CRTC reconfiguration
-    from VIDEO_HTOTAL/VTOTAL et al., screen_update scanout. Output is black.
+    Drawing lives in sftm_blit; VRAM (SDRAM) access in sftm_vram. Because
+    blits take real time here (MAME's are instantaneous), cpu_wait stalls
+    CPU access to VIDEO_COMMAND / VIDEO_TRANSFER while the blitter runs.
 
-    Fixed CRT timing meanwhile: 8 MHz pixel clock, HTOTAL 508, VTOTAL 286,
-    visible 384x256 (the sftm raw params, itech32.cpp:1785).
+    Still TODO (acceptable for first light-up): dynamic CRTC reconfiguration
+    from VIDEO_HTOTAL/VTOTAL et al. (:1402) -- sftm programs the same
+    508x286 the fixed timing implements; XORIGIN2/YORIGIN2/XSCROLL2 (plane 1
+    is never scanned out on sftm).
 */
 
 module sftm_video(
@@ -48,14 +47,15 @@ module sftm_video(
     input             pal_cs,
     output     [15:0] vreg_dout,
     output     [15:0] pal_dout,
+    output            cpu_wait,    // stall COMMAND/TRANSFER access while busy
 
-    // latches from sftm_main (unused until Phase 2 drawing)
+    // latches from sftm_main
     input      [ 1:0] plane_en,
     input      [ 1:0] grom_bank,
     input      [ 6:0] color_latch0,
     input      [ 6:0] color_latch1,
 
-    // graphics ROM buses (unused until Phase 2)
+    // graphics ROM buses (blitter source)
     output     [24:1] grom_addr,
     input      [15:0] grom_data,
     output            grom_cs,
@@ -65,8 +65,17 @@ module sftm_video(
     output            grm3_cs,
     input             grm3_ok,
 
+    // VRAM SDRAM bus
+    output     [20:1] vram_addr,
+    input      [15:0] vram_data,
+    output     [15:0] vram_din,
+    output     [ 1:0] vram_dsn,
+    output            vram_we,
+    output            vram_cs,
+    input             vram_ok,
+
     // interrupts to sftm_main
-    output reg        vblank_irq,  // 1-clk pulse
+    output reg        vblank_irq,  // 1-clk pulse (generate_int1 hook)
     output            blit_irq,
     output            scan_irq,
 
@@ -75,9 +84,9 @@ module sftm_video(
     output reg        VS,
     output reg        LHBL,
     output reg        LVBL,
-    output     [ 4:0] red,
-    output     [ 4:0] green,
-    output     [ 4:0] blue,
+    output reg [ 4:0] red,
+    output reg [ 4:0] green,
+    output reg [ 4:0] blue,
     input      [ 3:0] gfx_en,
     input      [ 7:0] debug_bus
 );
@@ -86,11 +95,14 @@ module sftm_video(
 localparam [15:0] VIDEOINT_SCANLINE = 16'h0004,
                   VIDEOINT_BLITTER  = 16'h0040;
 
-// register indices (itech32_v.cpp:43..109); byte offset / 2
+// register indices (byte offset / 2)
 localparam [5:0] R_INTSTATE    = 6'h01,   // 0x02
+                 R_TRANSFER    = 6'h02,   // 0x04
                  R_COMMAND     = 6'h04,   // 0x08
                  R_INTENABLE   = 6'h05,   // 0x0a
-                 R_INTSCANLINE = 6'h16;   // 0x2c
+                 R_INTSCANLINE = 6'h16,   // 0x2c
+                 R_YORIGIN1    = 6'h22,   // 0x44
+                 R_XORIGIN1    = 6'h26;   // 0x4c
 
 // ---------------------------------------------------------------------------
 // Register file
@@ -98,22 +110,34 @@ localparam [5:0] R_INTSTATE    = 6'h01,   // 0x02
 reg [15:0] vregs[0:63];
 reg [15:0] vreg_q;
 
-wire [5:0] ridx = cpu_addr[7:2];
+wire [5:0] ridx    = cpu_addr[7:2];
 wire       vreg_wr = bus_wstb && vreg_cs;
 
-// video_r special cases (itech32_v.cpp:1438)
-assign vreg_dout = ridx == 6'd0 ? ((vreg_q & ~16'h0008) | 16'h0004 | 16'h0001) :
-                   ridx == 6'd3 ? 16'h00ef :
+wire        blit_busy, blit_done, c3_active;
+wire [15:0] xfer_rdata;
+
+// video_r special cases (:1438); VIDEO_TRANSFER reads return the cmd-3 old
+// pixel while a transfer is armed (:1355 stores it in the register)
+assign vreg_dout = ridx == 6'd0       ? ((vreg_q & ~16'h0008) | 16'h0004 | 16'h0001) :
+                   ridx == 6'd3       ? 16'h00ef :
+                   ridx == R_TRANSFER && c3_active ? xfer_rdata :
                    vreg_q;
 
 assign scan_irq = |(vregs[R_INTSTATE] & vregs[R_INTENABLE] & VIDEOINT_SCANLINE);
 assign blit_irq = |(vregs[R_INTSTATE] & vregs[R_INTENABLE] & VIDEOINT_BLITTER);
 
+// stall CPU access to COMMAND/TRANSFER while a command or transfer runs
+assign cpu_wait = vreg_cs && (ridx == R_COMMAND || ridx == R_TRANSFER)
+                  && blit_busy;
+
+// command / transfer strobes into the blitter
+wire cmd_stb  = vreg_wr && ridx == R_COMMAND;
+wire xfer_stb = vreg_wr && ridx == R_TRANSFER;
+
 // ---------------------------------------------------------------------------
 // CRT counters: fixed 508 x 286, visible 384 x 256
 // ---------------------------------------------------------------------------
-reg [8:0] hcnt;
-reg [8:0] vcnt;
+reg [8:0] hcnt, vcnt;
 wire      line_end = hcnt == 9'd507;
 
 wire scanline_hit = pxl_cen && line_end &&
@@ -126,21 +150,16 @@ always @(posedge clk) begin
         vreg_q <= 16'h0000;
     end else begin
         vreg_q <= vregs[ridx];
-        // scanline interrupt: INTSTATE |= SCANLINE when vpos == INTSCANLINE
-        // (scanline_interrupt, itech32_v.cpp:380)
+        // scanline interrupt (scanline_interrupt, :380)
         if( scanline_hit )
             vregs[R_INTSTATE] <= vregs[R_INTSTATE] | VIDEOINT_SCANLINE;
+        // blitter completion (handle_video_command tail, :1282)
+        if( blit_done )
+            vregs[R_INTSTATE] <= vregs[R_INTSTATE] | VIDEOINT_BLITTER;
         if( vreg_wr ) begin
             case( ridx )
-                R_INTSTATE: // VIDEO_INTACK: intstate = old & ~data (itech32_v.cpp:1344)
+                R_INTSTATE:  // VIDEO_INTACK: intstate = old & ~data (:1344)
                     vregs[R_INTSTATE] <= vregs[R_INTSTATE] & ~cpu_dout;
-                R_COMMAND: begin
-                    vregs[R_COMMAND] <= cpu_dout;
-                    // handle_video_command (itech32_v.cpp:1233): Phase 2 will
-                    // execute commands 1/2/3/6 here. All commands complete
-                    // instantly and flag the blitter interrupt, like MAME.
-                    vregs[R_INTSTATE] <= vregs[R_INTSTATE] | VIDEOINT_BLITTER;
-                end
                 default:
                     vregs[ridx] <= cpu_dout;
             endcase
@@ -149,16 +168,121 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Palette RAM: 32768 x 32-bit (0x580000-0x59ffff). Stored full width for
-// readback accuracy (MAME maps the region as .ram(); the power-on self test
-// writes and reads it back raw). Two 16-bit BRAMs, one per longword half.
-// Phase 2 scanout will use pens[14:0] -> xRGB_888-equivalent lookup.
+// Blitter + VRAM
+// ---------------------------------------------------------------------------
+wire        vw_req, vw_rdy, vw_plane, vr_req, vr_plane, vr_ack;
+wire [18:0] vw_addr, vr_addr;
+wire [15:0] vw_data, vr_data;
+
+sftm_blit u_blit(
+    .rst        ( rst           ),
+    .clk        ( clk           ),
+    .start      ( cmd_stb       ),
+    .command    ( cpu_dout      ),
+    .busy       ( blit_busy     ),
+    .done_pulse ( blit_done     ),
+
+    .r_flags    ( vregs[6'h03]  ),  // 0x06
+    .r_width    ( vregs[6'h07]  ),  // 0x0e
+    .r_height   ( vregs[6'h06]  ),  // 0x0c
+    .r_addrlo   ( vregs[6'h08]  ),  // 0x10
+    .r_addrhi   ( vregs[6'h17]  ),  // 0x2e
+    .r_x        ( vregs[6'h09]  ),  // 0x12
+    .r_y        ( vregs[6'h0a]  ),  // 0x14
+    .r_srcxstep ( vregs[6'h0c]  ),  // 0x18
+    .r_srcystep ( vregs[6'h0b]  ),  // 0x16
+    .r_dstxstep ( vregs[6'h0d]  ),  // 0x1a
+    .r_dstystep ( vregs[6'h0e]  ),  // 0x1c
+    .r_ystepx   ( vregs[6'h0f]  ),  // 0x1e
+    .r_xstepy   ( vregs[6'h10]  ),  // 0x20
+    .r_clipl    ( vregs[6'h12]  ),  // 0x24
+    .r_clipr    ( vregs[6'h13]  ),  // 0x26
+    .r_clipt    ( vregs[6'h14]  ),  // 0x28
+    .r_clipb    ( vregs[6'h15]  ),  // 0x2a
+
+    .color0     ( color_latch0  ),
+    .color1     ( color_latch1  ),
+    .plane_en   ( plane_en      ),
+    .grom_bank_in( grom_bank    ),
+
+    .xfer_wr    ( xfer_stb      ),
+    .xfer_wdata ( cpu_dout      ),
+    .xfer_rdata ( xfer_rdata    ),
+    .c3_active_o( c3_active     ),
+
+    .grom_addr  ( grom_addr     ),
+    .grom_data  ( grom_data     ),
+    .grom_cs    ( grom_cs       ),
+    .grom_ok    ( grom_ok       ),
+    .grm3_addr  ( grm3_addr     ),
+    .grm3_data  ( grm3_data     ),
+    .grm3_cs    ( grm3_cs       ),
+    .grm3_ok    ( grm3_ok       ),
+
+    .vw_req     ( vw_req        ),
+    .vw_rdy     ( vw_rdy        ),
+    .vw_plane   ( vw_plane      ),
+    .vw_addr    ( vw_addr       ),
+    .vw_data    ( vw_data       ),
+    .vr_req     ( vr_req        ),
+    .vr_plane   ( vr_plane      ),
+    .vr_addr    ( vr_addr       ),
+    .vr_ack     ( vr_ack        ),
+    .vr_data    ( vr_data       )
+);
+
+// scanline prefetch. At line_end of line L the display of L+1 begins
+// immediately, so the line to fetch DURING L+1 is L+2: kick it now.
+// Line 0 is fetched during line 285, line 1 during line 0.
+// base = csa(XORIGIN1, YORIGIN1 + line)  (screen_update, :1489)
+reg        line_go;
+reg [18:0] line_base;
+reg        line_sel;
+wire [8:0] fetch_line = vcnt == 9'd284 ? 9'd0 :
+                        vcnt == 9'd285 ? 9'd1 : vcnt + 9'd2;
+wire       fetch_vis  = vcnt <= 9'd253 || vcnt >= 9'd284;
+
+wire [15:0] scan_pen;
+wire [ 8:0] scan_x = hcnt;
+
+sftm_vram u_vram(
+    .rst        ( rst           ),
+    .clk        ( clk           ),
+    .vram_addr  ( vram_addr     ),
+    .vram_data  ( vram_data     ),
+    .vram_din   ( vram_din      ),
+    .vram_dsn   ( vram_dsn      ),
+    .vram_we    ( vram_we       ),
+    .vram_cs    ( vram_cs       ),
+    .vram_ok    ( vram_ok       ),
+    .vw_req     ( vw_req        ),
+    .vw_rdy     ( vw_rdy        ),
+    .vw_plane   ( vw_plane      ),
+    .vw_addr    ( vw_addr       ),
+    .vw_data    ( vw_data       ),
+    .vr_req     ( vr_req        ),
+    .vr_plane   ( vr_plane      ),
+    .vr_addr    ( vr_addr       ),
+    .vr_ack     ( vr_ack        ),
+    .vr_data    ( vr_data       ),
+    .line_go    ( line_go       ),
+    .line_base  ( line_base     ),
+    .line_sel   ( line_sel      ),
+    .scan_x     ( scan_x        ),
+    .scan_pen   ( scan_pen      )
+);
+
+// ---------------------------------------------------------------------------
+// Palette RAM: 32768 x 32-bit, full readback (MAME maps it .ram()). Port A:
+// CPU. Port B: scanout pen lookup. xRGB_888: R=pal[23:16] G=[15:8] B=[7:0].
 // ---------------------------------------------------------------------------
 reg [15:0] pal_hi[0:32767], pal_lo[0:32767];  // hi = D31:16 (A[1]=0)
 reg [15:0] pal_hi_q, pal_lo_q;
+reg [15:0] pal_hi_s, pal_lo_s;                // scanout port
 
 wire [14:0] pal_addr = cpu_addr[16:2];
 wire        pal_wr   = bus_wstb && pal_cs;
+wire [14:0] pen      = scan_pen[14:0];
 
 always @(posedge clk) begin
     if( pal_wr && !cpu_addr[1] ) begin
@@ -166,6 +290,7 @@ always @(posedge clk) begin
         if( !cpu_lds_n ) pal_hi[pal_addr][ 7:0] <= cpu_dout[ 7:0];
     end
     pal_hi_q <= pal_hi[pal_addr];
+    pal_hi_s <= pal_hi[pen];
 end
 always @(posedge clk) begin
     if( pal_wr && cpu_addr[1] ) begin
@@ -173,31 +298,37 @@ always @(posedge clk) begin
         if( !cpu_lds_n ) pal_lo[pal_addr][ 7:0] <= cpu_dout[ 7:0];
     end
     pal_lo_q <= pal_lo[pal_addr];
+    pal_lo_s <= pal_lo[pen];
 end
 
 assign pal_dout = !cpu_addr[1] ? pal_hi_q : pal_lo_q;
 
 // ---------------------------------------------------------------------------
-// CRT timing
+// CRT timing + scanout. Pipeline: scan_x -> scan_pen (1 clk) -> palette
+// (1 clk); with pxl_cen every 6 clks both lookups settle within one pixel.
 // ---------------------------------------------------------------------------
 always @(posedge clk) begin
     if( rst ) begin
-        hcnt <= 9'd0;
-        vcnt <= 9'd0;
-        HS   <= 1'b0;
-        VS   <= 1'b0;
-        LHBL <= 1'b0;
-        LVBL <= 1'b0;
-        vblank_irq <= 1'b0;
+        hcnt <= 0;
+        vcnt <= 0;
+        HS   <= 0;
+        VS   <= 0;
+        LHBL <= 0;
+        LVBL <= 0;
+        vblank_irq <= 0;
+        line_go    <= 0;
+        line_sel   <= 0;
+        {red, green, blue} <= 0;
     end else begin
-        vblank_irq <= 1'b0;
+        vblank_irq <= 0;
+        line_go    <= 0;
         if( pxl_cen ) begin
             hcnt <= line_end ? 9'd0 : hcnt + 9'd1;
             if( hcnt == 9'd383 ) LHBL <= 1'b0;
-            if( line_end )       LHBL <= 1'b1;
             if( hcnt == 9'd419 ) HS <= 1'b1;
             if( hcnt == 9'd457 ) HS <= 1'b0;
             if( line_end ) begin
+                LHBL <= 1'b1;
                 vcnt <= vcnt == 9'd285 ? 9'd0 : vcnt + 9'd1;
                 if( vcnt == 9'd255 ) begin
                     LVBL       <= 1'b0;
@@ -206,25 +337,34 @@ always @(posedge clk) begin
                 if( vcnt == 9'd285 ) LVBL <= 1'b1;
                 if( vcnt == 9'd262 ) VS <= 1'b1;
                 if( vcnt == 9'd265 ) VS <= 1'b0;
+                // kick prefetch of the line after the one now starting
+                if( fetch_vis ) begin
+                    line_go   <= 1'b1;
+                    line_sel  <= fetch_line[0];
+                    line_base <= { vregs[R_YORIGIN1][9:0] + {1'b0, fetch_line},
+                                   9'd0 }                    // wraps mod 1024
+                                 + { 10'd0, vregs[R_XORIGIN1][8:0] };
+                end
             end
+            // output the pixel (single plane, screen_update :1510)
+            if( LVBL && LHBL && gfx_en[0] ) begin
+                red   <= pal_hi_s[ 7:3];              // R = pal[23:16]
+                green <= pal_lo_s[15:11];             // G = pal[15:8]
+                blue  <= pal_lo_s[ 7:3];              // B = pal[7:0]
+            end else
+                {red, green, blue} <= 0;
         end
     end
 end
 
-// Phase 2: real scanout. Black for now.
-assign red   = 5'd0;
-assign green = 5'd0;
-assign blue  = 5'd0;
-
-// GROM buses idle until the blitter exists
-assign grom_addr = {24{1'b0}};
-assign grom_cs   = 1'b0;
-assign grm3_addr = {18{1'b0}};
-assign grm3_cs   = 1'b0;
+// scanout buffer parity: line_sel selects the buffer being FILLED; the
+// scanout in sftm_vram reads the other. scan buffer read of current line:
+// current visible line vcnt has parity vcnt[0], which was filled while
+// line_sel == vcnt[0] -- consistent because line_sel is set to next_line[0]
+// one line ahead.
 
 // verilator lint_off UNUSEDSIGNAL
-wire unused = &{ plane_en, grom_bank, color_latch0, color_latch1, grom_data,
-                 grom_ok, grm3_data, grm3_ok, gfx_en, debug_bus, 1'b0 };
+wire unused = &{ debug_bus, gfx_en[3:1], scan_pen[15], 1'b0 };
 // verilator lint_on UNUSEDSIGNAL
 
 endmodule

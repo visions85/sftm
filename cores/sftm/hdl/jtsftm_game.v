@@ -29,7 +29,7 @@ assign dipsw_a = dipsw[7:0];
 wire [23:1] cpu_addr;
 wire [15:0] cpu_dout;
 wire [15:0] vreg_dout, pal_dout;
-wire        cpu_rnw, cpu_uds_n, cpu_lds_n, bus_wstb;
+wire        cpu_rnw, cpu_uds_n, cpu_lds_n, bus_wstb, vid_wait;
 wire        vreg_cs, pal_cs;
 wire [ 1:0] plane_en, grom_bank;
 wire [ 6:0] color_latch0, color_latch1;
@@ -72,6 +72,7 @@ sftm_main u_main(
     .pal_cs       ( pal_cs        ),
     .vreg_dout    ( vreg_dout     ),
     .pal_dout     ( pal_dout      ),
+    .vid_wait     ( vid_wait      ),
 
     .plane_en     ( plane_en      ),
     .grom_bank    ( grom_bank     ),
@@ -108,6 +109,7 @@ sftm_video u_video(
     .pal_cs       ( pal_cs        ),
     .vreg_dout    ( vreg_dout     ),
     .pal_dout     ( pal_dout      ),
+    .cpu_wait     ( vid_wait      ),
 
     .plane_en     ( plane_en      ),
     .grom_bank    ( grom_bank     ),
@@ -122,6 +124,16 @@ sftm_video u_video(
     .grm3_data    ( grm3_data     ),
     .grm3_cs      ( grm3_cs       ),
     .grm3_ok      ( grm3_ok       ),
+
+    // VRAM SDRAM bus (mem.yaml `vram`, bank 3; ports appear in
+    // mem_ports.inc after `jtframe mem` regeneration -- Phase 4)
+    .vram_addr    ( vram_addr     ),
+    .vram_data    ( vram_data     ),
+    .vram_din     ( vram_din      ),
+    .vram_dsn     ( vram_dsn      ),
+    .vram_we      ( vram_we       ),
+    .vram_cs      ( vram_cs       ),
+    .vram_ok      ( vram_ok       ),
 
     .vblank_irq   ( vblank_irq    ),
     .blit_irq     ( blit_irq      ),

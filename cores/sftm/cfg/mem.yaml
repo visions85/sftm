@@ -51,11 +51,17 @@ sdram:
         - name: grom          # blitter source data
           addr_width: 25       # 32 MB -> port [24:1]
           data_width: 16
-    # ---- bank 3: extra graphics plane -----------------------------------
+    # ---- bank 3: extra graphics plane + VRAM ----------------------------
     - buses:
         - name: grm3
           addr_width: 19       # 512 KB -> port [18:1]
           data_width: 16
+        # VRAM: 2 planes x 512x1024 x 16-bit pen (pixel|color, as MAME stores
+        # it -- see doc/PHASE2-DESIGN.md). 2 MB cannot fit in BRAM.
+        - name: vram
+          addr_width: 21       # 2 MB -> port [20:1]
+          data_width: 16
+          rw: true
 
   # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board) is
   # currently kept in on-chip BRAM inside sftm_main (u_nvram) so the CPU can

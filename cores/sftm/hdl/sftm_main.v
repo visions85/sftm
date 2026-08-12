@@ -87,6 +87,8 @@ module sftm_main #(
     output reg        pal_cs,
     input      [15:0] vreg_dout,
     input      [15:0] pal_dout,
+    input             vid_wait,    // sftm_video: hold this access (blitter busy
+                                   // and the CPU touches VIDEO_COMMAND/TRANSFER)
 
     // latches to video (itech020_plane_w / color_w)
     output reg [ 1:0] plane_en,     // {enable_latch[1], enable_latch[0]}, already inverted
@@ -300,7 +302,9 @@ always @(posedge clk) begin
     if( w_rst ) begin
         color_latch0 <= 7'd0;
         color_latch1 <= 7'd0;
-        plane_en     <= 2'b11;      // enable latches reset "on" (MAME video_start)
+        // enable_latch reset: {0, 1} for sftm -- m_planes = 1, so latch 1
+        // starts off (video_start, itech32_v.cpp:207)
+        plane_en     <= 2'b01;
         grom_bank    <= 2'd0;
         snd_latch1   <= 8'd0;
         snd_latch2   <= 8'd0;
@@ -421,7 +425,10 @@ always @(posedge clk) begin
                 state <= S_WAIT;
         end
 
-        S_WAIT: state <= S_GRANT;
+        // MAME blits are instantaneous inside the register write; ours take
+        // real time, so accesses to VIDEO_COMMAND/VIDEO_TRANSFER wait here
+        // until the blitter is free (vid_wait). Other accesses never stall.
+        S_WAIT: if( !vid_wait ) state <= S_GRANT;
 
         S_ROM: begin
             if( rom_settle != 2'd2 ) rom_settle <= rom_settle + 2'd1;

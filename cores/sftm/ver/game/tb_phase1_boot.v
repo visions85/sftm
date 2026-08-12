@@ -29,6 +29,7 @@
     Run:
       cd cores/sftm && iverilog -g2012 -o /tmp/tb_phase1.vvp \
           ver/game/tb_phase1_boot.v hdl/sftm_main.v hdl/sftm_video.v \
+          hdl/sftm_blit.v hdl/sftm_vram.v \
           hdl/tg68k/TG68KdotC_Kernel_conv.v && vvp /tmp/tb_phase1.vvp
 */
 
@@ -135,7 +136,13 @@ wire        snd_pending1, snd_pending2;
 wire [ 7:0] st_dout;
 wire [24:1] grom_addr;
 wire [18:1] grm3_addr;
-wire        grom_cs, grm3_cs;
+wire        grom_cs, grm3_cs, vid_wait;
+
+// trivial VRAM SDRAM model: always-ready, data zero (no blits in this bench)
+wire [20:1] vram_addr;
+wire [15:0] vram_din;
+wire [ 1:0] vram_dsn;
+wire        vram_we, vram_cs;
 
 sftm_main u_main(
     .rst(rst), .clk(clk), .cen(cen),
@@ -146,7 +153,7 @@ sftm_main u_main(
     .cpu_addr(cpu_addr), .cpu_dout(cpu_dout), .cpu_rnw(cpu_rnw),
     .cpu_uds_n(cpu_uds_n), .cpu_lds_n(cpu_lds_n), .bus_wstb(bus_wstb),
     .vreg_cs(vreg_cs), .pal_cs(pal_cs),
-    .vreg_dout(vreg_dout), .pal_dout(pal_dout),
+    .vreg_dout(vreg_dout), .pal_dout(pal_dout), .vid_wait(vid_wait),
     .plane_en(plane_en), .grom_bank(grom_bank),
     .color_latch0(color_latch0), .color_latch1(color_latch1),
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
@@ -162,11 +169,13 @@ sftm_video u_video(
     .cpu_addr(cpu_addr), .cpu_dout(cpu_dout),
     .cpu_uds_n(cpu_uds_n), .cpu_lds_n(cpu_lds_n), .bus_wstb(bus_wstb),
     .vreg_cs(vreg_cs), .pal_cs(pal_cs),
-    .vreg_dout(vreg_dout), .pal_dout(pal_dout),
+    .vreg_dout(vreg_dout), .pal_dout(pal_dout), .cpu_wait(vid_wait),
     .plane_en(plane_en), .grom_bank(grom_bank),
     .color_latch0(color_latch0), .color_latch1(color_latch1),
     .grom_addr(grom_addr), .grom_data(16'h0000), .grom_cs(grom_cs), .grom_ok(1'b1),
     .grm3_addr(grm3_addr), .grm3_data(16'h0000), .grm3_cs(grm3_cs), .grm3_ok(1'b1),
+    .vram_addr(vram_addr), .vram_data(16'h0000), .vram_din(vram_din),
+    .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(1'b1),
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
