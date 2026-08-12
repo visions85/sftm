@@ -35,11 +35,17 @@ fi
 # ---- Build Quartus image (uses Docker layer cache after first build) ----
 # Must be linux/amd64: Quartus 21.1 is x86_64-only.
 # On Apple Silicon this uses Rosetta 2 emulation automatically.
-# We always call 'docker build' so changed Dockerfiles are picked up;
-# unchanged layers are served from cache so subsequent runs are fast.
-echo "[run-synth.sh] Building Quartus image '$IMAGE' (cached after first build)..."
-docker build --platform linux/amd64 -t "$IMAGE" \
-    -f "$SCRIPT_DIR/Dockerfile.quartus" "$SCRIPT_DIR"
+# The installers (docker/quartus-installers/*.run/.qdz) are gitignored and
+# may be absent on a machine that already has the image built -- in that
+# case reuse the existing image instead of failing the COPY step.
+if [[ -f "$SCRIPT_DIR/quartus-installers/QuartusLiteSetup-21.1.0.842-linux.run" ]] \
+   || ! docker image inspect "$IMAGE" &>/dev/null; then
+    echo "[run-synth.sh] Building Quartus image '$IMAGE' (cached after first build)..."
+    docker build --platform linux/amd64 -t "$IMAGE" \
+        -f "$SCRIPT_DIR/Dockerfile.quartus" "$SCRIPT_DIR"
+else
+    echo "[run-synth.sh] Installers absent; reusing existing '$IMAGE' image."
+fi
 
 # ---- Create jtframe volume if needed ----
 docker volume inspect "$VOLUME" &>/dev/null \

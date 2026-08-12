@@ -45,6 +45,9 @@ JTFRAME_SDRAM_LARGE
 JTFRAME_BA1_START=0x150000
 JTFRAME_BA2_START=0x3D0000
 JTFRAME_BA3_START=0x23D0000
+# Bank 3 hosts the vram R/W bus (Phase 2: VRAM lives in SDRAM, see
+# doc/PHASE2-DESIGN.md), which requires write access to the bank.
+JTFRAME_BA3_WEN
 #
 # NVRAM (0x600000-0x61ffff) is on-chip BRAM inside sftm_main for now; SD-card
 # persistence (JTFRAME ioctl save/restore) is deferred - see cfg/mem.yaml.

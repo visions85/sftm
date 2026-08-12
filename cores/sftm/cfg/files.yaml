@@ -1,10 +1,16 @@
 # Source list for `jtframe files sftm`. Produces files.qip (synthesis) and
 # game.f / jtsim_vhdl.f (simulation).
 
+# Explicit file list (no globs: jtframe expanded stale names from a cached
+# game.f when the module set changed during the 2026-08 restart)
 sftm:
   - get:
     - jtsftm_game.v       # JTFRAME game top (jt-prefix required by jtframe mem)
-    - "sftm_*.v"          # sftm_main, sftm_video, sftm_blit, sftm_vram, sftm_snd
+    - sftm_main.v         # 68EC020 + itech020_map
+    - sftm_video.v        # IT42 registers, palette, CRT, scanout
+    - sftm_blit.v         # IT42 blitter FSMs
+    - sftm_vram.v         # VRAM SDRAM arbiter + scanline buffers
+    - sftm_snd.v          # MC6809 sound board glue
     - sftm5506.v          # Ensoniq ES5506 (OTTO)
   # TG68K.C (68020-capable) lives in cores/sftm/hdl/tg68k as a git-vendored
   # copy. It is VHDL; for the Verilator sim flow convert to Verilog first
