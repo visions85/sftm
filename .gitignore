@@ -34,3 +34,6 @@ cores/*/hdl/tg68k/TG68KdotC_Kernel_conv.v
 *.7z
 # macOS
 .DS_Store
+# MAME driver source vendored locally for porting reference (BSD-3-Clause,
+# kept out of this GPLv3 repo; run doc/fetch-mame-src.sh to refetch)
+/doc/mame-src/

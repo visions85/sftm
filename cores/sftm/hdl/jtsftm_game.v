@@ -6,310 +6,171 @@
     version. See the LICENSE file.
 
     Street Fighter: The Movie (Incredible Technologies itech32) - game top.
+    Literal port of MAME itech32.cpp / itech32_v.cpp / es5506.cpp; see
+    doc/PORTING.md for the module map and porting rules.
 
-    Clocks (see hdl/mem.yaml):
+    Clocks (see cfg/mem.yaml):
         clk        48 MHz reference (clk_rom)
-        e020_cen   ~25 MHz   68EC020
+        e020_cen   25 MHz    68EC020
         snd_cen     2 MHz    MC6809
         es_cen     16 MHz    ES5506
-        pxl_cen    ~8 MHz    pixel clock (HTOTAL 508 * VTOTAL 262 * 59.76Hz)
+        pxl_cen     8 MHz    pixel clock (JTFRAME_PXLCLK=8)
 */
 
 module jtsftm_game(
-    // jtframe_game_ports.inc includes jtframe_common_ports.inc + mem_ports.inc
-    // (mem_ports.inc is chosen when JTFRAME_MEMGEN is set by jtframe mem/files)
     `include "jtframe_game_ports.inc"
 );
 
-/* verilator lint_off WIDTH */
+// DIP switches: SW1(4) on the mainboard; DIPS port bits 20-23
+wire [7:0] dipsw_a;
+assign dipsw_a = dipsw[7:0];
 
-// ---------------------------------------------------------------------------
-// DIP switches: itech32 has 2x DSW(4) banks on the 1083 board.
-// ---------------------------------------------------------------------------
-wire [7:0] dipsw_a, dipsw_b;
-assign { dipsw_b, dipsw_a } = dipsw[15:0];
-
-// ---------------------------------------------------------------------------
-// CPU <-> video/blitter/palette bus
-// ---------------------------------------------------------------------------
+// CPU <-> video bus
 wire [23:1] cpu_addr;
 wire [15:0] cpu_dout;
-wire [15:0] vram_dout, pal_dout, vreg_dout;
-wire        cpu_rnw;
-wire        cpu_uds_n, cpu_lds_n;
-wire        vram_cs, pal_cs, vreg_cs;   // decoded selects to the video block
-wire [ 1:0] plane_en;                   // foreground/background enable latch
-wire [ 1:0] grom_bank;                  // high GROM address bank latch
-wire [ 6:0] color_latch0;               // foreground palette bank
-wire [ 6:0] color_latch1;               // background palette bank
+wire [15:0] vreg_dout, pal_dout;
+wire        cpu_rnw, cpu_uds_n, cpu_lds_n, bus_wstb;
+wire        vreg_cs, pal_cs;
+wire [ 1:0] plane_en, grom_bank;
+wire [ 6:0] color_latch0, color_latch1;
 
 // interrupts
 wire        blit_irq, scan_irq, vblank_irq;
-// VBlank active latch: main -> video for correct VR_XFER bit 6 reads
-wire        vint_latch_w;
-// diagnostics
-wire        nvram_wr_ever;   // latches first CPU NVRAM write (sftm_main → sftm_video)
-wire        wdog_kick_ever;  // latches first watchdog kick (sftm_main → sftm_video)
-wire        boot_done_ever;  // latches first boot_done (sftm_main → sftm_video)
-wire        isr_vec_fetch_ever; // latches first autovector 26/27 table read (sftm_main → sftm_video)
-wire        ipl_asserted_ever;  // latches first cpu_ipl != 111 (sftm_main → sftm_video)
-wire        ipl7_pulse_ever;    // diagnostic-only: synthetic IPL7 test pulse fired (sftm_main → sftm_video)
-wire        nvram_region_wr_ever; // diagnostic: CPU wrote NVRAM region at least once (sftm_main -> sftm_video)
-wire        isr_ipl7_fetch_ever;// diagnostic-only: CPU took the synthetic IPL7 test pulse (sftm_main → sftm_video)
-wire        wdog_fired_ever;    // diagnostic: our own watchdog forced a soft reboot at least once (sftm_main → sftm_video)
-wire        prot_wr_ever;       // diagnostic: CPU wrote the protection RAM byte (0x7A6A) at least once (sftm_main → sftm_video)
-wire        prot_rd_ever;       // diagnostic: CPU read the protection port (0x680002) at least once (sftm_main → sftm_video)
-wire [ 1:0] prot_rd_count;      // diagnostic: saturating count (0..3) of DISTINCT protection-port read accesses (sftm_main → sftm_video)
-wire [ 1:0] post_wr_fetch_count;// diagnostic: saturating count (0..3) of DISTINCT instruction fetches AFTER the protection write (sftm_main → sftm_video)
-wire [ 2:0] poll_region;       // diagnostic: which hardware region the stuck CPU reads in steady state, 0=none/RAM+ROM only (sftm_main → sftm_video)
-wire [ 2:0] exc_vec;           // diagnostic: which exception vector the CPU fetched, 0=none/never faulted (sftm_main → sftm_video)
-wire [ 2:0] exc_detail;        // diagnostic: finer split of exc_vec incl. the unmapped-fetch (0xFFFF) test (sftm_main → sftm_video)
-wire [ 7:0] exc_vec_num;       // diagnostic: exact 68k vector number, for the on-screen bit display (sftm_main → sftm_video)
-wire [23:0] exc_fetch_addr;    // diagnostic: byte address of the last instruction fetch before the fault (sftm_main → sftm_video)
-wire [15:0] exc_fetch_word;    // diagnostic: data word of that fetch, i.e. the faulting opcode (sftm_main → sftm_video)
-wire        exc_last_ff;       // diagnostic: that last fetched word was 0xFFFF (sftm_main → sftm_video)
-wire [15:0] exc_code_ram;      // diagnostic: live mirror of RAM[0x0FBE], the game's own exception-code scratch word (sftm_main → sftm_video)
-wire [23:0] pc_snapshot_addr;   // diagnostic: one-shot snapshot of the CPU's instruction-fetch address, ~5s after reset (sftm_main → sftm_video)
-wire [15:0] pc_snapshot_word;   // diagnostic: one-shot snapshot of the instruction word fetched at that address (sftm_main → sftm_video)
-wire        pc_stable;          // diagnostic: does a second, later PC snapshot match the first? (sftm_main → sftm_video)
-wire [15:0] vecC_hi;             // diagnostic: live mirror of RAM[0x2C:0x2D], line-F vector high word (sftm_main → sftm_video)
-wire [15:0] vecC_lo;             // diagnostic: live mirror of RAM[0x2E:0x2F], line-F vector low word (sftm_main → sftm_video)
-wire [ 7:0] genuine_exc_vec_num; // diagnostic: which vector genuinely fired first, filtered against the RAM-test's write-then-readback pattern (sftm_main → sftm_video)
-wire        fault_in_ramtest;    // diagnostic: was the CPU executing inside the RAM self-test's loop body when that exception fired? (sftm_main → sftm_video)
-wire [23:0] genuine_exc_fetch_addr; // diagnostic: exact instruction-fetch address at the moment of that same genuine exception (sftm_main → sftm_video)
-wire [15:0] genuine_exc_fetch_word; // diagnostic: the opcode fetched there (sftm_main → sftm_video)
-wire [ 7:0] genuine_exc_vec_num2;   // diagnostic: same as genuine_exc_vec_num but reset on w_rst -- captures the MOST RECENT boot attempt (sftm_main → sftm_video)
-wire        fault_in_ramtest2;      // diagnostic: fault_in_ramtest for the w_rst-resetting capture above (sftm_main → sftm_video)
-wire [23:0] genuine_exc_fetch_addr2; // diagnostic: genuine_exc_fetch_addr for the w_rst-resetting capture above (sftm_main → sftm_video)
-wire [15:0] genuine_exc_fetch_word2; // diagnostic: genuine_exc_fetch_word for the w_rst-resetting capture above (sftm_main → sftm_video)
 
-// ---------------------------------------------------------------------------
-// Sound: main->sound command latch + ES5506 stereo mix
-// ---------------------------------------------------------------------------
-wire [ 7:0] snd_latch;
-wire        snd_latch_we;
-wire        snd_irq;                    // ES5506 IRQ -> 6809
-wire [15:0] snd_left, snd_right;        // ES5506 stereo PCM
+// sound command latches
+wire [ 7:0] snd_latch1, snd_latch2;
+wire        snd_pending1, snd_pending2;
+wire        snd_latch1_rd, snd_latch2_rd;
 
-// ---------------------------------------------------------------------------
-// Main CPU subsystem (68EC020 via TG68K.C in 020 mode)
-// ---------------------------------------------------------------------------
+wire [ 7:0] st_main;
+
 sftm_main u_main(
-    .rst        ( rst           ),
-    .clk        ( clk           ),
-    .cen        ( e020_cen      ),
-    // program ROM (32-bit) in SDRAM bank 0 ("main" bus in mem.yaml)
-    .rom_addr   ( main_addr     ),
-    .rom_data   ( main_data     ),
-    .rom_cs     ( main_cs       ),
-    .rom_ok     ( main_ok       ),
-    // cabinet
-    .joystick1  ( joystick1     ),
-    .joystick2  ( joystick2     ),
-    .cab_1p     ( cab_1p        ),
-    .coin       ( coin          ),
-    .service    ( service       ),
-    .dip_test   ( dip_test      ),
-    .dipsw_a    ( dipsw_a       ),
-    .dipsw_b    ( dipsw_b       ),
-    // video / blitter / palette bus
-    .cpu_addr   ( cpu_addr      ),
-    .cpu_dout   ( cpu_dout      ),
-    .cpu_rnw    ( cpu_rnw       ),
-    .cpu_uds_n  ( cpu_uds_n     ),
-    .cpu_lds_n  ( cpu_lds_n     ),
-    .vram_cs    ( vram_cs       ),
-    .vreg_cs    ( vreg_cs       ),
-    .pal_cs     ( pal_cs        ),
-    .vram_dout  ( vram_dout     ),
-    .vreg_dout  ( vreg_dout     ),
-    .pal_dout   ( pal_dout      ),
-    .plane_en   ( plane_en      ),
-    .grom_bank  ( grom_bank     ),
-    .color_latch0(color_latch0  ),
-    .color_latch1(color_latch1  ),
-    // interrupts
-    .blit_irq   ( blit_irq      ),
-    .scan_irq   ( scan_irq      ),
-    .vblank_irq ( vblank_irq    ),
-    // VBlank active latch exported to sftm_video for correct VR_XFER reads
-    .vint_latch_out( vint_latch_w ),
-    // sound latch
-    .snd_latch  ( snd_latch     ),
-    .snd_latch_we(snd_latch_we  ),
-    // NVRAM is on-chip BRAM inside sftm_main (persistence deferred)
-    .debug_bus  ( debug_bus     ),
-    // vblank status for DIPS register bit 2 (active-low: 1=active display)
-    .LVBL       ( LVBL          ),
-    // diagnostic: first NVRAM write ever
-    .nvram_wr_ever( nvram_wr_ever ),
-    // diagnostic: first watchdog kick
-    .wdog_kick_ever( wdog_kick_ever ),
-    // diagnostic: boot copy completed at least once
-    .boot_done_ever( boot_done_ever ),
-    // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
-    .isr_vec_fetch_ever( isr_vec_fetch_ever ),
-    // diagnostic: FPGA ever asserted IPL2/IPL3 to the CPU (regardless of whether it was taken)
-    .ipl_asserted_ever( ipl_asserted_ever ),
-    // diagnostic-only: synthetic non-maskable IPL7 test pulse + whether CPU took it
-    .ipl7_pulse_ever( ipl7_pulse_ever ),
-    .isr_ipl7_fetch_ever( isr_ipl7_fetch_ever ),
-    // diagnostic: our own watchdog forced a soft reboot at least once
-    .wdog_fired_ever( wdog_fired_ever ),
-    // diagnostic: CPU wrote NVRAM region at least once
-    .nvram_region_wr_ever( nvram_region_wr_ever ),
-    // diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
-    .prot_wr_ever( prot_wr_ever ),
-    .prot_rd_ever( prot_rd_ever ),
-    .prot_rd_count( prot_rd_count ),
-    .post_wr_fetch_count( post_wr_fetch_count ),
-    .poll_region        ( poll_region         ),
-    .exc_vec            ( exc_vec             ),
-    .exc_detail         ( exc_detail          ),
-    .exc_vec_num        ( exc_vec_num         ),
-    .exc_fetch_addr     ( exc_fetch_addr      ),
-    .exc_fetch_word     ( exc_fetch_word      ),
-    .exc_last_ff        ( exc_last_ff         ),
-    .exc_code_ram       ( exc_code_ram        ),
-    .pc_snapshot_addr   ( pc_snapshot_addr    ),
-    .pc_snapshot_word   ( pc_snapshot_word    ),
-    .pc_stable          ( pc_stable           ),
-    .vecC_hi            ( vecC_hi             ),
-    .vecC_lo            ( vecC_lo             ),
-    .genuine_exc_vec_num( genuine_exc_vec_num ),
-    .fault_in_ramtest   ( fault_in_ramtest    ),
-    .genuine_exc_fetch_addr( genuine_exc_fetch_addr ),
-    .genuine_exc_fetch_word( genuine_exc_fetch_word ),
-    .genuine_exc_vec_num2( genuine_exc_vec_num2 ),
-    .fault_in_ramtest2   ( fault_in_ramtest2    ),
-    .genuine_exc_fetch_addr2( genuine_exc_fetch_addr2 ),
-    .genuine_exc_fetch_word2( genuine_exc_fetch_word2 )
+    .rst          ( rst           ),
+    .clk          ( clk           ),
+    .cen          ( e020_cen      ),
+
+    .rom_addr     ( main_addr     ),
+    .rom_data     ( main_data     ),
+    .rom_cs       ( main_cs       ),
+    .rom_ok       ( main_ok       ),
+
+    .joystick1    ( joystick1     ),
+    .joystick2    ( joystick2     ),
+    .cab_1p       ( cab_1p        ),
+    .coin         ( coin          ),
+    .service      ( service       ),
+    .dip_test     ( dip_test      ),
+    .dipsw_a      ( dipsw_a       ),
+
+    .cpu_addr     ( cpu_addr      ),
+    .cpu_dout     ( cpu_dout      ),
+    .cpu_rnw      ( cpu_rnw       ),
+    .cpu_uds_n    ( cpu_uds_n     ),
+    .cpu_lds_n    ( cpu_lds_n     ),
+    .bus_wstb     ( bus_wstb      ),
+    .vreg_cs      ( vreg_cs       ),
+    .pal_cs       ( pal_cs        ),
+    .vreg_dout    ( vreg_dout     ),
+    .pal_dout     ( pal_dout      ),
+
+    .plane_en     ( plane_en      ),
+    .grom_bank    ( grom_bank     ),
+    .color_latch0 ( color_latch0  ),
+    .color_latch1 ( color_latch1  ),
+
+    .vblank_irq   ( vblank_irq    ),
+    .blit_irq     ( blit_irq      ),
+    .scan_irq     ( scan_irq      ),
+    .LVBL         ( LVBL          ),
+
+    .snd_latch1   ( snd_latch1    ),
+    .snd_latch2   ( snd_latch2    ),
+    .snd_pending1 ( snd_pending1  ),
+    .snd_pending2 ( snd_pending2  ),
+    .snd_latch1_rd( snd_latch1_rd ),
+    .snd_latch2_rd( snd_latch2_rd ),
+
+    .debug_bus    ( debug_bus     ),
+    .st_dout      ( st_main       )
 );
 
-// ---------------------------------------------------------------------------
-// Video: IT42 blitter + two VRAM planes + palette + scanout
-// ---------------------------------------------------------------------------
 sftm_video u_video(
-    .rst        ( rst           ),
-    .clk        ( clk           ),
-    .pxl_cen    ( pxl_cen       ),
-    .pxl2_cen   ( pxl2_cen      ),
-    // CPU bus
-    .cpu_addr   ( cpu_addr      ),
-    .cpu_dout   ( cpu_dout      ),
-    .cpu_rnw    ( cpu_rnw       ),
-    .cpu_uds_n  ( cpu_uds_n     ),
-    .cpu_lds_n  ( cpu_lds_n     ),
-    .vram_cs    ( vram_cs       ),
-    .vreg_cs    ( vreg_cs       ),
-    .pal_cs     ( pal_cs        ),
-    .vram_dout  ( vram_dout     ),
-    .vreg_dout  ( vreg_dout     ),
-    .pal_dout   ( pal_dout      ),
-    .plane_en   ( plane_en      ),
-    .grom_bank  ( grom_bank     ),
-    .color_latch0(color_latch0  ),
-    .color_latch1(color_latch1  ),
-    // graphics ROM (blitter source) in SDRAM banks 2/3
-    .grom_addr  ( grom_addr     ),
-    .grom_data  ( grom_data     ),
-    .grom_cs    ( grom_cs       ),
-    .grom_ok    ( grom_ok       ),
-    .grm3_addr  ( grm3_addr     ),
-    .grm3_data  ( grm3_data     ),
-    .grm3_cs    ( grm3_cs       ),
-    .grm3_ok    ( grm3_ok       ),
-    // interrupts back to CPU
-    .blit_irq   ( blit_irq      ),
-    .scan_irq   ( scan_irq      ),
-    .vblank_irq ( vblank_irq    ),
-    // video out
-    .HS         ( HS            ),
-    .VS         ( VS            ),
-    .LHBL       ( LHBL          ),
-    .LVBL       ( LVBL          ),
-    .red        ( red           ),
-    .green      ( green         ),
-    .blue       ( blue          ),
-    .gfx_en     ( gfx_en        ),
-    .debug_bus  ( debug_bus     ),
-    .nvram_wr_ever( nvram_wr_ever ),
-    // diagnostic: first watchdog kick (outer main loop ran)
-    .wdog_kick_ever( wdog_kick_ever ),
-    // diagnostic: CPU entered ROM after boot copy
-    .boot_done_ever( boot_done_ever ),
-    // VBlank active latch for correct VR_XFER bit 6 behaviour
-    .vint_latch ( vint_latch_w  ),
-    // diagnostic: CPU ever read the IPL2/IPL3 autovector table entry
-    .isr_vec_fetch_ever( isr_vec_fetch_ever ),
-    // diagnostic: FPGA ever asserted IPL2/IPL3 to the CPU (regardless of whether it was taken)
-    .ipl_asserted_ever( ipl_asserted_ever ),
-    // diagnostic-only: synthetic non-maskable IPL7 test pulse + whether CPU took it
-    .ipl7_pulse_ever( ipl7_pulse_ever ),
-    .isr_ipl7_fetch_ever( isr_ipl7_fetch_ever ),
-    // diagnostic: our own watchdog forced a soft reboot at least once
-    .wdog_fired_ever( wdog_fired_ever ),
-    // diagnostic: CPU wrote NVRAM region at least once
-    .nvram_region_wr_ever( nvram_region_wr_ever ),
-    // diagnostic: protection RAM byte (0x7A6A) write / port (0x680002) read
-    .prot_wr_ever( prot_wr_ever ),
-    .prot_rd_ever( prot_rd_ever ),
-    .prot_rd_count( prot_rd_count ),
-    .post_wr_fetch_count( post_wr_fetch_count ),
-    .poll_region        ( poll_region         ),
-    .exc_vec            ( exc_vec             ),
-    .exc_detail         ( exc_detail          ),
-    .exc_vec_num        ( exc_vec_num         ),
-    .exc_fetch_addr     ( exc_fetch_addr      ),
-    .exc_fetch_word     ( exc_fetch_word      ),
-    .exc_last_ff        ( exc_last_ff         ),
-    .exc_code_ram       ( exc_code_ram        ),
-    .pc_snapshot_addr   ( pc_snapshot_addr    ),
-    .pc_snapshot_word   ( pc_snapshot_word    ),
-    .pc_stable          ( pc_stable           ),
-    .vecC_hi            ( vecC_hi             ),
-    .vecC_lo            ( vecC_lo             ),
-    .genuine_exc_vec_num( genuine_exc_vec_num ),
-    .fault_in_ramtest   ( fault_in_ramtest    ),
-    .genuine_exc_fetch_addr( genuine_exc_fetch_addr ),
-    .genuine_exc_fetch_word( genuine_exc_fetch_word ),
-    .genuine_exc_vec_num2( genuine_exc_vec_num2 ),
-    .fault_in_ramtest2   ( fault_in_ramtest2    ),
-    .genuine_exc_fetch_addr2( genuine_exc_fetch_addr2 ),
-    .genuine_exc_fetch_word2( genuine_exc_fetch_word2 )
+    .rst          ( rst           ),
+    .clk          ( clk           ),
+    .pxl_cen      ( pxl_cen       ),
+
+    .cpu_addr     ( cpu_addr      ),
+    .cpu_dout     ( cpu_dout      ),
+    .cpu_uds_n    ( cpu_uds_n     ),
+    .cpu_lds_n    ( cpu_lds_n     ),
+    .bus_wstb     ( bus_wstb      ),
+    .vreg_cs      ( vreg_cs       ),
+    .pal_cs       ( pal_cs        ),
+    .vreg_dout    ( vreg_dout     ),
+    .pal_dout     ( pal_dout      ),
+
+    .plane_en     ( plane_en      ),
+    .grom_bank    ( grom_bank     ),
+    .color_latch0 ( color_latch0  ),
+    .color_latch1 ( color_latch1  ),
+
+    .grom_addr    ( grom_addr     ),
+    .grom_data    ( grom_data     ),
+    .grom_cs      ( grom_cs       ),
+    .grom_ok      ( grom_ok       ),
+    .grm3_addr    ( grm3_addr     ),
+    .grm3_data    ( grm3_data     ),
+    .grm3_cs      ( grm3_cs       ),
+    .grm3_ok      ( grm3_ok       ),
+
+    .vblank_irq   ( vblank_irq    ),
+    .blit_irq     ( blit_irq      ),
+    .scan_irq     ( scan_irq      ),
+
+    .HS           ( HS            ),
+    .VS           ( VS            ),
+    .LHBL         ( LHBL          ),
+    .LVBL         ( LVBL          ),
+    .red          ( red           ),
+    .green        ( green         ),
+    .blue         ( blue          ),
+    .gfx_en       ( gfx_en        ),
+    .debug_bus    ( debug_bus     )
 );
 
-// ---------------------------------------------------------------------------
-// Sound: MC6809 + ES5506 (OTTO)
-// ---------------------------------------------------------------------------
 sftm_snd u_snd(
-    .rst        ( rst           ),
-    .clk        ( clk           ),
-    .cen        ( snd_cen       ),
-    .es_cen     ( es_cen        ),
-    // sound CPU ROM (bank 0)
-    .rom_addr   ( snd_addr      ),
-    .rom_data   ( snd_data      ),
-    .rom_cs     ( snd_cs        ),
-    .rom_ok     ( snd_ok        ),
-    // ES5506 sample ROM (bank 1)
-    .srom_addr  ( srom_addr     ),
-    .srom_data  ( srom_data     ),
-    .srom_cs    ( srom_cs       ),
-    .srom_ok    ( srom_ok       ),
-    // command latch from main CPU
-    .snd_latch  ( snd_latch     ),
-    .snd_latch_we(snd_latch_we  ),
-    .snd_irq    ( snd_irq       ),
-    // audio out (stereo)
-    .snd_left   ( snd_left      ),
-    .snd_right  ( snd_right     ),
-    .sample     ( sample        )
+    .rst          ( rst           ),
+    .clk          ( clk           ),
+    .cen          ( snd_cen       ),
+    .es_cen       ( es_cen        ),
+
+    .rom_addr     ( snd_addr      ),
+    .rom_data     ( snd_data      ),
+    .rom_cs       ( snd_cs        ),
+    .rom_ok       ( snd_ok        ),
+
+    .srom_addr    ( srom_addr     ),
+    .srom_data    ( srom_data     ),
+    .srom_cs      ( srom_cs       ),
+    .srom_ok      ( srom_ok       ),
+
+    .snd_latch1   ( snd_latch1    ),
+    .snd_latch2   ( snd_latch2    ),
+    .snd_pending1 ( snd_pending1  ),
+    .snd_pending2 ( snd_pending2  ),
+    .snd_latch1_rd( snd_latch1_rd ),
+    .snd_latch2_rd( snd_latch2_rd ),
+
+    .snd_left     ( snd_left      ),
+    .snd_right    ( snd_right     ),
+    .sample       ( sample        )
 );
 
-/* verilator lint_on WIDTH */
+// OSD debug view: main CPU status ({boot_done, vint, blit, scan, state, wdog})
+assign debug_view = st_main;
 
-// debug_view: show boot status and other CPU-side signals
-assign debug_view = debug_bus;   // echo debug_bus for now (placeholder)
+// verilator lint_off UNUSEDSIGNAL
+wire unused = &{ cpu_rnw, 1'b0 };
+// verilator lint_on UNUSEDSIGNAL
 
 endmodule

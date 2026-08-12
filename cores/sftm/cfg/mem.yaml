@@ -13,9 +13,11 @@
 # 32 MB grom lives alone and the blitter (grom) and ES5506 (srom) never share a
 # bank, minimising read contention.
 #
-# NOTE: addr_width values are word addresses for the given data_width. Final
-# offsets/boundaries must be confirmed against the generated *_sdram.v and kept
-# consistent with mame2mra.toml.
+# NOTE: jtframe addr_width counts BYTE-address bits regardless of data_width;
+# the generated port is [addr_width-1 : log2(data_width/8)]. The previous
+# version of this file treated addr_width as word-address bits, silently
+# halving/quartering every bus (main could only reach 256 KB of the 1 MB
+# program ROM). Corrected 2026-08-12; regenerate mem_ports.inc/_sdram.v.
 
 clocks:
   clk:                # 48 MHz reference
@@ -34,25 +36,25 @@ sdram:
     # ---- bank 0: program + sound CPU ------------------------------------
     - buses:
         - name: main          # 68EC020 program, 32-bit ("prog" is reserved by JTFRAME for the download port)
-          addr_width: 18       # 256K longwords = 1 MB
+          addr_width: 20       # 1 MB -> port [19:2]
           data_width: 32
         - name: snd           # 6809 program, 8-bit
-          addr_width: 18       # up to 256 KB
+          addr_width: 18       # 256 KB -> port [17:0]
           data_width: 8
     # ---- bank 1: ES5506 sample ROM (16-bit words) -----------------------
     - buses:
         - name: srom
-          addr_width: 21       # up to 2 Mword (banked internally by ES5506)
+          addr_width: 22       # 2.5 MB (srom0 2MB + srom3 512KB) -> port [21:1]
           data_width: 16
     # ---- bank 2: main graphics (32 MB, 128 MB module required) ----------
     - buses:
         - name: grom          # blitter source data
-          addr_width: 24       # 16 Mword = 32 MB @ 16-bit
+          addr_width: 25       # 32 MB -> port [24:1]
           data_width: 16
     # ---- bank 3: extra graphics plane -----------------------------------
     - buses:
         - name: grm3
-          addr_width: 18       # 512 KB @ 16-bit
+          addr_width: 19       # 512 KB -> port [18:1]
           data_width: 16
 
   # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board) is

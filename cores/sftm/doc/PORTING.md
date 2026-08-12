@@ -1,0 +1,115 @@
+# Porting strategy: literal function-level port from MAME
+
+This restart replaces the from-scratch/guessed RTL that occupied this tree
+previously (custom blitter, video and CPU glue reverse-engineered without a
+close MAME reference) with a **literal, function-by-function port** of MAME's
+`itech/itech32.cpp` driver. Every register, address range and algorithm in
+the new HDL should be traceable back to a specific function and line number
+in the MAME source. That source is vendored for reference (not for
+redistribution) under `doc/mame-src/`:
+
+| File | Purpose |
+|---|---|
+| `itech32.cpp` | CPU memory maps, interrupts, inputs, ROM loading, driver init |
+| `itech32.h` | `itech32_state` member declarations (register widths, defaults) |
+| `itech32_v.cpp` | Blitter/video: register file, blit commands, screen_update |
+| `es5506.cpp` / `.h` | Ensoniq ES5506 (OTTO) sound chip |
+
+Fetched from `mamedev/mame` `master` on 2026-08-12. `itech32.cpp` covers many
+games on this driver (Time Killers, Bloodstorm, World Class Bowling, Golden
+Tee, etc.) — **only the `sftm` machine config path applies to us**:
+`itech32_state::sftm()` (machine config), `itech020_map()` (memory map),
+`init_sftm()` / `init_sftm_common()` (driver init), `INPUT_PORTS_START(sftm)`
++ `itech32_base_32bit` (inputs).
+
+## What "literal port" means here, precisely
+
+MAME's driver code is two different kinds of thing, and they port
+differently:
+
+1. **Register/decode semantics** (address ranges, what each video register
+   byte does, the blitter's per-pixel loop math, interrupt bit layout,
+   protection shortcut). This is directly, mechanically portable: an HDL
+   `case` on address bits mirroring a C `switch`, a pixel-stepping state
+   machine mirroring a C `for` loop. Every module below cites the MAME
+   function and line number it mirrors.
+
+2. **Bus cycle timing** (DTACK wait states, SDRAM latency, clock-enable
+   sequencing). MAME doesn't model this at all — it's a functional emulator,
+   not a timing-accurate one. There is nothing to "port" here; this is
+   original FPGA integration work, designed against TG68K.C's actual timing
+   contract (see `hdl/tg68k/TG68K.vhd`) and JTFRAME's SDRAM controller
+   handshake (`*_cs`/`*_ok`). Treat these parts as unverified until they've
+   been through simulation (Phase 4) — they cannot be checked against MAME.
+
+## Findings carried over from the previous implementation
+
+Three things were established the hard way (weeks of USB-Blaster/SignalTap
+debugging on hardware) and must not regress; they are re-implemented and
+documented at the top of `hdl/sftm_main.v`:
+
+1. **Vector-table bootstrap**: `init_program_rom()` (itech32.cpp:4893) copies
+   the first 0x80 bytes of program ROM into RAM at 0 before the CPU runs,
+   because `sftm` maps `0x000000-0x007fff` as RAM and the reset SSP/PC
+   vectors live there. The `S_BOOT` FSM in `sftm_main.v` replicates this
+   before deasserting CPU reset.
+
+2. **IPL mapping**: VINT (vblank) → IPL1, XINT (blitter) → IPL2, QINT
+   (scanline) → IPL3, `m_irq_base = 0`, autovectored. Three separate levels;
+   an earlier theory that collapsed vblank+blitter onto IPL2 was wrong and
+   caused the CPU to never take the FPGA's interrupts.
+
+3. **SDRAM byte order**: JTFRAME assembles the download stream little-endian
+   (`data[7:0]` = lowest byte address); the 68020 is big-endian, so each
+   16-bit fetch swaps bytes within its half of the 32-bit SDRAM word. The
+   `0x003C = byteswap(low half)` SignalTap capture (commit `d22fe93`)
+   confirmed this on hardware.
+
+## New finding this restart: mem.yaml addr_width was undersized
+
+jtframe's `addr_width` counts **byte**-address bits (generated port is
+`[addr_width-1 : log2(data_width/8)]`), but the old `cfg/mem.yaml` treated it
+as *word*-address bits. Every SDRAM bus was silently declared at half or a
+quarter of its required size — `main` reached only 256KB of the 1MB program
+ROM, `grom` only 16MB of 32MB. Any CPU fetch above 0x40000 into the program
+region would wrap/alias, which fits the class of "CPU wanders into garbage"
+faults seen on hardware. Corrected in this restart (main 20, srom 22, grom
+25, grm3 19); `mem_ports.inc`/`*_sdram.v` must be regenerated (Phase 4).
+
+## Protection: no PIC emulation needed
+
+`itech32_state::itech020_prot_result_r()` (itech32.cpp:637) just reads back a
+byte from main RAM at a fixed address (`m_itech020_prot_address`, set to
+`0x7a6a` for `sftm` v1.12 / `0x7a66` for v1.11 in `init_sftm_common`,
+itech32.cpp:4980). MAME doesn't emulate the PIC16C54 at all for this game —
+the game code writes an expected value into that RAM location itself, and the
+"protection check" at `0x680002` just reads it back. Our port does the same:
+`0x680002` reads `main_ram32[prot_addr]`, no MCU model required.
+
+## Module map (target)
+
+| MAME source | HDL module | Phase | Status |
+|---|---|---|---|
+| `itech020_map`, `update_interrupts`, `generate_int1`, `int1_ack_w`, `color_w`, `sound_data_w`, `itech020_prot_result_r`, `itech020_plane_w`, `init_program_rom`, input ports | `hdl/sftm_main.v` | 1 | done (unverified — needs sim) |
+| `itech32_v.cpp` in full: `m_video[]` register file, `handle_video_command`, `command_blit_raw`/`draw_raw*`, `draw_rle*`, `command_shift_reg`/`shiftreg_clear`, `video_r`/`video_w` (incl. dynamic HTOTAL/VTOTAL), `screen_update` | `hdl/sftm_video.v` | 2 | placeholder stub only |
+| `sound_020_map`, `sound_bank_w`, `sound_data_buffer_r`, `sound_control_w`, `firq_clear_w` + MC6809 wrapper | `hdl/sftm_snd.v` (CPU glue) | 3 | placeholder stub only |
+| `es5506.cpp`/`.h` (32-voice engine, envelopes, filters, loop modes) | `hdl/sftm5506.v` | 3 | not started |
+
+`sftm`-specific machine parameters from `init_sftm_common` /
+`itech32_state::sftm()`: `m_vram_height = 1024`, `m_planes = 1` (single VRAM
+plane — screen_update has no plane-blend path for this game, simplifying
+Phase 2 considerably), palette format `xRGB_888` 32768 entries, CPU020_CLOCK
+25 MHz, SOUND_CLOCK 16 MHz.
+
+## Validation plan
+
+1. ~~Phase 1: CPU/memory-map glue~~ (this session, unverified)
+2. Phase 2: blitter/video literal port
+3. Phase 3: sound (MC6809 glue + ES5506 literal port)
+4. Phase 4: regenerate `mem_ports.inc`/`files.qip` via `jtframe mem`/`jtframe
+   files`, update `ver/game` testbenches, simulate, then build via
+   `docker/run-synth.sh`. Hardware bring-up (SignalTap over the USB Blaster,
+   Quartus itself) happens on gamingpc, not this machine.
+
+No ROMs are included. `doc/mame-src/` is a local reference copy of MAME
+driver source for porting purposes only — not distributed, gitignored.
