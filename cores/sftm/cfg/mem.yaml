@@ -27,8 +27,8 @@ clocks:
     - freq: 16000000  # Ensoniq ES5506 master
       outputs:
         - es
-    - freq: 2000000   # MC6809 E clock
-      outputs:
+    - freq: 4000000   # 2x the MC6809 E clock: sftm_snd alternates the
+      outputs:        # mc6809i cen_E/cen_Q quadrature enables on this
         - snd
 
 sdram:

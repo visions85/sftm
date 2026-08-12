@@ -4,8 +4,8 @@
 sftm:
   - get:
     - jtsftm_game.v       # JTFRAME game top (jt-prefix required by jtframe mem)
-    - "sftm_*.v"          # sftm_main, sftm_video (Phase 2 stub), sftm_snd (Phase 3 stub)
-    # sftm5506.v (ES5506) returns in Phase 3
+    - "sftm_*.v"          # sftm_main, sftm_video, sftm_blit, sftm_vram, sftm_snd
+    - sftm5506.v          # Ensoniq ES5506 (OTTO)
   # TG68K.C (68020-capable) lives in cores/sftm/hdl/tg68k as a git-vendored
   # copy. It is VHDL; for the Verilator sim flow convert to Verilog first
   # (ghdl/vhd2vl) and list the converted files here. For Quartus synthesis the
