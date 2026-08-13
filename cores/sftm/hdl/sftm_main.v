@@ -573,6 +573,20 @@ reg [23:0] pc_at_ack;
 // reach RAM; a high count means the value latch is what is wrong.
 reg [ 7:0] w1104_cnt;
 reg [23:0] pc_at_1104;
+// The whole game hangs off one path: the QINT handler calls 0x80131C only on
+// the raster wrap (RAM[0x1104]==6), and that routine flushes the palette
+// queue, reads the inputs, and increments the timer tick at RAM[0x44A]
+// (0x801332). The main loop's timer walker compares stored timestamps
+// against that tick, and the task installed at boot is 0x829908. So if the
+// tick never advances, no timer expires, the boot task never runs, and the
+// machine looks exactly as observed: infrastructure alive, no game work.
+//   dbg_44a    the tick value        tick_cnt  writes to it
+//   wrap_cnt   times the wrap branch ran (the clr writes 0 to 0x1104,
+//              which ONLY happens on that branch)
+//   task_ever  did the PC ever enter the boot task's region (0x829xxx)
+reg [15:0] dbg_44a;
+reg [ 7:0] tick_cnt, wrap_cnt;
+reg        task_ever;
 // pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
 // cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
 // without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
@@ -607,6 +621,7 @@ always @(posedge clk) begin
         dbg_fbe <= 0; dbg_406 <= 0; dbg_407 <= 0; dbg_408 <= 0;
         dbg_400 <= 0; dbg_44e <= 0; dbg_1104 <= 0;
         pc_at_ack <= 24'd0; w1104_cnt <= 8'd0; pc_at_1104 <= 24'd0;
+        dbg_44a <= 16'd0; tick_cnt <= 8'd0; wrap_cnt <= 8'd0; task_ever <= 1'b0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -659,6 +674,17 @@ always @(posedge clk) begin
         if( ram_cpu_we_lo && ram_addr == 14'h0200 ) dbg_400[ 7:0] <= cpu_do16[ 7:0];
         if( ram_cpu_we_hi && ram_addr == 14'h0227 ) dbg_44e[15:8] <= cpu_do16[15:8];
         if( ram_cpu_we_lo && ram_addr == 14'h0227 ) dbg_44e[ 7:0] <= cpu_do16[ 7:0];
+        // timer tick at RAM[0x44A] -> word 0x225
+        if( ram_cpu_we_hi && ram_addr == 14'h0225 ) begin
+            dbg_44a[15:8] <= cpu_do16[15:8];
+            if( tick_cnt != 8'hFF ) tick_cnt <= tick_cnt + 8'd1;
+        end
+        if( ram_cpu_we_lo && ram_addr == 14'h0225 ) dbg_44a[7:0] <= cpu_do16[7:0];
+        // the wrap branch is the only writer of 0 to RAM[0x1104]
+        if( ram_cpu_we_hi && ram_addr == 14'h0882 && cpu_do16 == 16'd0
+            && wrap_cnt != 8'hFF ) wrap_cnt <= wrap_cnt + 8'd1;
+        // did execution ever reach the boot task at 0x829908?
+        if( pc_live[23:12] == 12'h829 ) task_ever <= 1'b1;
         if( ram_cpu_we_hi && ram_addr == 14'h0882 ) begin
             dbg_1104[15:8] <= cpu_do16[15:8];
             pc_at_1104     <= pc_live;
@@ -680,34 +706,38 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev12).
+// Debug view map (rev13) -- the tick probe.
 //
-// Two trusted probes now contradict each other:
-//   pc_at_ack = 0x80130C  -> the QINT handler DID execute its ack at
-//                            0x801304, so the handler runs
-//   dbg_1104  = 6         -> but the very next instruction writes
-//                            RAM[0x1104], which has never left init's value
-// Read-modify-write to RAM is verified correct in simulation, so this is not
-// an RMW problem. Resolve it by instrumenting the write itself.
-//   0-1 : count of writes to RAM word 0x882 (=byte 0x1104)
-//   2-5 : last value written there      6-B : PC at that write
-//   C-D : INTACK count                  E-F : scanline_hit count
+// Disassembly trace: every piece of game activity depends on one path.
+//   QINT handler --(only when RAM[0x1104]==6)--> 0x80131C
+//        |-- jsr 0x800F24   flush the deferred palette queue
+//        |-- jsr 0x8004B6   read inputs, feed the event queue
+//        \-- addq.w #1,$44a.w   THE TIMER TICK  (0x801332)
+// The main loop's timer walker (0x8006BA) compares timestamps against that
+// tick, and 0x8005C4 installs the boot task at 0x829908. A frozen tick
+// therefore explains every remaining symptom at once.
+//
+//   0-3 : RAM[0x44A] tick value       4-5 : writes to it
+//   6-7 : wrap-branch count (writes of 0 to RAM[0x1104])
+//   8-9 : total writes to RAM[0x1104]
+//   A   : sticky {task_ever(PC in 0x829xxx), pal_wr, snd_wr, nvram_wr}
+//   B-D : pc_max upper 12 bits        E-F : scanline_hit count
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, w1104_cnt[3:0] } :
-    view == 4'h1 ? { 4'h1, w1104_cnt[7:4] } :
-    view == 4'h2 ? { 4'h2, dbg_1104[ 3: 0] } :
-    view == 4'h3 ? { 4'h3, dbg_1104[ 7: 4] } :
-    view == 4'h4 ? { 4'h4, dbg_1104[11: 8] } :
-    view == 4'h5 ? { 4'h5, dbg_1104[15:12] } :
-    view == 4'h6 ? { 4'h6, pc_at_1104[ 3: 0] } :
-    view == 4'h7 ? { 4'h7, pc_at_1104[ 7: 4] } :
-    view == 4'h8 ? { 4'h8, pc_at_1104[11: 8] } :
-    view == 4'h9 ? { 4'h9, pc_at_1104[15:12] } :
-    view == 4'hA ? { 4'hA, pc_at_1104[19:16] } :
-    view == 4'hB ? { 4'hB, pc_at_1104[23:20] } :
-    view == 4'hC ? { 4'hC, dbg_ackcnt[3:0] } :
-    view == 4'hD ? { 4'hD, dbg_ackcnt[7:4] } :
+    view == 4'h0 ? { 4'h0, dbg_44a[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_44a[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_44a[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_44a[15:12] } :
+    view == 4'h4 ? { 4'h4, tick_cnt[3:0] } :
+    view == 4'h5 ? { 4'h5, tick_cnt[7:4] } :
+    view == 4'h6 ? { 4'h6, wrap_cnt[3:0] } :
+    view == 4'h7 ? { 4'h7, wrap_cnt[7:4] } :
+    view == 4'h8 ? { 4'h8, w1104_cnt[3:0] } :
+    view == 4'h9 ? { 4'h9, w1104_cnt[7:4] } :
+    view == 4'hA ? { 4'hA, task_ever, sf_pal_wr, sf_snd_wr, sf_nvram_wr } :
+    view == 4'hB ? { 4'hB, pc_max_hi[ 3: 0] } :
+    view == 4'hC ? { 4'hC, pc_max_hi[ 7: 4] } :
+    view == 4'hD ? { 4'hD, pc_max_hi[11: 8] } :
     view == 4'hE ? { 4'hE, dbg_scanhits[3:0] } :
                    { 4'hF, dbg_scanhits[7:4] };
 
