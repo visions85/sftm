@@ -47,6 +47,19 @@ fi
 # GAMMA=0: disable gamma correction LUT tables (~2k ALMs saved; no dedicated macro exists)
 sed -i 's/GAMMA=1/GAMMA=0/' "${JTFRAME_DIR}/target/mister/hdl/sys/arcade_video.v" 2>/dev/null || true
 
+# Fitter placement seed. jtcore hardcodes SEED=1 with no flag or env override,
+# and Quartus is deterministic, so an identical rebuild reproduces an identical
+# result -- rebuilding to chase timing closure is pointless without changing an
+# input. This design sits within a few hundred ps on the vendored TG68K
+# register file, so the seed is the practical lever. Patch it here, BEFORE
+# jtcore generates the QSF: appending to the QSF later fails with "Settings
+# File changed outside of the Quartus Prime software" (see the long note in
+# jtframe-patches/.../build_id.tcl -- four separate mechanisms were tried).
+if [ -n "${JTFRAME_SEED}" ]; then
+    sed -i "s/^SEED=.*/SEED=${JTFRAME_SEED}/" "${JTFRAME_DIR}/bin/jtcore"
+    echo "[sftm] fitter seed set to ${JTFRAME_SEED}"
+fi
+
 # ---------------------------------------------------------------------------
 # 2. Pre-compile jtframe binary (bin/jtframe is a wrapper that auto-compiles
 #    to src/jtframe/jtframe on first call; we do it here so interactive use

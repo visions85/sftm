@@ -66,6 +66,7 @@ docker run --rm --platform linux/amd64 \
     -e ROM=/workspace/rom \
     -e MRA=/workspace/jtbin/mra \
     -e TARGET=mister \
+    -e JTFRAME_SEED="${JTFRAME_SEED:-}" \
     "$IMAGE" \
     bash -c 'git config --global --add safe.directory /workspace && cd /workspace && jtcore sftm -mister'
 RC=$?
