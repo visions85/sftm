@@ -88,7 +88,13 @@ module sftm_video(
     output reg [ 4:0] green,
     output reg [ 4:0] blue,
     input      [ 3:0] gfx_en,
-    input      [ 7:0] debug_bus
+    input      [ 7:0] debug_bus,
+
+    // bring-up diagnostics: the live interrupt registers. INTENABLE is
+    // written from a runtime RAM shadow ($31A4) by the game, so its value
+    // cannot be determined by reading the ROM -- it has to be measured.
+    output     [15:0] st_intstate,
+    output     [15:0] st_intenable
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -122,6 +128,9 @@ assign vreg_dout = ridx == 6'd0       ? ((vreg_q & ~16'h0008) | 16'h0004 | 16'h0
                    ridx == 6'd3       ? 16'h00ef :
                    ridx == R_TRANSFER && c3_active ? xfer_rdata :
                    vreg_q;
+
+assign st_intstate  = vregs[R_INTSTATE];
+assign st_intenable = vregs[R_INTENABLE];
 
 assign scan_irq = |(vregs[R_INTSTATE] & vregs[R_INTENABLE] & VIDEOINT_SCANLINE);
 assign blit_irq = |(vregs[R_INTSTATE] & vregs[R_INTENABLE] & VIDEOINT_BLITTER);

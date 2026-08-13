@@ -112,6 +112,8 @@ module sftm_main #(
     input             snd_latch2_rd,
 
     input      [ 7:0] debug_bus,
+    input      [15:0] dbg_intstate,     // live INTSTATE  from sftm_video
+    input      [15:0] dbg_intenable,    // live INTENABLE from sftm_video
     output     [ 7:0] st_dout
 );
 
@@ -593,23 +595,31 @@ always @(posedge clk) begin
     end
 end
 
+// View map (rev3). pc_vec was dropped: it keyed on reads of 0x60..0x6F,
+// which the game's RAM self-test sweeps like any other address, so it only
+// ever measured the memory test. INTENABLE/INTSTATE replace it because the
+// game computes the enable mask at runtime -- the ROM cannot tell us.
+//   0-3 : INTENABLE nibbles (0 = bits 3:0)   4-7 : INTSTATE nibbles
+//   8   : {boot_done, vint, blit_irq, scan_irq}
+//   9   : {vreg_wr, cmd_wr, inten_wr, pal_wr}
+//   A-F : pc_stuck (PC while a vblank sits pending >100 ms)
 assign st_dout =
-    view == 4'h0 ? { 4'h0, pc_vec  [ 3: 0] } :
-    view == 4'h1 ? { 4'h1, pc_vec  [ 7: 4] } :
-    view == 4'h2 ? { 4'h2, pc_vec  [11: 8] } :
-    view == 4'h3 ? { 4'h3, pc_vec  [15:12] } :
-    view == 4'h4 ? { 4'h4, pc_vec  [19:16] } :
-    view == 4'h5 ? { 4'h5, pc_vec  [23:20] } :
-    view == 4'h6 ? { 4'h6, pc_stuck[ 3: 0] } :
-    view == 4'h7 ? { 4'h7, pc_stuck[ 7: 4] } :
-    view == 4'h8 ? { 4'h8, pc_stuck[11: 8] } :
-    view == 4'h9 ? { 4'h9, pc_stuck[15:12] } :
-    view == 4'hA ? { 4'hA, pc_stuck[19:16] } :
-    view == 4'hB ? { 4'hB, pc_stuck[23:20] } :
-    view == 4'hC ? { 4'hC, sf_v60, sf_v64, sf_v68, sf_v6c } :
-    view == 4'hD ? { 4'hD, sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr } :
-    view == 4'hE ? { 4'hE, sf_int_ack, sf_plane_wr, sf_prot_rd, sf_snd_wr } :
-                   { 4'hF, boot_done, vint, blit_irq, scan_irq };
+    view == 4'h0 ? { 4'h0, dbg_intenable[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_intenable[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_intenable[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_intenable[15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_intstate [ 3: 0] } :
+    view == 4'h5 ? { 4'h5, dbg_intstate [ 7: 4] } :
+    view == 4'h6 ? { 4'h6, dbg_intstate [11: 8] } :
+    view == 4'h7 ? { 4'h7, dbg_intstate [15:12] } :
+    view == 4'h8 ? { 4'h8, boot_done, vint, blit_irq, scan_irq } :
+    view == 4'h9 ? { 4'h9, sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr } :
+    view == 4'hA ? { 4'hA, pc_stuck[ 3: 0] } :
+    view == 4'hB ? { 4'hB, pc_stuck[ 7: 4] } :
+    view == 4'hC ? { 4'hC, pc_stuck[11: 8] } :
+    view == 4'hD ? { 4'hD, pc_stuck[15:12] } :
+    view == 4'hE ? { 4'hE, pc_stuck[19:16] } :
+                   { 4'hF, pc_stuck[23:20] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

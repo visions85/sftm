@@ -43,6 +43,7 @@ wire        snd_pending1, snd_pending2;
 wire        snd_latch1_rd, snd_latch2_rd;
 
 wire [ 7:0] st_main;
+wire [15:0] dbg_intstate, dbg_intenable;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -92,6 +93,8 @@ sftm_main u_main(
     .snd_latch2_rd( snd_latch2_rd ),
 
     .debug_bus    ( debug_bus     ),
+    .dbg_intstate ( dbg_intstate  ),
+    .dbg_intenable( dbg_intenable ),
     .st_dout      ( st_main       )
 );
 
@@ -147,7 +150,9 @@ sftm_video u_video(
     .green        ( green         ),
     .blue         ( blue          ),
     .gfx_en       ( gfx_en        ),
-    .debug_bus    ( debug_bus     )
+    .debug_bus    ( debug_bus     ),
+    .st_intstate  ( dbg_intstate  ),
+    .st_intenable ( dbg_intenable )
 );
 
 sftm_snd u_snd(
