@@ -189,3 +189,67 @@ and splitting each pole into multiply/accumulate stages removed it and
   `CS_ARCH_M68K`) settled several questions that hardware probes could not:
   the L1/VINT vector points at a deliberate crash trap (`jmp` to itself), so
   this game masks level 1 by design and never writes the `0x080000` ack.
+
+---
+
+## Bring-up status after the rev12 measurement (2026-08-13)
+
+**The interrupt/video/CPU infrastructure is fully working.** Measured on
+timing-clean builds (game clock closes at +1.8 ns or better since the TG68K
+multicycle constraint landed):
+
+| Measured | Result |
+|---|---|
+| Game's own RAM self-test, RAM[0x400] | **0 = PASS** |
+| INTENABLE | `0x0144` -- the game enables scanline and blitter itself |
+| scanline_hit | fires continuously |
+| INTSTATE bit2 rising edges | continuous |
+| INTACK writes | continuous, value `0x04`, PC = 0x80130C |
+| Writes to RAM[0x1104] | **255 (saturated)**, PC = 0x801310 |
+| Blitter | completes commands, idles, never stalls |
+
+So: the scanline interrupt fires, the CPU takes it, the QINT handler runs to
+completion, and the raster-split chain advances -- which means the deferred
+palette flush at 0x800F24 is being called on schedule. It simply finds an
+empty queue.
+
+### Correction to earlier entries in this log
+
+Several intermediate conclusions here were wrong and are retained only as a
+warning about method:
+
+* "the video block never raises either status bit" -- artifact of reading a
+  live register between set and ack. Fixed by an OR-accumulator.
+* "the scanline interrupt is not firing / RAM[0x1104] is frozen at 6" --
+  **sampling bias**. That word cycles 2->4->6 and 6 dwells longest, because
+  the interval from the last raster split back through vblank to the first is
+  the longest. A write COUNTER showed 255 writes where single samples had
+  looked frozen for four consecutive builds.
+* "the game disabled the scanline source (INTENABLE=0x20)" -- refuted; the
+  live register reads 0x0144.
+* "the CPU executed into a data region" -- misaligned disassembly; 0x8C1xxx
+  is real code reached by `jsr $8c1b54` from init.
+
+The recurring lesson: **for anything that changes over time, measure a
+counter or an accumulator, never a sample.** Every wrong turn above came
+from inferring steady state from a snapshot.
+
+### Genuine bugs found and fixed along the way
+
+1. ES5506 filter was the design's critical path (`vn -> fsamp`, -3.69 ns);
+   pre-latching per-voice coefficients and splitting each pole into
+   multiply/accumulate stages fixed it and *reduced* ALM usage.
+2. INTSTATE had three separate non-blocking writers, so simultaneous
+   events silently lost one. Combined into a single expression.
+3. INTSCANLINE was compared exactly; MAME normalises modulo screen height.
+   Now reduced iteratively (the game can produce 0xFFFF from RAM[0x1118]-1).
+4. Palette RAM coding style prevented BRAM inference and crashed quartus_map.
+5. `cfg/mem.yaml` addr_width counts BYTE bits -- every SDRAM bus had been
+   declared undersized.
+
+### Open question
+
+The dispatcher task count at RAM[0x044E] is 0, nothing queues a palette
+change, and nothing queues a sound command -- so the game runs its scheduler
+and interrupt handlers but never starts any game work. That is now the only
+symptom left, and it is a game-state question rather than a hardware one.
