@@ -544,3 +544,22 @@ the options are an offset expression that is a bare identifier evaluating to
 zero (`PROM_START` is 0 unless `JTFRAME_PROM_START` is defined, but that is
 obscure and fragile), or splitting generation from synthesis in the build
 flow.
+
+### Bug A on hardware (build 27)
+
+Synthesised clean with the 3-slot bank 3 and the `PROM_START` offset; timing
+closed at setup **+2.418 ns**, hold **+0.248 ns**, TNS 0 on every domain.
+
+On the MiSTer the core still runs correctly -- the full palette call chain
+completes (view0 = F), the VRAM self-test still reports 0 mismatches, and
+screenshots grew from ~62 KB to ~70 KB. So the change is a clean win with no
+regression.
+
+Note on evidence: Bug A's *fix* is verified in simulation, which is the only
+place the prefetch's per-line completion can be measured precisely. There is
+no hardware probe for "words fetched per line", so the hardware run confirms
+only that nothing broke. Adding that probe would be the way to confirm the
+prefetch now completes all 384 on real SDRAM.
+
+Bug B is unchanged, as expected -- the isolated-pixel fraction is still
+97.0-97.5% against MAME's 0.6%. The two really are independent.
