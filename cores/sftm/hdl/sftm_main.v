@@ -498,8 +498,82 @@ TG68KdotC_Kernel #(
     .skipFetch     (              )
 );
 
-// status probe for the OSD debug view / SignalTap anchor
-assign st_dout = { boot_done, vint, blit_irq, scan_irq, state[2:0], wdog_rst };
+// ---------------------------------------------------------------------------
+// Hardware bring-up diagnostics (Phase 4). JTFRAME renders st_dout as two hex
+// digits over the game image (debug_view, jtframe_debug.v:50). We cannot press
+// OSD buttons over SSH, so instead of selecting a view with debug_bus the
+// display AUTO-CYCLES 8 views, each tagged in bits [7:5] so every screenshot
+// is self-identifying:
+//
+//   tag 0..4 : the latched instruction-fetch address, 5 bits at a time
+//              (view0 = PC[4:0] ... view4 = {1'b0, PC[23:20]})
+//   tag 5    : sticky "did this ever happen" flags, group A
+//   tag 6    : sticky flags, group B
+//   tag 7    : live status (the original st_dout bits)
+//
+// PC is snapshotted once per full cycle so all five chunks describe the SAME
+// address rather than five different ones.
+// ---------------------------------------------------------------------------
+reg [23:0] pc_live, pc_snap;
+reg [28:0] diag_cnt;
+wire [2:0] view = diag_cnt[28:26];      // ~1.4 s per view, ~11 s per cycle
+
+// sticky event flags: each latches the first time it ever happens
+reg sf_vreg_wr;    // CPU wrote any video register  (reached video init)
+reg sf_cmd_wr;     // CPU wrote VIDEO_COMMAND       (issued a blit)
+reg sf_pal_wr;     // CPU wrote palette RAM
+reg sf_plane_wr;   // CPU wrote itech020_plane_w
+reg sf_inten_wr;   // CPU wrote VIDEO_INTENABLE     (enabled video IRQs)
+reg sf_int_ack;    // CPU wrote 0x080000            (int1_ack_w -> ISR RAN)
+reg sf_vec_fetch;  // CPU read the autovector table (took an interrupt)
+reg sf_nvram_wr;   // CPU wrote NVRAM
+reg sf_prot_rd;    // CPU read the protection port
+reg sf_snd_wr;     // CPU wrote the sound latch
+
+// video register index within 0x500000-0x5000ff: registers are 4 bytes apart,
+// so k = A[7:2] -- same expression sftm_video decodes (its cpu_addr keeps the
+// [23:1] index numbering, so cpu_addr[7:2] is these same bits)
+wire [5:0] vreg_k = A[7:2];
+
+always @(posedge clk) begin
+    if( w_rst ) begin
+        pc_live <= 24'd0; pc_snap <= 24'd0; diag_cnt <= 29'd0;
+        { sf_vreg_wr, sf_cmd_wr, sf_pal_wr, sf_plane_wr, sf_inten_wr,
+          sf_int_ack, sf_vec_fetch, sf_nvram_wr, sf_prot_rd, sf_snd_wr } <= 10'd0;
+    end else begin
+        diag_cnt <= diag_cnt + 29'd1;
+        // snapshot the PC once per full view cycle
+        if( diag_cnt == {29{1'b1}} ) pc_snap <= pc_live;
+        // track the most recent instruction fetch
+        if( grant && busstate == 2'b00 ) pc_live <= A;
+        // sticky flags
+        if( grant && bus_write ) begin
+            if( vreg_sel  ) sf_vreg_wr  <= 1'b1;
+            if( vreg_sel && vreg_k == 6'h04 ) sf_cmd_wr   <= 1'b1;  // COMMAND
+            if( vreg_sel && vreg_k == 6'h05 ) sf_inten_wr <= 1'b1;  // INTENABLE
+            if( pal_sel   ) sf_pal_wr   <= 1'b1;
+            if( plane_sel ) sf_plane_wr <= 1'b1;
+            if( inp_p1    ) sf_int_ack  <= 1'b1;   // int1_ack_w: the ISR ran
+            if( nvram_cs  ) sf_nvram_wr <= 1'b1;
+            if( sndlat_w  ) sf_snd_wr   <= 1'b1;
+        end
+        if( grant && bus_read ) begin
+            // autovectors 25/26/27 live at 0x64/0x68/0x6C (VBR = 0)
+            if( A[23:4] == 20'h00006 ) sf_vec_fetch <= 1'b1;
+            if( prot_rd )              sf_prot_rd   <= 1'b1;
+        end
+    end
+end
+
+assign st_dout =
+    view == 3'd0 ? { 3'd0, pc_snap[ 4: 0] } :
+    view == 3'd1 ? { 3'd1, pc_snap[ 9: 5] } :
+    view == 3'd2 ? { 3'd2, pc_snap[14:10] } :
+    view == 3'd3 ? { 3'd3, pc_snap[19:15] } :
+    view == 3'd4 ? { 3'd4, 1'b0, pc_snap[23:20] } :
+    view == 3'd5 ? { 3'd5, sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr, sf_plane_wr } :
+    view == 3'd6 ? { 3'd6, sf_int_ack, sf_vec_fetch, sf_nvram_wr, sf_prot_rd, sf_snd_wr } :
+                   { 3'd7, boot_done, vint, blit_irq, scan_irq, wdog_rst };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
