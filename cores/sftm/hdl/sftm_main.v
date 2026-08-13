@@ -528,6 +528,9 @@ TG68KdotC_Kernel #(
 // re-snapshotted per cycle and produced mixed nibbles).
 // ---------------------------------------------------------------------------
 reg [23:0] pc_live, pc_vec, pc_stuck;
+reg [23:0] pc_now, pc_max;   // pc_now: re-latched each view cycle (coherent
+                             // across the 6 nibbles); pc_max: furthest the
+                             // code has ever reached = progress indicator
 reg        vec_pend, pc_vec_done, pc_stuck_done;
 reg [22:0] vint_timer;                  // 100 ms @ 48 MHz = 4.8e6 -> 23 bits
 reg [28:0] diag_cnt;
@@ -543,6 +546,7 @@ wire vec_rd = grant && bus_read && (vec60 | vec64 | vec68 | vec6c);
 reg sf_v60, sf_v64, sf_v68, sf_v6c;
 reg sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr;
 reg sf_int_ack, sf_plane_wr, sf_prot_rd, sf_snd_wr;
+reg sf_nvram_wr;
 
 // video register index within 0x500000-0x5000ff: registers are 4 bytes apart,
 // so k = A[7:2] (sftm_video's cpu_addr keeps [23:1] index numbering, so its
@@ -552,14 +556,21 @@ wire [5:0] vreg_k = A[7:2];
 always @(posedge clk) begin
     if( w_rst ) begin
         pc_live <= 0; pc_vec <= 0; pc_stuck <= 0;
+        pc_now <= 0; pc_max <= 0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
         { sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr } <= 4'd0;
         { sf_int_ack, sf_plane_wr, sf_prot_rd, sf_snd_wr } <= 4'd0;
+        sf_nvram_wr <= 1'b0;
     end else begin
         diag_cnt <= diag_cnt + 29'd1;
         if( grant && busstate == 2'b00 ) pc_live <= A;
+        // compare against the registered copy, never against A itself: the
+        // address bus is on the critical path and a 24-bit comparator there
+        // would cost timing the design does not have
+        if( pc_live > pc_max ) pc_max <= pc_live;
+        if( diag_cnt == {29{1'b1}} ) pc_now <= pc_live;
 
         // --- which vector, and where did it jump to ------------------------
         if( vec_rd ) begin
@@ -593,6 +604,7 @@ always @(posedge clk) begin
             if( plane_sel ) sf_plane_wr <= 1'b1;
             if( inp_p1    ) sf_int_ack  <= 1'b1;   // int1_ack_w: the ISR ran
             if( sndlat_w  ) sf_snd_wr   <= 1'b1;
+            if( nvram_cs  ) sf_nvram_wr <= 1'b1;
         end
         if( grant && bus_read && prot_rd ) sf_prot_rd <= 1'b1;
     end
@@ -615,23 +627,35 @@ end
 //   8   : {scanline_hit_ever, blit_done_ever, cmd_ever, blit_busy}
 //   9   : {blit_waiting, blit_state[2:0]}
 //   A-F : pc_stuck
+// View map (rev5). rev4 proved the interrupt path works: INTSTATE's
+// sticky-OR reads 0x0044 (both sources fire) and the CPU acks them, while
+// the blitter sits idle having completed commands. The remaining symptom is
+// that the palette is never written, so the question is where the code
+// actually is -- rev4's pc_stuck latched on the first pending vblank, which
+// happens during early boot, and was therefore uninformative.
+//   0-5 : pc_now (re-latched once per view cycle, so the nibbles agree)
+//   6-B : pc_max (furthest instruction ever fetched = how far it got)
+//   C   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
+//   D   : sticky {intstate bit6, intstate bit2, cmd_wr, inten_wr}
+//   E-F : live INTSTATE low byte
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_intsticky  [ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_intsticky  [ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_intsticky  [11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_intsticky  [15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_intscanline[ 3: 0] } :
-    view == 4'h5 ? { 4'h5, dbg_intscanline[ 7: 4] } :
-    view == 4'h6 ? { 4'h6, dbg_intscanline[11: 8] } :
-    view == 4'h7 ? { 4'h7, dbg_intscanline[15:12] } :
-    view == 4'h8 ? { 4'h8, dbg_blitflags[7:4] } :
-    view == 4'h9 ? { 4'h9, dbg_blitflags[3:0] } :
-    view == 4'hA ? { 4'hA, pc_stuck[ 3: 0] } :
-    view == 4'hB ? { 4'hB, pc_stuck[ 7: 4] } :
-    view == 4'hC ? { 4'hC, pc_stuck[11: 8] } :
-    view == 4'hD ? { 4'hD, pc_stuck[15:12] } :
-    view == 4'hE ? { 4'hE, pc_stuck[19:16] } :
-                   { 4'hF, pc_stuck[23:20] };
+    view == 4'h0 ? { 4'h0, pc_now[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, pc_now[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, pc_now[11: 8] } :
+    view == 4'h3 ? { 4'h3, pc_now[15:12] } :
+    view == 4'h4 ? { 4'h4, pc_now[19:16] } :
+    view == 4'h5 ? { 4'h5, pc_now[23:20] } :
+    view == 4'h6 ? { 4'h6, pc_max[ 3: 0] } :
+    view == 4'h7 ? { 4'h7, pc_max[ 7: 4] } :
+    view == 4'h8 ? { 4'h8, pc_max[11: 8] } :
+    view == 4'h9 ? { 4'h9, pc_max[15:12] } :
+    view == 4'hA ? { 4'hA, pc_max[19:16] } :
+    view == 4'hB ? { 4'hB, pc_max[23:20] } :
+    view == 4'hC ? { 4'hC, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
+    view == 4'hD ? { 4'hD, dbg_intsticky[6], dbg_intsticky[2],
+                           sf_cmd_wr, sf_inten_wr } :
+    view == 4'hE ? { 4'hE, dbg_intstate[3:0] } :
+                   { 4'hF, dbg_intstate[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
