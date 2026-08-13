@@ -126,6 +126,53 @@ always @(*) begin
     req = (!(hit0 || hit1) && !we) && addr_ok;
 end
 
+// SFTM SignalTap probe aliases (2026-08-11) -- these are either bare port
+// passthroughs (we, dst, din, addr, addr_ok) or purely combinational
+// (hit0, hit1, req, data_ok) and were getting optimized/renamed away
+// during synthesis, making them unfindable in Node Finder. Neither a
+// plain `keep` wire, `keep preserve` wire, nor an unreset `keep` reg
+// survived (confirmed absent even from the full post-fit VQM netlist
+// export, not just fit.rpt) -- an unreset register that's a pure
+// one-cycle delay of an existing signal is exactly the shape Quartus's
+// redundant/duplicate-register removal targets, and `keep` alone
+// apparently isn't stopping that merge. This attempt adds an explicit
+// reset (so the register can't be trivially proven equivalent to
+// anything else) plus the stronger `(* keep, noprune *)` attribute
+// form directly on each declaration instead of the trailing-comment
+// form.
+(* keep, noprune *) reg             we_probe;
+(* keep, noprune *) reg             dst_probe;
+(* keep, noprune *) reg  [15:0]     din_probe;
+(* keep, noprune *) reg  [AW-1:0]   addr_probe;
+(* keep, noprune *) reg             addr_ok_probe;
+(* keep, noprune *) reg             hit0_probe;
+(* keep, noprune *) reg             hit1_probe;
+(* keep, noprune *) reg             req_probe;
+(* keep, noprune *) reg             data_ok_probe;
+always @(posedge clk) begin
+    if( rst ) begin
+        we_probe      <= 1'b0;
+        dst_probe     <= 1'b0;
+        din_probe     <= 16'b0;
+        addr_probe    <= {AW{1'b0}};
+        addr_ok_probe <= 1'b0;
+        hit0_probe    <= 1'b0;
+        hit1_probe    <= 1'b0;
+        req_probe     <= 1'b0;
+        data_ok_probe <= 1'b0;
+    end else begin
+        we_probe      <= we;
+        dst_probe     <= dst;
+        din_probe     <= din;
+        addr_probe    <= addr;
+        addr_ok_probe <= addr_ok;
+        hit0_probe    <= hit0;
+        hit1_probe    <= hit1;
+        req_probe     <= req;
+        data_ok_probe <= data_ok;
+    end
+end
+
 // reg [1:0] ok_sr;
 
 always @(posedge clk) begin
