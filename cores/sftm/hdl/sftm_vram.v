@@ -184,7 +184,11 @@ end
 // ---------------------------------------------------------------------------
 // arbiter / SDRAM sequencer
 // ---------------------------------------------------------------------------
-localparam [2:0] A_IDLE=3'd0, A_ISSUE=3'd1, A_WAIT=3'd2, A_GAP=3'd3;
+// Bug A: the prefetch needs 384 words inside one line (508 pxl_cen x 6 clk =
+// 3048 clk), a budget of 7.9 clk per word. Per-access overhead was 5 clk on
+// top of SDRAM latency (issue + 3 settle + gap); it is now 3 (issue + 1
+// settle + the cs-low gap folded into A_IDLE).
+localparam [2:0] A_IDLE=3'd0, A_ISSUE=3'd1, A_WAIT=3'd2;
 reg [2:0] astate;
 reg [1:0] settle;
 reg [1:0] owner;                     // 0 = prefetch, 1 = read, 2 = write
@@ -245,7 +249,7 @@ always @(posedge clk) begin
             end
         end
         A_WAIT: begin
-            if( settle != 2'd2 )
+            if( settle != 2'd1 )
                 settle <= settle + 2'd1;
             else if( vram_ok ) begin
                 case( owner )
@@ -264,10 +268,9 @@ always @(posedge clk) begin
                 endcase
                 vram_cs <= 0;
                 vram_we <= 0;
-                astate  <= A_GAP;
+                astate  <= A_IDLE;   // A_IDLE itself is the 1-clk cs-low gap
             end
         end
-        A_GAP: astate <= A_IDLE;     // 1-clk cs gap between operations
         default: astate <= A_IDLE;
         endcase
     end
