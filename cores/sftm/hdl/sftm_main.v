@@ -565,6 +565,14 @@ reg [15:0] dbg_400, dbg_44e, dbg_1104;
 // somewhere else: almost certainly a software poll-and-ack wait loop, which
 // would also explain why no interrupt is ever serviced. This names it.
 reg [23:0] pc_at_ack;
+// pc_at_ack proves the QINT handler executes its ack at 0x801304, and the
+// NEXT instruction (0x80130C) writes RAM[0x1104] -- yet dbg_1104 has held
+// init's 6 throughout. RMW to RAM is verified correct in simulation, so one
+// of these two probes is lying. Count the writes to that word and capture
+// the PC at them: a count of 1 means the handler's writes genuinely never
+// reach RAM; a high count means the value latch is what is wrong.
+reg [ 7:0] w1104_cnt;
+reg [23:0] pc_at_1104;
 // pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
 // cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
 // without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
@@ -598,7 +606,7 @@ always @(posedge clk) begin
         pc_now <= 0; pc_max_hi <= 0;
         dbg_fbe <= 0; dbg_406 <= 0; dbg_407 <= 0; dbg_408 <= 0;
         dbg_400 <= 0; dbg_44e <= 0; dbg_1104 <= 0;
-        pc_at_ack <= 24'd0;
+        pc_at_ack <= 24'd0; w1104_cnt <= 8'd0; pc_at_1104 <= 24'd0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -651,7 +659,11 @@ always @(posedge clk) begin
         if( ram_cpu_we_lo && ram_addr == 14'h0200 ) dbg_400[ 7:0] <= cpu_do16[ 7:0];
         if( ram_cpu_we_hi && ram_addr == 14'h0227 ) dbg_44e[15:8] <= cpu_do16[15:8];
         if( ram_cpu_we_lo && ram_addr == 14'h0227 ) dbg_44e[ 7:0] <= cpu_do16[ 7:0];
-        if( ram_cpu_we_hi && ram_addr == 14'h0882 ) dbg_1104[15:8] <= cpu_do16[15:8];
+        if( ram_cpu_we_hi && ram_addr == 14'h0882 ) begin
+            dbg_1104[15:8] <= cpu_do16[15:8];
+            pc_at_1104     <= pc_live;
+            if( w1104_cnt != 8'hFF ) w1104_cnt <= w1104_cnt + 8'd1;
+        end
         if( ram_cpu_we_lo && ram_addr == 14'h0882 ) dbg_1104[ 7:0] <= cpu_do16[ 7:0];
         if( grant && bus_write ) begin
             if( vreg_sel  ) sf_vreg_wr  <= 1'b1;
@@ -668,36 +680,32 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev11).
+// Debug view map (rev12).
 //
-// rev10 result: INTSTATE bit2 rising edges saturated, INTACK write count
-// saturated, and the last INTACK value is 0x0004 -- the scanline bit is set
-// and immediately acknowledged, endlessly. Yet RAM[0x1104] never moves, and
-// the QINT handler only acks (0x801304) AFTER clearing 0x1104 (0x8012EC).
-// Both cannot hold, so the acks are not coming from the handler: the game is
-// almost certainly polling INTSTATE and acking in a software wait loop,
-// never taking the interrupt -- which also explains the idle dispatcher,
-// unqueued palette and silent sound.
-//
-// pc_at_ack names the routine doing it, which the disassembler can then
-// identify directly.
-//   0-5 : PC at the last INTSTATE write      6-9 : last INTACK value
-//   A-B : RAM[0x1104]                        C-D : INTACK write count
-//   E-F : scanline_hit count
+// Two trusted probes now contradict each other:
+//   pc_at_ack = 0x80130C  -> the QINT handler DID execute its ack at
+//                            0x801304, so the handler runs
+//   dbg_1104  = 6         -> but the very next instruction writes
+//                            RAM[0x1104], which has never left init's value
+// Read-modify-write to RAM is verified correct in simulation, so this is not
+// an RMW problem. Resolve it by instrumenting the write itself.
+//   0-1 : count of writes to RAM word 0x882 (=byte 0x1104)
+//   2-5 : last value written there      6-B : PC at that write
+//   C-D : INTACK count                  E-F : scanline_hit count
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, pc_at_ack[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, pc_at_ack[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, pc_at_ack[11: 8] } :
-    view == 4'h3 ? { 4'h3, pc_at_ack[15:12] } :
-    view == 4'h4 ? { 4'h4, pc_at_ack[19:16] } :
-    view == 4'h5 ? { 4'h5, pc_at_ack[23:20] } :
-    view == 4'h6 ? { 4'h6, dbg_lastack[ 3: 0] } :
-    view == 4'h7 ? { 4'h7, dbg_lastack[ 7: 4] } :
-    view == 4'h8 ? { 4'h8, dbg_lastack[11: 8] } :
-    view == 4'h9 ? { 4'h9, dbg_lastack[15:12] } :
-    view == 4'hA ? { 4'hA, dbg_1104[3:0] } :
-    view == 4'hB ? { 4'hB, dbg_1104[7:4] } :
+    view == 4'h0 ? { 4'h0, w1104_cnt[3:0] } :
+    view == 4'h1 ? { 4'h1, w1104_cnt[7:4] } :
+    view == 4'h2 ? { 4'h2, dbg_1104[ 3: 0] } :
+    view == 4'h3 ? { 4'h3, dbg_1104[ 7: 4] } :
+    view == 4'h4 ? { 4'h4, dbg_1104[11: 8] } :
+    view == 4'h5 ? { 4'h5, dbg_1104[15:12] } :
+    view == 4'h6 ? { 4'h6, pc_at_1104[ 3: 0] } :
+    view == 4'h7 ? { 4'h7, pc_at_1104[ 7: 4] } :
+    view == 4'h8 ? { 4'h8, pc_at_1104[11: 8] } :
+    view == 4'h9 ? { 4'h9, pc_at_1104[15:12] } :
+    view == 4'hA ? { 4'hA, pc_at_1104[19:16] } :
+    view == 4'hB ? { 4'hB, pc_at_1104[23:20] } :
     view == 4'hC ? { 4'hC, dbg_ackcnt[3:0] } :
     view == 4'hD ? { 4'hD, dbg_ackcnt[7:4] } :
     view == 4'hE ? { 4'hE, dbg_scanhits[3:0] } :
