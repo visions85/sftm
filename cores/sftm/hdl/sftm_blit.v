@@ -51,6 +51,13 @@ module sftm_blit(
     // half the fetched source bytes read as 0xFF and are skipped, ~0 means the
     // data is right and the writes are lost downstream.
     output reg [7:0]  st_rletp,
+    // grm3 read-back self-test. The real text glyphs live in grm3 (blits
+    // carry bank=2 -> GROM address 0x207xxxx), and a Python decode of the
+    // ROM confirms 0x207DE86 begins 81 FF 07 2C. Fetch those four bytes
+    // through the normal fetcher before any blit and report which matched,
+    // plus byte 0 raw so a wrong byte order is visible.
+    output reg [3:0]  st_g3ok,
+    output reg [7:0]  st_g3b0,
 
     // video registers, valid at start (indices are byte offset / 2)
     input      [15:0] r_flags,      // 0x06 VIDEO_TRANSFER_FLAGS
@@ -209,6 +216,16 @@ reg [4:0] state /* synthesis keep */;
 assign st_state = state;
 
 // ---------------------------------------------------------------------------
+// grm3 read-back self-test (declarations; the logic needs pix/fetch_ok and
+// so lives further down). The real text glyphs come from grm3 -- those blits
+// carry bank=2, giving GROM address 0x207xxxx -- and a Python decode of the
+// ROM shows 0x207DE86 begins 81 FF 07 2C.
+// ---------------------------------------------------------------------------
+localparam [25:0] G3_BASE = 26'h207DE86;
+reg [1:0] g3i;
+reg       g3done;
+
+// ---------------------------------------------------------------------------
 // Derived per-cycle values
 // ---------------------------------------------------------------------------
 wire [6:0] cur_color = pass ? color1 : color0;
@@ -225,6 +242,10 @@ reg  [25:0] fetch_addr;
 always @(*) begin
     fetch_req  = 0;
     fetch_addr = mod_len({6'd0, src_addr});
+    if( !g3done ) begin
+        fetch_req  = 1'b1;
+        fetch_addr = G3_BASE + {24'd0, g3i};
+    end else
     case( state )
         S_PIX: begin
             fetch_req  = 1;
@@ -321,6 +342,22 @@ reg [15:0] shrow[0:511];
 reg [15:0] shrow_q;
 
 wire vw_free = !vw_req || vw_rdy;
+
+// grm3 self-test logic: fetch four known bytes before any blit can run
+wire [7:0] g3_expect = g3i==2'd0 ? 8'h81 :
+                       g3i==2'd1 ? 8'hFF :
+                       g3i==2'd2 ? 8'h07 : 8'h2C;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        g3i <= 0; g3done <= 0; st_g3ok <= 0; st_g3b0 <= 0;
+    end else if( !g3done && fetch_ok ) begin
+        if( pix == g3_expect ) st_g3ok[g3i] <= 1'b1;
+        if( g3i == 2'd0 ) st_g3b0 <= pix;
+        if( g3i == 2'd3 ) g3done <= 1'b1;
+        g3i <= g3i + 2'd1;
+    end
+end
 
 // transparent-skip census over a 256-pixel window of RLE literal runs
 reg [7:0] lit_win, tp_win;

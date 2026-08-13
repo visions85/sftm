@@ -124,7 +124,9 @@ module sftm_main #(
     input      [ 7:0] dbg_ackcnt,       // count of INTACK writes
     input      [ 7:0] dbg_b2rise,
     input      [ 7:0] dbg_vtest,
-    input      [ 7:0] dbg_rletp,       // count of INTSTATE bit2 rising edges
+    input      [ 7:0] dbg_rletp,
+    input      [ 3:0] dbg_g3ok,
+    input      [ 7:0] dbg_g3b0,       // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
 
@@ -755,9 +757,9 @@ assign st_dout =
     view == 4'hA ? { 4'hA, pc_max_hi[11: 8] } :
     view == 4'hB ? { 4'hB, tick_cnt[3:0] } :
     view == 4'hC ? { 4'hC, tick_cnt[7:4] } :
-    view == 4'hD ? { 4'hD, dbg_rletp[3:0] } :
-    view == 4'hE ? { 4'hE, dbg_rletp[7:4] } :
-                   { 4'hF, dbg_scanhits[7:4] };
+    view == 4'hD ? { 4'hD, dbg_g3ok } :
+    view == 4'hE ? { 4'hE, dbg_g3b0[3:0] } :
+                   { 4'hF, dbg_g3b0[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
