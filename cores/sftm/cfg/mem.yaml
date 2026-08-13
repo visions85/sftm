@@ -73,7 +73,20 @@ sdram:
         - name: vramrd
           addr_width: 21       # 2 MB -> port [20:2] at 32 bits
           data_width: 32
-          offset: 0
+          # offset must be ZERO to alias the vram bus, but `jtframe mem`
+          # renders it as "<offset>[SDRAMW-2:0]", so a literal 0 emits
+          # 0[SDRAMW-2:0] -- a bit-select on a bare literal, which both
+          # Icarus and Quartus reject (Error 10170). The value therefore has
+          # to be a bare identifier, and PROM_START is the one in scope that
+          # is zero: the generated wrapper declares
+          #   localparam [25:0] PROM_START =
+          #       `ifdef JTFRAME_PROM_START `JTFRAME_PROM_START
+          #       `else 26'd0 `endif;
+          # and this core defines no PROM region, so JTFRAME_PROM_START is
+          # undefined and PROM_START is 0. If a PROM region is ever added in
+          # cfg/macros.def this alias silently moves and the screen fills
+          # with garbage -- update this line at the same time.
+          offset: "PROM_START"
         - name: grm3
           addr_width: 19       # 512 KB -> port [18:1]
           data_width: 16
