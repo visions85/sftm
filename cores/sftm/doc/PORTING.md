@@ -409,3 +409,80 @@ alternating-pixel pattern points at pixel *stepping* rather than addressing
 
 The background uses a different draw path from the glyphs, which is why one
 is right and the other is not -- that asymmetry is the main clue.
+
+## Two separate video bugs (2026-08-13)
+
+Chasing the glyph checkerboard turned up a second, unrelated defect. They
+are recorded separately because conflating them wasted a cycle.
+
+### Bug A: the scanline prefetch cannot keep up (proven, not yet fixed)
+
+`tb_scanout.v` backdoor-fills one VRAM line with a ramp, runs the CRT, and
+captures `scan_pen` across the line. Sweeping the modelled SDRAM read
+latency:
+
+| latency | pixels correct | first bad x |
+|---------|----------------|-------------|
+|  3 clk  | 380 / 384      | 380         |
+|  5 clk  | 304 / 384      | 304         |
+|  7 clk  | 253 / 384      | 253         |
+|  9 clk  | 216 / 384      | 217         |
+| 12 clk  | 179 / 384      | 180         |
+
+The failures are always the tail of the line, and the cutoff tracks latency
+exactly. This is arithmetic, not a logic error: a line is 508 pxl_cen x 6
+clk = 3048 clocks, so 384 words gives a budget of **7.9 clk per word**,
+while one random SDRAM read through the `cs`-toggle handshake (A_IDLE +
+settle + latency + A_GAP) costs more than that on real hardware. Sustaining
+scanout needs 384 x 286 x 60 = 6.6 M words/s, which single-word random
+access at 48 MHz cannot deliver.
+
+Single-word reads are the wrong primitive here. The fix is to stop doing
+384 independent round-trips per line -- burst reads, a wider read path, or
+more buffers so the prefetch has more than one line of time. Reducing the
+`settle` count from 2 to 1 is worth ~30% but does not close the gap alone.
+
+### Bug B: the glyph checkerboard (still open)
+
+Not explained by Bug A. Starvation corrupts only high x; pooled over 34
+hardware frames the isolated-pixel fraction is uniform across the width:
+
+| x range | bright px | isolated % |
+|---------|-----------|------------|
+| 0-47    | 571       | 100.0%     |
+| 48-95   | 3733      | 88.0%      |
+| 96-143  | 30244     | 95.3%      |
+| 144-191 | 6424      | 90.1%      |
+| 192-239 | 7011      | 90.3%      |
+| 240-287 | 17878     | 81.9%      |
+| 288-335 | 24269     | 79.0%      |
+| 336-383 | 2687      | 99.6%      |
+
+Eliminated so far:
+- **Blitter RLE logic.** `tb_rle_long.v` runs a 100-pixel literal run with
+  the real parameters captured from MAME (`cmd=2, flags=D581`); all 100
+  pixels land, with both planes enabled, and with the VRAM model rewritten
+  to match `jtframe_ram_rq`'s "cs must toggle per request" rule. The
+  pre-existing RLE tests used 3-pixel runs -- too short to fill the 16-deep
+  write FIFO, which is why they never caught anything.
+- **The SDRAM write path.** The rev15 on-hardware self-test (write a
+  256-word ramp, read it back) reports **0 mismatches**.
+- **GROM byte order and the write path generally.** The background is drawn
+  by the *raw* path through the same fetcher and the same write path, and it
+  matches MAME's artwork.
+- **Address-LSB masking.** `jtframe_romrq_bcache` does mask the LSB for
+  16-bit slots, but it serves read-only slots; the rw `vram` slot uses
+  `jtframe_ram_rq`, which passes the full address.
+
+That confines the fault to the RLE path plus `TRANSPARENT`. rev16 counts
+transparent skips per 256 RLE literal pixels (views D/E): ~128 means half
+the fetched source bytes read as `0xFF` and are skipped, ~0 means the data
+is right and the writes are lost after the blitter.
+
+### Method note
+
+Two hypotheses were stated confidently here and then killed by measurement
+-- "letters with gaps" (they are a filled block, and the drawn pens are
+exactly MAME's text colour) and "prefetch starvation explains it" (killed
+by the x-distribution above). Measure the artifact's *shape* before
+theorising about mechanism; an x-histogram would have saved a full cycle.
