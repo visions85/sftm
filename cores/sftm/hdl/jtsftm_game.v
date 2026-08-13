@@ -43,7 +43,8 @@ wire        snd_pending1, snd_pending2;
 wire        snd_latch1_rd, snd_latch2_rd;
 
 wire [ 7:0] st_main;
-wire [15:0] dbg_intstate, dbg_intenable;
+wire [15:0] dbg_intstate, dbg_intenable, dbg_intsticky, dbg_intscanline;
+wire [ 7:0] dbg_blitflags;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -95,6 +96,9 @@ sftm_main u_main(
     .debug_bus    ( debug_bus     ),
     .dbg_intstate ( dbg_intstate  ),
     .dbg_intenable( dbg_intenable ),
+    .dbg_intsticky( dbg_intsticky ),
+    .dbg_intscanline(dbg_intscanline),
+    .dbg_blitflags( dbg_blitflags ),
     .st_dout      ( st_main       )
 );
 
@@ -152,7 +156,10 @@ sftm_video u_video(
     .gfx_en       ( gfx_en        ),
     .debug_bus    ( debug_bus     ),
     .st_intstate  ( dbg_intstate  ),
-    .st_intenable ( dbg_intenable )
+    .st_intenable ( dbg_intenable ),
+    .st_intsticky ( dbg_intsticky ),
+    .st_intscanline(dbg_intscanline),
+    .st_blitflags ( dbg_blitflags )
 );
 
 sftm_snd u_snd(

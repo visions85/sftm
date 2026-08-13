@@ -40,7 +40,10 @@ module sftm_blit(
     input             start,        // 1-clk pulse: VIDEO_COMMAND written
     input      [15:0] command,
     output reg        busy,
-    output reg        done_pulse,   // -> VIDEO_INTSTATE |= VIDEOINT_BLITTER
+    output reg        done_pulse,
+                                    // -> VIDEO_INTSTATE |= VIDEOINT_BLITTER
+    output     [4:0]  st_state,     // bring-up: live FSM state
+    output            st_waiting,   // bring-up: stalled on a GROM fetch
 
     // video registers, valid at start (indices are byte offset / 2)
     input      [15:0] r_flags,      // 0x06 VIDEO_TRANSFER_FLAGS
@@ -196,6 +199,7 @@ localparam [4:0]
     S_DONE      = 5'd20;
 
 reg [4:0] state /* synthesis keep */;
+assign st_state = state;
 
 // ---------------------------------------------------------------------------
 // Derived per-cycle values
@@ -265,6 +269,8 @@ wire        cache_hit = cache_valid && cache_waddr == fword;
 // SDRAM data[7:0] = even byte address (JTFRAME download order)
 assign pix      = fetch_addr[0] ? cache_word[15:8] : cache_word[7:0];
 assign fetch_ok = cache_hit;
+// bring-up: high while the FSM is stalled waiting on a GROM word
+assign st_waiting = fetch_req && !fetch_ok;
 
 always @(posedge clk) begin
     if( rst ) begin

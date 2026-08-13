@@ -114,6 +114,9 @@ module sftm_main #(
     input      [ 7:0] debug_bus,
     input      [15:0] dbg_intstate,     // live INTSTATE  from sftm_video
     input      [15:0] dbg_intenable,    // live INTENABLE from sftm_video
+    input      [15:0] dbg_intsticky,    // OR of every INTSTATE value seen
+    input      [15:0] dbg_intscanline,  // INTSCANLINE contents
+    input      [ 7:0] dbg_blitflags,    // blitter observation
     output     [ 7:0] st_dout
 );
 
@@ -603,17 +606,26 @@ end
 //   8   : {boot_done, vint, blit_irq, scan_irq}
 //   9   : {vreg_wr, cmd_wr, inten_wr, pal_wr}
 //   A-F : pc_stuck (PC while a vblank sits pending >100 ms)
+// View map (rev4). INTENABLE reads 0x0144 (both sources enabled, matching
+// MAME's documented startup value) while INTSTATE stays 0x0000, so the game
+// is fine and my video block never raises either status bit. These views
+// separate "the blitter never finishes" from "the scanline compare never
+// matches", which inspection alone cannot.
+//   0-3 : INTSTATE sticky-OR  4-7 : INTSCANLINE contents
+//   8   : {scanline_hit_ever, blit_done_ever, cmd_ever, blit_busy}
+//   9   : {blit_waiting, blit_state[2:0]}
+//   A-F : pc_stuck
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_intenable[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_intenable[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_intenable[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_intenable[15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_intstate [ 3: 0] } :
-    view == 4'h5 ? { 4'h5, dbg_intstate [ 7: 4] } :
-    view == 4'h6 ? { 4'h6, dbg_intstate [11: 8] } :
-    view == 4'h7 ? { 4'h7, dbg_intstate [15:12] } :
-    view == 4'h8 ? { 4'h8, boot_done, vint, blit_irq, scan_irq } :
-    view == 4'h9 ? { 4'h9, sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr } :
+    view == 4'h0 ? { 4'h0, dbg_intsticky  [ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_intsticky  [ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_intsticky  [11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_intsticky  [15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_intscanline[ 3: 0] } :
+    view == 4'h5 ? { 4'h5, dbg_intscanline[ 7: 4] } :
+    view == 4'h6 ? { 4'h6, dbg_intscanline[11: 8] } :
+    view == 4'h7 ? { 4'h7, dbg_intscanline[15:12] } :
+    view == 4'h8 ? { 4'h8, dbg_blitflags[7:4] } :
+    view == 4'h9 ? { 4'h9, dbg_blitflags[3:0] } :
     view == 4'hA ? { 4'hA, pc_stuck[ 3: 0] } :
     view == 4'hB ? { 4'hB, pc_stuck[ 7: 4] } :
     view == 4'hC ? { 4'hC, pc_stuck[11: 8] } :

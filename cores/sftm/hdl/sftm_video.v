@@ -94,7 +94,10 @@ module sftm_video(
     // written from a runtime RAM shadow ($31A4) by the game, so its value
     // cannot be determined by reading the ROM -- it has to be measured.
     output     [15:0] st_intstate,
-    output     [15:0] st_intenable
+    output     [15:0] st_intenable,
+    output reg [15:0] st_intsticky,   // OR of every INTSTATE value ever seen
+    output reg [15:0] st_intscanline, // what the game left in INTSCANLINE
+    output reg [ 7:0] st_blitflags    // {sh_ever,bd_ever,cmd_ever,busy,waiting,state[2:0]}
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -183,6 +186,25 @@ wire        vw_req, vw_rdy, vw_plane, vr_req, vr_plane, vr_ack;
 wire [18:0] vw_addr, vr_addr;
 wire [15:0] vw_data, vr_data;
 
+wire [4:0] blit_state;
+wire       blit_waiting;
+reg        sh_ever, bd_ever, cmd_ever;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        sh_ever <= 0; bd_ever <= 0; cmd_ever <= 0;
+        st_intsticky <= 0;
+    end else begin
+        if( scanline_hit ) sh_ever  <= 1'b1;
+        if( blit_done    ) bd_ever  <= 1'b1;
+        if( cmd_stb      ) cmd_ever <= 1'b1;
+        st_intsticky <= st_intsticky | vregs[R_INTSTATE];
+    end
+    st_intscanline <= vregs[R_INTSCANLINE];
+    st_blitflags   <= { sh_ever, bd_ever, cmd_ever, blit_busy, blit_waiting,
+                        blit_state[2:0] };
+end
+
 sftm_blit u_blit(
     .rst        ( rst           ),
     .clk        ( clk           ),
@@ -190,6 +212,8 @@ sftm_blit u_blit(
     .command    ( cpu_dout      ),
     .busy       ( blit_busy     ),
     .done_pulse ( blit_done     ),
+    .st_state   ( blit_state    ),
+    .st_waiting ( blit_waiting  ),
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06
     .r_width    ( vregs[6'h07]  ),  // 0x0e
