@@ -21,9 +21,16 @@ module jtsftm_game(
     `include "jtframe_game_ports.inc"
 );
 
-// DIP switches: SW1(4) on the mainboard; DIPS port bits 20-23
+// DIP switches. sftm reads DIPS as a 32-bit port whose payload MAME places
+// at bits 16-23 (itech32.cpp:1043, `m_dips->read() << 16`), so dipsw_a here
+// is literally MAME's m_dips->read() byte. The MRA declares the four SW1
+// switches at dipsw bits 20-23 with default "ff,ff,0f", which makes this
+// byte 0x0F at power-on -- the exact value a MAME reference run returns.
+// Taking dipsw[7:0] instead yielded 0xFF and hung the boot task: 0x802384
+// spins on `btst.b #6,$280001` (SW1:3), yielding to the scheduler forever,
+// which is why the palette at 0x82A5F0 was never reached.
 wire [7:0] dipsw_a;
-assign dipsw_a = dipsw[7:0];
+assign dipsw_a = dipsw[23:16];
 
 // CPU <-> video bus
 wire [23:1] cpu_addr;

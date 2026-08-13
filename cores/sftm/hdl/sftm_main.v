@@ -281,18 +281,20 @@ wire [7:0] p3_byte = { joystick2[9], joystick1[9], joystick2[8], joystick1[8],
 wire [7:0] p4_byte = 8'hff;
 
 // DIPS (0x280000):
-//   bit16 test (service mode, active low)      bit20 SW1:4 "Video Sync"
-//   bit17 service coin (active low)            bit21 SW1:3 Flip Screen
-//   bit18 vblank status (active low)           bit22 SW1:2 Freeze Screen
-//   bit19 special_port_r (active low)          bit23 SW1:1 Service (ACTIVE_HIGH)
+// dipsw_a is MAME's m_dips->read() byte (see jtsftm_game.v). Bit order per
+// the PORT_START("DIPS") block in itech32.cpp:
+//   0x01 service mode (active low)   0x10 SW1:1 "Video Sync"
+//   0x02 service coin (active low)   0x20 SW1:2 Flip Screen
+//   0x04 vblank status               0x40 SW1:3 Violence
+//   0x08 special_port_r (ACTIVE_HIGH) 0x80 SW1:4 Service (ACTIVE_HIGH)
+// The four switches default to 0, so this byte reads 0x0F at power-on.
 // special_port_r (itech32.cpp:544): toggles on read while soundlatch pending,
 // and the toggled value is what the read returns.
 reg  special_q;
 wire special_ret = special_q ^ snd_pending1;
 wire dips_rd     = grant && bus_read && inp_dips && !A[1];
 
-wire [7:0] dips_byte = { dipsw_a[3], dipsw_a[2], dipsw_a[1], dipsw_a[0],
-                         ~special_ret, LVBL, service, dip_test };
+wire [7:0] dips_byte = { dipsw_a[7:4], ~special_ret, LVBL, service, dip_test };
 
 always @(posedge clk) begin
     if( w_rst ) special_q <= 1'b0;
