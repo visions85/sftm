@@ -302,3 +302,84 @@ actually executing in steady state. Everything upstream is proven, so the
 question is now simply what that code is waiting on before it loads a
 palette. The ROM is reconstructed locally and capstone-disassemblable, so
 any address it reports can be read directly.
+
+## Root cause found (2026-08-13): the DIPS byte was read from the wrong bits
+
+The blank screen had a single cause, and it was in eight characters of
+Verilog. `jtsftm_game.v` did `assign dipsw_a = dipsw[7:0]` when the DIPS
+port payload lives at `dipsw[23:16]`.
+
+### How MAME settled it
+
+Two MAME v0.289 reference runs on the same ROM did what four rounds of
+hardware probing could not.
+
+**Run 1 -- write tap on the palette window.** MAME writes `0x584000` at
+frame 5 from PC `0x82A5F0`; a stack dump at that moment gave the call chain
+`0x829908` (boot task) -> `0x82A26E` -> `0x82A30E` -> `0x82A498` ->
+`0x82A5F0`. Hardware already showed the core entering `0x829xxx`, so the
+failure was somewhere along that chain.
+
+**Run 2 -- read tap over `0x829900-0x82A5FF`, recording opcode fetches until
+the palette write.** Only 62 addresses. Disassembling exactly those showed
+the path is *straight-line* from `0x82A26E` to `0x82A5F0`: no conditional
+branches at all. So the only way to stall is a `jsr` that never returns,
+which narrowed the search to five subroutines. `0x802384`, called twice at
+`0x82A2FC` and `0x82A302`, is a spin-wait:
+
+```
+80238C: btst.b  #$6, $280001.l
+802394: beq.b   $8023a2          ; bit clear -> fall through, proceed
+802396: move.w  #$1, d0
+80239A: jsr     $800710.l        ; coroutine yield: saves A7, jumps to the
+8023A0: bra.b   $80238c          ; scheduler at 0x8006f2, never returns
+```
+
+`0x280000` is DIPS (`itech020_map`, itech32.cpp:1010), and for sftm MAME
+places the 8-bit port payload at bits 16-23 (itech32.cpp:1043,
+`m_dips->read() << 16`). A read tap showed MAME returning `0x0F` in that
+byte, so bit 6 is clear and the loop falls through on the first test.
+
+### The bug
+
+The MRA was already correct -- it declares the four SW1 switches at dipsw
+bits 20-23 with `default="ff,ff,0f"`, which makes the DIPS byte `0x0F`,
+bit-identical to MAME. The HDL took `dipsw[7:0]` = `0xFF` instead, setting
+bit 6 (SW1:3). The boot task therefore yielded to the scheduler forever and
+never reached the palette, the sound latch or NVRAM -- the exact three
+regions the rev13 trace found untouched.
+
+`dipsw_a` is now literally MAME's `m_dips->read()` byte. The bit comments in
+`sftm_main.v` were also wrong (SW1:1-SW1:4 reversed, and `0x40` labelled
+"Freeze Screen"); they now match the actual `PORT_START("DIPS")` block:
+
+| bit  | signal                        | default |
+|------|-------------------------------|---------|
+| 0x01 | service mode (active low)     | 1       |
+| 0x02 | service coin (active low)     | 1       |
+| 0x04 | vblank status                 | 1       |
+| 0x08 | `special_port_r` (ACTIVE_HIGH)| 1       |
+| 0x10 | SW1:1 Video Sync              | 0       |
+| 0x20 | SW1:2 Flip Screen             | 0       |
+| 0x40 | SW1:3 Violence                | 0       |
+| 0x80 | SW1:4 Service (ACTIVE_HIGH)   | 0       |
+
+Note the lower nibble already matched MAME exactly. Only the switch nibble
+was wrong, which is why everything upstream -- CPU boot, memory map, both
+interrupt sources, the blitter, the timer tick, task dispatch and the game's
+own RAM self-test -- passed while the screen stayed blank.
+
+### Method note
+
+The decisive step was not another hardware probe. It was taking a *reference
+implementation of the same ROM* and asking it what value the hardware
+returns, then diffing against ours. A read tap plus a 62-line disassembly
+beat four build-deploy-capture cycles. For a literal port, reach for the
+reference emulator before instrumenting the FPGA.
+
+Two hypotheses were killed cheaply the same way, before they cost a build:
+- **Input polarity.** `jtframe_board.v:290` compares the joystick nibbles
+  against `8'hff` to detect "nothing pressed", so JTFRAME's inputs are
+  active low, matching MAME. `p2_byte` reads `0xFF` idle, as intended.
+- **Zero task count.** `RAM[0x044E]=0` looked alarming but MAME shows the
+  same value; it is normal, not a symptom.
