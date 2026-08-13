@@ -528,9 +528,12 @@ TG68KdotC_Kernel #(
 // re-snapshotted per cycle and produced mixed nibbles).
 // ---------------------------------------------------------------------------
 reg [23:0] pc_live, pc_vec, pc_stuck;
-reg [23:0] pc_now, pc_max;   // pc_now: re-latched each view cycle (coherent
-                             // across the 6 nibbles); pc_max: furthest the
-                             // code has ever reached = progress indicator
+reg [23:0] pc_now;           // re-latched each view cycle (coherent nibbles)
+// pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
+// cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
+// without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
+// identifying which routine the code reached.
+reg [11:0] pc_max_hi;
 reg        vec_pend, pc_vec_done, pc_stuck_done;
 reg [22:0] vint_timer;                  // 100 ms @ 48 MHz = 4.8e6 -> 23 bits
 reg [28:0] diag_cnt;
@@ -556,7 +559,7 @@ wire [5:0] vreg_k = A[7:2];
 always @(posedge clk) begin
     if( w_rst ) begin
         pc_live <= 0; pc_vec <= 0; pc_stuck <= 0;
-        pc_now <= 0; pc_max <= 0;
+        pc_now <= 0; pc_max_hi <= 0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -569,7 +572,7 @@ always @(posedge clk) begin
         // compare against the registered copy, never against A itself: the
         // address bus is on the critical path and a 24-bit comparator there
         // would cost timing the design does not have
-        if( pc_live > pc_max ) pc_max <= pc_live;
+        if( pc_live[23:12] > pc_max_hi ) pc_max_hi <= pc_live[23:12];
         if( diag_cnt == {29{1'b1}} ) pc_now <= pc_live;
 
         // --- which vector, and where did it jump to ------------------------
@@ -645,12 +648,12 @@ assign st_dout =
     view == 4'h3 ? { 4'h3, pc_now[15:12] } :
     view == 4'h4 ? { 4'h4, pc_now[19:16] } :
     view == 4'h5 ? { 4'h5, pc_now[23:20] } :
-    view == 4'h6 ? { 4'h6, pc_max[ 3: 0] } :
-    view == 4'h7 ? { 4'h7, pc_max[ 7: 4] } :
-    view == 4'h8 ? { 4'h8, pc_max[11: 8] } :
-    view == 4'h9 ? { 4'h9, pc_max[15:12] } :
-    view == 4'hA ? { 4'hA, pc_max[19:16] } :
-    view == 4'hB ? { 4'hB, pc_max[23:20] } :
+    view == 4'h6 ? { 4'h6, pc_max_hi[ 3: 0] } :   // pc_max bits 15:12
+    view == 4'h7 ? { 4'h7, pc_max_hi[ 7: 4] } :   // pc_max bits 19:16
+    view == 4'h8 ? { 4'h8, pc_max_hi[11: 8] } :   // pc_max bits 23:20
+    view == 4'h9 ? { 4'h9, dbg_intsticky[3:0] } :
+    view == 4'hA ? { 4'hA, dbg_intsticky[7:4] } :
+    view == 4'hB ? { 4'hB, sf_plane_wr, sf_int_ack, sf_vreg_wr, sf_nvram_wr } :
     view == 4'hC ? { 4'hC, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
     view == 4'hD ? { 4'hD, dbg_intsticky[6], dbg_intsticky[2],
                            sf_cmd_wr, sf_inten_wr } :
