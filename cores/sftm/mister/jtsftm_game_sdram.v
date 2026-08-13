@@ -34,21 +34,28 @@ wire mute;
 // BRAM buses
 // SDRAM buses
 
-wire [17:2] main_addr;
+wire [19:2] main_addr;
 wire [31:0] main_data;
 wire        main_cs, main_ok;
 wire [17:0] snd_addr;
 wire [ 7:0] snd_data;
 wire        snd_cs, snd_ok;
-wire [20:1] srom_addr;
+wire [21:1] srom_addr;
 wire [15:0] srom_data;
 wire        srom_cs, srom_ok;
-wire [23:1] grom_addr;
+wire [24:1] grom_addr;
 wire [15:0] grom_data;
 wire        grom_cs, grom_ok;
-wire [17:1] grm3_addr;
+wire [18:1] grm3_addr;
 wire [15:0] grm3_data;
 wire        grm3_cs, grm3_ok;
+wire [20:1] vram_addr;
+wire [15:0] vram_data;
+wire        vram_cs, vram_ok;
+wire        vram_we;
+wire [15:0] vram_din;
+wire [ 1:0] vram_dsn;
+
 wire        prom_we, header;
 wire [SDRAMW-2:0] raw_addr, post_addr;
 wire [SDRAMW-2:0] ioctl_prog_addr   = ioctl_addr[SDRAMW-2:0];
@@ -178,6 +185,14 @@ jtsftm_game u_game(
     .grm3_ok   ( grm3_ok   ),
     .grm3_data ( grm3_data ),
     
+    .vram_addr ( vram_addr ),
+    .vram_cs   ( vram_cs   ),
+    .vram_ok   ( vram_ok   ),
+    .vram_data ( vram_data ),
+    .vram_we   ( vram_we   ),
+    .vram_dsn  ( vram_dsn  ),
+    .vram_din  ( vram_din  ),
+    
     // Memory interface - BRAM
 
 `ifdef JTFRAME_SRAM
@@ -279,7 +294,7 @@ jtframe_dwnld #(
 `ifdef JTFRAME_PROM_START
     .PROM_START( PROM_START ),
 `endif
-        .SWAB      ( 0),   // MRA sends 32-bit LE (prom0=D[7:0] first)
+    .SWAB      ( 1),
     .GFX8B0    ( 0),
     .GFX16B0   ( 0)
 ) u_dwnld(
@@ -318,7 +333,7 @@ jtframe_headerbyte #(.AW(6)) u_pcbid(
 jtframe_rom_2slots #(
     .SDRAMW(SDRAMW-1),
     // main
-    .SLOT0_AW(17),
+    .SLOT0_AW(19),
     .SLOT0_DW(32), 
     // snd
     .SLOT1_AW(18),
@@ -355,7 +370,7 @@ assign ba0_dsn  = 3;
 jtframe_rom_1slot #(
     .SDRAMW(SDRAMW-1),
     // srom
-    .SLOT0_AW(20),
+    .SLOT0_AW(21),
     .SLOT0_DW(16)
 `ifdef JTFRAME_BA1_LEN
     ,.SLOT0_DOUBLE(1)
@@ -383,7 +398,7 @@ assign ba1_dsn  = 3;
 jtframe_rom_1slot #(
     .SDRAMW(SDRAMW-1),
     // grom
-    .SLOT0_AW(23),
+    .SLOT0_AW(24),
     .SLOT0_DW(16)
 `ifdef JTFRAME_BA2_LEN
     ,.SLOT0_DOUBLE(1)
@@ -408,11 +423,14 @@ jtframe_rom_1slot #(
 assign ba_wr[2] = 0;
 assign ba2_din  = 0;
 assign ba2_dsn  = 3;
-jtframe_rom_1slot #(
+jtframe_ram1_2slots #(
     .SDRAMW(SDRAMW-1),
     // grm3
-    .SLOT0_AW(17),
-    .SLOT0_DW(16)
+    .SLOT0_AW(18),
+    .SLOT0_DW(16), 
+    // vram
+    .SLOT1_AW(20),
+    .SLOT1_DW(16)
 `ifdef JTFRAME_BA3_LEN
     ,.SLOT0_DOUBLE(1)
 `endif
@@ -421,22 +439,33 @@ jtframe_rom_1slot #(
     .clk         ( clk        ),
     
     .slot0_addr  ( grm3_addr  ),
+    .slot0_clr   ( 1'b0       ), // only 1'b0 supported in mem.yaml
     .slot0_dout  ( grm3_data  ),
     .slot0_cs    ( grm3_cs    ),
     .slot0_ok    ( grm3_ok    ),
+    
+    .slot1_addr  ( vram_addr  ),
+    .hold_rst    (  hold_rst  ),
+    .slot1_wen   ( vram_we    ),
+    .slot1_din   ( vram_din   ),
+    .slot1_wrmask( vram_dsn   ),
+    .slot1_offset( {(SDRAMW-1){1'b0}} ),
+    .slot1_dout  ( vram_data  ),
+    .slot1_cs    ( vram_cs    ),
+    .slot1_ok    ( vram_ok    ),
     
     // SDRAM controller interface
     .sdram_ack   ( ba_ack[3]  ),
     .sdram_rd    ( ba_rd[3]   ),
     .sdram_addr  ( ba3_addr   ),
+    .sdram_wr    ( ba_wr[3]   ),
+    .sdram_wrmask( ba3_dsn    ),
+    .data_write  ( ba3_din    ),
     .data_dst    ( ba_dst[3]  ),
     .data_rdy    ( ba_rdy[3]  ),
     .data_read   ( data_read  )
 );
-assign ba_wr[3] = 0;
-assign ba3_din  = 0;
-assign ba3_dsn  = 3;
-assign hold_rst=0;
+
 `ifdef JTFRAME_PROM_START
 localparam JTFRAME_PROM_START=`JTFRAME_PROM_START;
 `endif
@@ -466,9 +495,9 @@ jtframe_gated_cen #(.W(1),.NUM(1),.DEN(3),.MFREQ(48000)) u_cen1_clk(
     .fworst (              )
 ); /* verilator tracing_off */
 
-// 2000000 = 48000000*1/24 Hz from clk
+// 4000000 = 48000000*1/12 Hz from clk
 `ifdef VERILATOR_KEEP_CEN /* verilator tracing_on */ `else /* verilator tracing_off */ `endif
-jtframe_gated_cen #(.W(1),.NUM(1),.DEN(24),.MFREQ(48000)) u_cen2_clk(
+jtframe_gated_cen #(.W(1),.NUM(1),.DEN(12),.MFREQ(48000)) u_cen2_clk(
     .rst    ( rst          ),
     .clk    ( clk ),
     .busy   ( 1'b0    ),

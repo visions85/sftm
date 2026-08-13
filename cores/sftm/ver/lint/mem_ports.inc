@@ -8,7 +8,7 @@
 `endif
     input e020_cen, // 25000000 = 48000000*25/48 Hz 
     input es_cen, // 16000000 = 48000000*1/3 Hz 
-    input snd_cen, // 2000000 = 48000000*1/24 Hz 
+    input snd_cen, // 4000000 = 48000000*1/12 Hz 
 
     // Audio channels
     
@@ -52,7 +52,7 @@
     // Buses to SDRAM
     input    [31:0] main_data,
     output          main_cs,
-    output   [17:2] main_addr,
+    output   [19:2] main_addr,
     input           main_ok,
 
     input    [ 7:0] snd_data,
@@ -62,15 +62,23 @@
 
     input    [15:0] srom_data,
     output          srom_cs,
-    output   [20:1] srom_addr,
+    output   [21:1] srom_addr,
     input           srom_ok,
 
     input    [15:0] grom_data,
     output          grom_cs,
-    output   [23:1] grom_addr,
+    output   [24:1] grom_addr,
     input           grom_ok,
 
     input    [15:0] grm3_data,
     output          grm3_cs,
-    output   [17:1] grm3_addr,
-    input           grm3_ok
+    output   [18:1] grm3_addr,
+    input           grm3_ok,
+
+    input    [15:0] vram_data,
+    output          vram_cs,
+    output   [20:1] vram_addr,
+    output          vram_we,
+    output   [15:0] vram_din,
+    output   [ 1:0] vram_dsn,
+    input           vram_ok

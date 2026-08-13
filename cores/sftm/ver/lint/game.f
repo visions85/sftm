@@ -1,12 +1,9 @@
 ../../hdl/jtsftm_game.v
-../../hdl/sftm_blitter.v
 ../../hdl/sftm_main.v
-../../hdl/sftm_pal.v
-../../hdl/sftm_prot.v
-../../hdl/sftm_ram.v
-../../hdl/sftm_snd.v
 ../../hdl/sftm_video.v
+../../hdl/sftm_blit.v
 ../../hdl/sftm_vram.v
+../../hdl/sftm_snd.v
 ../../hdl/sftm5506.v
 ../../../../modules/jtframe/hdl/cpu/mc6809i.v
 ../../../../modules/jtframe/hdl/jtframe_board.v
