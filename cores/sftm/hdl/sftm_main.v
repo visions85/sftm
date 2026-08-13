@@ -122,7 +122,8 @@ module sftm_main #(
     input      [ 8:0] dbg_vcntmax,      // highest vcnt the CRT reached
     input      [15:0] dbg_lastack,      // last value the CPU wrote to INTSTATE
     input      [ 7:0] dbg_ackcnt,       // count of INTACK writes
-    input      [ 7:0] dbg_b2rise,       // count of INTSTATE bit2 rising edges
+    input      [ 7:0] dbg_b2rise,
+    input      [ 7:0] dbg_vtest,       // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
 
@@ -721,7 +722,7 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev14) -- pinpoint the palette call chain.
+// Debug view map (rev15) -- palette chain + VRAM SDRAM self-test.
 //
 // A MAME v0.289 reference run on the same ROM settled several things: the
 // zero task count is NORMAL (MAME shows it too), the self-test passes in
@@ -733,7 +734,9 @@ end
 //   0   : {task_ever(829), a2(82A2), a3(82A3), a4(82A4)}
 //   1   : {a5(82A5 = the writer), pal_wr, snd_wr, nvram_wr}
 //   2-7 : pc_now (live PC, re-latched once per view cycle)
-//   8-A : pc_max upper 12 bits
+//   8   : VRAM self-test mismatch count (0 = every word read back correctly)
+//   9   : VRAM self-test status, bit3 = test finished
+//   A   : pc_max upper 4 bits
 //   B-C : tick write count      D-E : wrap-branch count
 //   F   : scanline_hit high nibble
 // ---------------------------------------------------------------------------
@@ -746,8 +749,8 @@ assign st_dout =
     view == 4'h5 ? { 4'h5, pc_now2[15:12] } :
     view == 4'h6 ? { 4'h6, pc_now2[19:16] } :
     view == 4'h7 ? { 4'h7, pc_now2[23:20] } :
-    view == 4'h8 ? { 4'h8, pc_max_hi[ 3: 0] } :
-    view == 4'h9 ? { 4'h9, pc_max_hi[ 7: 4] } :
+    view == 4'h8 ? { 4'h8, dbg_vtest[3:0] } :
+    view == 4'h9 ? { 4'h9, dbg_vtest[7:4] } :
     view == 4'hA ? { 4'hA, pc_max_hi[11: 8] } :
     view == 4'hB ? { 4'hB, tick_cnt[3:0] } :
     view == 4'hC ? { 4'hC, tick_cnt[7:4] } :

@@ -56,7 +56,7 @@ wire [15:0] dbg_islmod;
 wire [ 7:0] dbg_scanhits;
 wire [ 8:0] dbg_vcntmax;
 wire [15:0] dbg_lastack;
-wire [ 7:0] dbg_ackcnt, dbg_b2rise;
+wire [ 7:0] dbg_ackcnt, dbg_b2rise, dbg_vtest;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -117,6 +117,7 @@ sftm_main u_main(
     .dbg_lastack  ( dbg_lastack   ),
     .dbg_ackcnt   ( dbg_ackcnt    ),
     .dbg_b2rise   ( dbg_b2rise    ),
+    .dbg_vtest    ( dbg_vtest     ),
     .st_dout      ( st_main       )
 );
 
@@ -183,7 +184,8 @@ sftm_video u_video(
     .st_vcntmax   ( dbg_vcntmax   ),
     .st_lastack   ( dbg_lastack   ),
     .st_ackcnt    ( dbg_ackcnt    ),
-    .st_b2rise    ( dbg_b2rise    )
+    .st_b2rise    ( dbg_b2rise    ),
+    .st_vtest     ( dbg_vtest     )
 );
 
 sftm_snd u_snd(

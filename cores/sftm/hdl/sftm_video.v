@@ -106,7 +106,8 @@ module sftm_video(
     // is set. Only a CPU write to 0x500004 can. Capture exactly that.
     output reg [15:0] st_lastack,     // last value written to INTSTATE (INTACK)
     output reg [ 7:0] st_ackcnt,      // saturating count of INTACK writes
-    output reg [ 7:0] st_b2rise       // saturating count of INTSTATE bit2 rises
+    output reg [ 7:0] st_b2rise,      // saturating count of INTSTATE bit2 rises
+    output     [ 7:0] st_vtest        // startup VRAM write/readback self-test
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -358,7 +359,8 @@ sftm_vram u_vram(
     .line_base  ( line_base     ),
     .line_sel   ( line_sel      ),
     .scan_x     ( scan_x        ),
-    .scan_pen   ( scan_pen      )
+    .scan_pen   ( scan_pen      ),
+    .st_vtest   ( st_vtest      )
 );
 
 // ---------------------------------------------------------------------------
