@@ -113,3 +113,79 @@ Phase 2 considerably), palette format `xRGB_888` 32768 entries, CPU020_CLOCK
 
 No ROMs are included. `doc/mame-src/` is a local reference copy of MAME
 driver source for porting purposes only — not distributed, gitignored.
+
+---
+
+# Hardware bring-up log (2026-08-12/13)
+
+The core boots on real hardware. Everything below was measured on a
+DE10-Nano via the JTFRAME debug overlay (`debug_view`, rendered as two hex
+digits) driven by an auto-cycling view mux in `sftm_main.v`, captured by
+scripting `screenshot` into `/dev/MiSTer_cmd` and decoding the glyphs.
+
+## Verified working against the game's own behaviour
+
+Each of these is confirmed by the game programming values that match the
+hardware spec independently of my expectations:
+
+| Evidence | Meaning |
+|---|---|
+| `boot_done=1`, bus FSM cycling | vector bootstrap + CPU execution |
+| Game writes `HTOTAL=0x01FC`, `VTOTAL=0x011E`, visible 384x256 | CRTC, decode and register file correct |
+| Game writes `INTENABLE=0x0144` (MAME's documented startup value) | register file + address decode correct |
+| `INTSCANLINE=0x00FF` | scanline compare programmed |
+| INTSTATE sticky-OR = `0x0044` | BOTH interrupt sources fire |
+| INTSTATE reads 0 live, sticky non-zero | the CPU is acking, i.e. the ISRs run |
+| Blitter: `blit_done_ever=1`, idle, never stalled | blitter completes commands |
+| `prot_rd=1` | protection readback path exercised |
+
+## Open symptom
+
+`pal_wr`, `snd_wr`, `nvram_wr` are all sticky-zero: the game never writes
+the palette, never sends a sound command, never touches NVRAM. Every pen
+therefore resolves to black. The ROM does contain palette code (291
+absolute references into 0x580000-0x59FFFF), so that code is simply never
+reached.
+
+## Timing: the design rides the edge on TG68K
+
+Worst-case setup slack across builds of near-identical logic:
+`+0.565, +0.246, -3.690, -0.409, +0.115, -0.020, -0.289`. Every failing
+path is inside the vendored `TG68KdotC_Kernel` register file
+(`store_in_tmp`/`exec[27]` -> `regfile~*`), i.e. placement variance on an
+inherently marginal CPU core, not a regression in this port.
+
+**Do not "fix" this with a blanket multicycle constraint.** TG68K has 13
+`rising_edge(clk)` processes and only 9 are gated by `clkena_lw`; several
+(VHDL lines 464, 1053, 4010) update every clock regardless of the clock
+enable. A multicycle over all TG68K registers would hide genuine
+violations on the ungated ones.
+
+Practical rule until this is solved properly: **check
+`Worst-case setup slack` BEFORE deploying, and only trust diagnostics
+from a build that closes.** A marginal bitstream produces plausible but
+untrustworthy readings -- `pc_max` landed in a data region on the
+-0.289 ns build, which may be a real runaway or may be a timing artifact,
+and there is no way to tell them apart after the fact.
+
+The one genuine timing fix found so far was structural and is already in:
+the ES5506 filter was the true critical path (`vn -> fsamp`, -3.690 ns)
+because the voice index drove 32-entry array muxes straight into the
+multiply and adds in one cycle. Pre-latching the per-voice coefficients
+and splitting each pole into multiply/accumulate stages removed it and
+*reduced* ALM usage from 85% to 80%.
+
+## Diagnostic technique notes (learned the hard way)
+
+- For anything that can be cleared, measure a **sticky accumulator**, never
+  a sample. Reading live INTSTATE between set and ack produced a confident
+  but completely wrong conclusion.
+- Latch event-triggered captures on a **useful** occurrence, not the first
+  one. `pc_stuck` latched during early boot and was blind to steady state.
+- Address ranges alone cannot identify a vector fetch: the RAM self-test
+  sweeps 0x60-0x6F like any other memory, so a "vector fetched" probe keyed
+  on address is a false positive generator.
+- The game's own ROM is the ground truth. Disassembling it (capstone,
+  `CS_ARCH_M68K`) settled several questions that hardware probes could not:
+  the L1/VINT vector points at a deliberate crash trap (`jmp` to itself), so
+  this game masks level 1 by design and never writes the `0x080000` ack.
