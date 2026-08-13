@@ -383,3 +383,29 @@ Two hypotheses were killed cheaply the same way, before they cost a build:
   active low, matching MAME. `p2_byte` reads `0xFF` idle, as intended.
 - **Zero task count.** `RAM[0x044E]=0` looked alarming but MAME shows the
   same value; it is normal, not a symptom.
+
+### Hardware result after the fix (build 23, 2026-08-13)
+
+Timing closed first try: game clock setup **+2.788 ns**, hold **+0.242 ns**,
+TNS 0.000 on every domain.
+
+The screen is no longer blank. Screenshots went from ~1.7 KB (solid black)
+to ~62 KB, and a side-by-side against a MAME snapshot of the same attract
+screen shows the **background artwork matches exactly** -- same gargoyle and
+hands, same dark blue texture, same palette. The blitter, palette, scanout
+and CRT timing are all working on real hardware.
+
+**Remaining defect, now well scoped:** the text/sprite layer draws as a 50%
+checkerboard where glyphs should be. MAME's frame reads "STREET FIGHTER /
+LIFE-LIKE VIOLENCE - MILD / ..."; ours puts dithered blocks in exactly those
+positions, with the correct layout and roughly the right extents. An
+alternating-pixel pattern points at pixel *stepping* rather than addressing
+-- a candidate list, in order of suspicion:
+
+1. `draw_rle` transparency: every other pixel taking the transparent branch.
+2. 4-bit pixel unpacking in the GROM byte fetcher (nibble hi/lo swap or a
+   double-advance).
+3. `draw_raw_widthpix` stepping two source pixels per destination pixel.
+
+The background uses a different draw path from the glyphs, which is why one
+is right and the other is not -- that asymmetry is the main clue.
