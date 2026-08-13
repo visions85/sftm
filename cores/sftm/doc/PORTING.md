@@ -253,3 +253,52 @@ The dispatcher task count at RAM[0x044E] is 0, nothing queues a palette
 change, and nothing queues a sound command -- so the game runs its scheduler
 and interrupt handlers but never starts any game work. That is now the only
 symptom left, and it is a game-state question rather than a hardware one.
+
+## Trace result (rev13, 2026-08-13): the game runs; three regions stay untouched
+
+The disassembly trace established that all game activity depends on one
+chain, and hardware measurement then confirmed every link of it:
+
+    QINT handler --(raster wrap, RAM[0x1104]==6)--> 0x80131C
+         |-- jsr 0x800F24   flush the deferred palette queue
+         |-- jsr 0x8004B6   read inputs, feed the event queue
+         \-- addq.w #1,$44a.w   timer tick (0x801332)
+    main loop 0x8006BA walks the timer list at $fb6 against that tick
+    0x8005C4 installs the boot task at 0x829908
+
+Measured on hardware (all counters, not samples):
+
+| Probe | Result |
+|---|---|
+| tick writes / value | saturated; value visibly advancing |
+| wrap-branch count | saturated |
+| RAM[0x1104] writes | saturated |
+| `task_ever` (PC in 0x829xxx) | **1 -- the boot task executes** |
+| self-test verdict | 0 = PASS |
+| pal_wr / snd_wr / nvram_wr | **0 / 0 / 0** |
+
+So the machine boots, self-tests, initialises, services both interrupts,
+ticks its timers, dispatches tasks and executes game code -- while never
+writing the palette (0x580000), the sound latch (0x480000) or NVRAM
+(0x600000). Writes to every other region (RAM, video regs 0x500000,
+watchdog 0x400000, colour latches 0x300000/0x380000, plane latch 0x700000)
+demonstrably work.
+
+The palette detection itself is verified, not assumed: a dedicated
+simulation (`tb_pal`) writes 0x580000 and confirms both that `sf_pal_wr`
+asserts and that palette RAM reads back correctly. So the flag is right and
+the game really is not writing there.
+
+Also retired here: RAM[0x044E] reading 0 is **correct**. That counter is fed
+by input EDGES (0x800516 XORs current inputs against the previous value and
+queues one event per changed bit), so with no controls connected zero is the
+expected idle value, not a stall.
+
+### Suggested next step
+
+Capture the live PC (`pc_now`, re-latched once per view cycle) and
+cross-reference against the disassembly to see which routine the game is
+actually executing in steady state. Everything upstream is proven, so the
+question is now simply what that code is waiting on before it loads a
+palette. The ROM is reconstructed locally and capstone-disassemblable, so
+any address it reports can be read directly.
