@@ -117,6 +117,9 @@ module sftm_main #(
     input      [15:0] dbg_intsticky,    // OR of every INTSTATE value seen
     input      [15:0] dbg_intscanline,  // INTSCANLINE contents
     input      [ 7:0] dbg_blitflags,    // blitter observation
+    input      [15:0] dbg_islmod,       // INTSCANLINE after modulo reduction
+    input      [ 7:0] dbg_scanhits,     // saturating count of scanline hits
+    input      [ 8:0] dbg_vcntmax,      // highest vcnt the CRT reached
     output     [ 7:0] st_dout
 );
 
@@ -650,71 +653,40 @@ always @(posedge clk) begin
     end
 end
 
-// View map (rev3). pc_vec was dropped: it keyed on reads of 0x60..0x6F,
-// which the game's RAM self-test sweeps like any other address, so it only
-// ever measured the memory test. INTENABLE/INTSTATE replace it because the
-// game computes the enable mask at runtime -- the ROM cannot tell us.
-//   0-3 : INTENABLE nibbles (0 = bits 3:0)   4-7 : INTSTATE nibbles
-//   8   : {boot_done, vint, blit_irq, scan_irq}
-//   9   : {vreg_wr, cmd_wr, inten_wr, pal_wr}
-//   A-F : pc_stuck (PC while a vblank sits pending >100 ms)
-// View map (rev4). INTENABLE reads 0x0144 (both sources enabled, matching
-// MAME's documented startup value) while INTSTATE stays 0x0000, so the game
-// is fine and my video block never raises either status bit. These views
-// separate "the blitter never finishes" from "the scanline compare never
-// matches", which inspection alone cannot.
-//   0-3 : INTSTATE sticky-OR  4-7 : INTSCANLINE contents
-//   8   : {scanline_hit_ever, blit_done_ever, cmd_ever, blit_busy}
-//   9   : {blit_waiting, blit_state[2:0]}
-//   A-F : pc_stuck
-// View map (rev5). rev4 proved the interrupt path works: INTSTATE's
-// sticky-OR reads 0x0044 (both sources fire) and the CPU acks them, while
-// the blitter sits idle having completed commands. The remaining symptom is
-// that the palette is never written, so the question is where the code
-// actually is -- rev4's pc_stuck latched on the first pending vblank, which
-// happens during early boot, and was therefore uninformative.
-//   0-5 : pc_now (re-latched once per view cycle, so the nibbles agree)
-//   6-B : pc_max (furthest instruction ever fetched = how far it got)
-//   C   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
-//   D   : sticky {intstate bit6, intstate bit2, cmd_wr, inten_wr}
-//   E-F : live INTSTATE low byte
-// View map (rev6). The CPU, interrupts and blitter are all confirmed healthy
-// and pc_max (0x8C1xxx) turned out to be legitimate code, so the question is
-// no longer "is my hardware working" but "what is the GAME waiting for".
-// These views read the game's own variables:
-//   0-3 : RAM[0x0FBE] exception/status code (non-zero => it took a fault)
-//   4-5 : RAM[0x0406] frame counter (proves the QINT path runs, and how fast)
-//   6-7 : RAM[0x0407] sound queue read index
-//   8-9 : RAM[0x0408] sound queue write index  (== read index => never queued)
-//   A-C : pc_max upper 12 bits
-//   D   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
-//   E-F : INTSTATE sticky-OR
-// View map (rev7). rev6 proved the interrupt infrastructure is fully alive:
-// the frame counter RAM[0x0406] advances, so the QINT chain runs and the
-// palette flush executes -- it just finds an empty queue. Both sound-queue
-// indices sit at 0. So the game's own logic never asks for anything, which
-// points at the self-test verdict it recorded at boot.
-//   0-3 : RAM[0x0400] SELF-TEST RESULT (0 pass / 1 pattern / 2 address)
-//   4-7 : RAM[0x044E] dispatcher task count
-//   8-B : RAM[0x1104] raster-split index
-//   C-D : RAM[0x0406] frame counter (confirms the chain is still running)
+// ---------------------------------------------------------------------------
+// Debug view map (rev8). Superseded maps are not kept here -- see the git
+// history; stacking them just made this file misleading.
+//
+// rev7 measured RAM[0x1104] pinned at 6. Only the QINT handler ever changes
+// it (clears at 6, then +=2), so the SCANLINE interrupt is not firing. The
+// frame counter kept advancing only because the XINT handler also increments
+// it at 0x801384 -- that motion never proved QINT was alive. These views
+// watch the scanline path directly rather than inferring it:
+//
+//   0-3 : INTSCANLINE after modulo reduction -- what the compare actually uses
+//   4-5 : count of scanline_hit pulses; 0 means the compare never matches
+//   6-8 : highest vcnt reached (confirms the CRT counter spans the target)
+//   9   : RAM[0x0400] self-test verdict (0 pass / 1 pattern / 2 address)
+//   A-B : RAM[0x044E] dispatcher task count (measured 0 = no tasks queued)
+//   C-D : RAM[0x1104] raster-split index
 //   E   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
 //   F   : sticky {ints_b6, ints_b2, cmd_wr, inten_wr}
+// ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_400[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_400[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_400[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_400[15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_44e[ 3: 0] } :
-    view == 4'h5 ? { 4'h5, dbg_44e[ 7: 4] } :
-    view == 4'h6 ? { 4'h6, dbg_44e[11: 8] } :
-    view == 4'h7 ? { 4'h7, dbg_44e[15:12] } :
-    view == 4'h8 ? { 4'h8, dbg_1104[ 3: 0] } :
-    view == 4'h9 ? { 4'h9, dbg_1104[ 7: 4] } :
-    view == 4'hA ? { 4'hA, dbg_1104[11: 8] } :
-    view == 4'hB ? { 4'hB, dbg_1104[15:12] } :
-    view == 4'hC ? { 4'hC, dbg_406[3:0] } :
-    view == 4'hD ? { 4'hD, dbg_406[7:4] } :
+    view == 4'h0 ? { 4'h0, dbg_islmod[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_islmod[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_islmod[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_islmod[15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_scanhits[3:0] } :
+    view == 4'h5 ? { 4'h5, dbg_scanhits[7:4] } :
+    view == 4'h6 ? { 4'h6, dbg_vcntmax[3:0] } :
+    view == 4'h7 ? { 4'h7, dbg_vcntmax[7:4] } :
+    view == 4'h8 ? { 4'h8, 3'd0, dbg_vcntmax[8] } :
+    view == 4'h9 ? { 4'h9, dbg_400[3:0] } :
+    view == 4'hA ? { 4'hA, dbg_44e[3:0] } :
+    view == 4'hB ? { 4'hB, dbg_44e[7:4] } :
+    view == 4'hC ? { 4'hC, dbg_1104[3:0] } :
+    view == 4'hD ? { 4'hD, dbg_1104[7:4] } :
     view == 4'hE ? { 4'hE, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
                    { 4'hF, dbg_intsticky[6], dbg_intsticky[2],
                            sf_cmd_wr, sf_inten_wr };

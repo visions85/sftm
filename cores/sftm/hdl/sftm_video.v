@@ -97,7 +97,10 @@ module sftm_video(
     output     [15:0] st_intenable,
     output reg [15:0] st_intsticky,   // OR of every INTSTATE value ever seen
     output reg [15:0] st_intscanline, // what the game left in INTSCANLINE
-    output reg [ 7:0] st_blitflags    // {sh_ever,bd_ever,cmd_ever,busy,waiting,state[2:0]}
+    output reg [ 7:0] st_blitflags,   // {sh_ever,bd_ever,cmd_ever,busy,waiting,state[2:0]}
+    output     [15:0] st_islmod,      // INTSCANLINE after modulo reduction
+    output reg [ 7:0] st_scanhits,    // saturating count of scanline_hit pulses
+    output reg [ 8:0] st_vcntmax      // highest vcnt reached (sanity on the CRT)
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -158,12 +161,36 @@ wire      line_end = hcnt == 9'd507;
 // still fires, one frame's worth later. An exact compare here would silently
 // never match and stall the game's whole raster-split chain (the QINT handler
 // reloads INTSCANLINE from a table every split, so one bad value would wedge
-// it permanently). Two conditional subtracts cover any plausible value.
-wire [15:0] isl_raw = vregs[R_INTSCANLINE];
-wire [15:0] isl_w1  = isl_raw >= 16'd286 ? isl_raw - 16'd286 : isl_raw;
-wire [15:0] isl_w2  = isl_w1  >= 16'd286 ? isl_w1  - 16'd286 : isl_w1;
+// it permanently).
+// Reduce iteratively rather than with a couple of conditional subtracts: the
+// game computes INTSCANLINE as RAM[0x1118]-1, so an uninitialised source
+// yields 0xFFFF, which needs 229 subtractions of 286 -- far beyond what two
+// stages reach. INTSCANLINE changes at most a few times per frame, so a
+// one-subtract-per-clock reduction settles long before it is next needed.
+reg [15:0] isl_mod;
+always @(posedge clk) begin
+    if( rst )
+        isl_mod <= 16'd0;
+    else if( vreg_wr && ridx == R_INTSCANLINE )
+        isl_mod <= cpu_dout;
+    else if( isl_mod >= 16'd286 )
+        isl_mod <= isl_mod - 16'd286;
+end
 
-wire scanline_hit = pxl_cen && line_end && vcnt == isl_w2[8:0];
+wire scanline_hit = pxl_cen && line_end && vcnt == isl_mod[8:0];
+
+assign st_islmod = isl_mod;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        st_scanhits <= 8'd0;
+        st_vcntmax  <= 9'd0;
+    end else begin
+        if( scanline_hit && st_scanhits != 8'hFF ) st_scanhits <= st_scanhits + 8'd1;
+        if( vcnt > st_vcntmax ) st_vcntmax <= vcnt;
+    end
+end
+
 
 integer i;
 always @(posedge clk) begin
@@ -172,20 +199,21 @@ always @(posedge clk) begin
         vreg_q <= 16'h0000;
     end else begin
         vreg_q <= vregs[ridx];
-        // scanline interrupt (scanline_interrupt, :380)
-        if( scanline_hit )
-            vregs[R_INTSTATE] <= vregs[R_INTSTATE] | VIDEOINT_SCANLINE;
-        // blitter completion (handle_video_command tail, :1282)
-        if( blit_done )
-            vregs[R_INTSTATE] <= vregs[R_INTSTATE] | VIDEOINT_BLITTER;
-        if( vreg_wr ) begin
-            case( ridx )
-                R_INTSTATE:  // VIDEO_INTACK: intstate = old & ~data (:1344)
-                    vregs[R_INTSTATE] <= vregs[R_INTSTATE] & ~cpu_dout;
-                default:
-                    vregs[ridx] <= cpu_dout;
-            endcase
-        end
+        // INTSTATE has three writers -- the scanline compare (:380), blitter
+        // completion (:1282) and the CPU's INTACK (:1344). They were three
+        // separate non-blocking assignments to the same register, so whenever
+        // two landed on one clock the last statement silently won and the
+        // other event was LOST. Combine them into a single expression: sets
+        // apply, then the ack mask clears, which also matches MAME's ordering
+        // (it ORs the bit in, then a later write ANDs it out).
+        vregs[R_INTSTATE] <=
+            ( vregs[R_INTSTATE]
+              | (scanline_hit ? VIDEOINT_SCANLINE : 16'd0)
+              | (blit_done    ? VIDEOINT_BLITTER  : 16'd0) )
+            & ~( (vreg_wr && ridx == R_INTSTATE) ? cpu_dout : 16'd0 );
+        // every other register is a plain write
+        if( vreg_wr && ridx != R_INTSTATE )
+            vregs[ridx] <= cpu_dout;
     end
 end
 
