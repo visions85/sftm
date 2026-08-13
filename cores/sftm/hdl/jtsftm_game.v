@@ -161,6 +161,10 @@ sftm_video u_video(
     .vram_we      ( vram_we       ),
     .vram_cs      ( vram_cs       ),
     .vram_ok      ( vram_ok       ),
+    .vramrd_addr  ( vramrd_addr   ),
+    .vramrd_data  ( vramrd_data   ),
+    .vramrd_cs    ( vramrd_cs     ),
+    .vramrd_ok    ( vramrd_ok     ),
 
     .vblank_irq   ( vblank_irq    ),
     .blit_irq     ( blit_irq      ),

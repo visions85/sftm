@@ -43,6 +43,16 @@ module sftm_vram(
     output reg        vram_cs,
     input             vram_ok,
 
+    // Read-only 32-bit alias of the same 2 MB (mem.yaml `vramrd`, offset 0).
+    // The scanline prefetch reads through this so one SDRAM access yields two
+    // pixels: 192 accesses per line instead of 384, doubling the per-word
+    // budget from 7.9 to 15.9 clk. Writes still go through the 16-bit rw
+    // `vram` port above.
+    output reg [20:2] vramrd_addr,
+    input      [31:0] vramrd_data,
+    output reg        vramrd_cs,
+    input             vramrd_ok,
+
     // blitter write FIFO
     input             vw_req,
     output            vw_rdy,
@@ -185,16 +195,23 @@ end
 // arbiter / SDRAM sequencer
 // ---------------------------------------------------------------------------
 // Bug A: the prefetch needs 384 words inside one line (508 pxl_cen x 6 clk =
-// 3048 clk), a budget of 7.9 clk per word. Per-access overhead was 5 clk on
-// top of SDRAM latency (issue + 3 settle + gap); it is now 3 (issue + 1
-// settle + the cs-low gap folded into A_IDLE).
-localparam [2:0] A_IDLE=3'd0, A_ISSUE=3'd1, A_WAIT=3'd2;
+// 3048 clk), a budget of 7.9 clk per word.
+//
+// A_GAP is NOT just the cs-low gap: wf_pop and vr_ack are registered, so the
+// write-FIFO pop and the read requester's index advance only take effect the
+// cycle after A_WAIT completes. Removing it made A_IDLE re-issue the stale
+// wf_head and misalign readbacks. It stays.
+localparam [2:0] A_IDLE=3'd0, A_ISSUE=3'd1, A_WAIT=3'd2, A_PFWR=3'd3, A_GAP=3'd4;
 reg [2:0] astate;
 reg [1:0] settle;
 reg [1:0] owner;                     // 0 = prefetch, 1 = read, 2 = write
-reg       pf_active;
-reg [ 8:0] pf_idx;
+reg        pf_active;
 reg [18:0] pf_base;
+reg [18:2] pf_j;        // 32-bit word index being fetched
+reg [ 9:0] pf_w;        // next line-buffer slot to fill (0..383)
+reg        pf_skip;     // odd line_base: discard the low half of the first pair
+reg [31:0] pf_data;
+reg        pf_half;     // which half of pf_data is being written
 
 always @(posedge clk) begin
     if( rst ) begin
@@ -206,7 +223,11 @@ always @(posedge clk) begin
         wf_pop    <= 0;
         lb_we     <= 0;
         pf_active <= 0;
-        pf_idx    <= 0;
+        pf_j      <= 0;
+        pf_w      <= 0;
+        pf_skip   <= 0;
+        pf_half   <= 0;
+        vramrd_cs <= 0;
     end else begin
         vr_ack <= 0;
         wf_pop <= 0;
@@ -214,8 +235,11 @@ always @(posedge clk) begin
 
         if( line_go ) begin
             pf_active <= 1;
-            pf_idx    <= 0;
             pf_base   <= line_base;
+            pf_j      <= line_base[18:1];   // pair containing the first word
+            pf_w      <= 0;
+            pf_skip   <= line_base[0];      // odd start: low half is the pixel before
+            pf_half   <= 0;
         end
 
         case( astate )
@@ -223,12 +247,11 @@ always @(posedge clk) begin
             vram_cs <= 0;
             vram_we <= 0;
             if( pf_active ) begin
-                owner     <= 2'd0;
-                vram_addr <= { 1'b0, (pf_base + {10'd0, pf_idx}) & VRAM_MASK };
-                vram_we   <= 0;
-                vram_cs   <= 1;
-                settle    <= 0;
-                astate    <= A_WAIT;
+                owner       <= 2'd0;
+                vramrd_addr <= pf_j;
+                vramrd_cs   <= 1;
+                settle      <= 0;
+                astate      <= A_WAIT;
             end else if( (tdone ? vr_req : t_rreq) && wf_empty ) begin
                 owner     <= 2'd1;
                 vram_addr <= tdone ? { vr_plane, vr_addr }
@@ -251,14 +274,15 @@ always @(posedge clk) begin
         A_WAIT: begin
             if( settle != 2'd1 )
                 settle <= settle + 2'd1;
-            else if( vram_ok ) begin
+            else if( owner == 2'd0 ? vramrd_ok : vram_ok ) begin
                 case( owner )
                     2'd0: begin
-                        lb_we    <= 1;
-                        lb_waddr <= pf_idx;
-                        lb_wdata <= vram_data;
-                        if( pf_idx == 9'd383 ) pf_active <= 0;
-                        pf_idx   <= pf_idx + 9'd1;
+                        // one access carries two pixels; unpack over the next
+                        // two cycles in A_PFWR
+                        pf_data <= vramrd_data;
+                        pf_half <= 1'b0;
+                        pf_j    <= pf_j + 17'd1;
+                        astate  <= A_PFWR;
                     end
                     2'd1: begin
                         vr_ack  <= 1;
@@ -266,9 +290,32 @@ always @(posedge clk) begin
                     end
                     default: wf_pop <= 1;
                 endcase
-                vram_cs <= 0;
-                vram_we <= 0;
-                astate  <= A_IDLE;   // A_IDLE itself is the 1-clk cs-low gap
+                vramrd_cs <= 0;
+                vram_cs   <= 0;
+                vram_we   <= 0;
+                if( owner != 2'd0 )
+                    astate <= A_GAP;
+            end
+        end
+        A_GAP: astate <= A_IDLE;   // cs-low gap + lets wf_pop / vr_ack land
+        // Unpack the fetched pair into the line buffer, low half first
+        // (jtframe assembles dout with the lower address in [15:0]).
+        A_PFWR: begin
+            if( pf_skip && !pf_half ) begin
+                pf_skip <= 1'b0;             // odd line_base: drop the low half
+                pf_half <= 1'b1;
+            end else begin
+                if( pf_w < 10'd384 ) begin
+                    lb_we    <= 1;
+                    lb_waddr <= pf_w[8:0];
+                    lb_wdata <= pf_half ? pf_data[31:16] : pf_data[15:0];
+                    pf_w     <= pf_w + 10'd1;
+                end
+                if( pf_half ) begin
+                    if( pf_w + 10'd1 >= 10'd384 ) pf_active <= 0;
+                    astate <= A_GAP;
+                end else
+                    pf_half <= 1'b1;
             end
         end
         default: astate <= A_IDLE;

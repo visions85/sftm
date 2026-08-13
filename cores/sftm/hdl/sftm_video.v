@@ -73,6 +73,10 @@ module sftm_video(
     output            vram_we,
     output            vram_cs,
     input             vram_ok,
+    output     [20:2] vramrd_addr,   // 32-bit read alias for the prefetch
+    input      [31:0] vramrd_data,
+    output            vramrd_cs,
+    input             vramrd_ok,
 
     // interrupts to sftm_main
     output reg        vblank_irq,  // 1-clk pulse (generate_int1 hook)
@@ -347,6 +351,10 @@ sftm_vram u_vram(
     .vram_we    ( vram_we       ),
     .vram_cs    ( vram_cs       ),
     .vram_ok    ( vram_ok       ),
+    .vramrd_addr( vramrd_addr   ),
+    .vramrd_data( vramrd_data   ),
+    .vramrd_cs  ( vramrd_cs     ),
+    .vramrd_ok  ( vramrd_ok     ),
     .vw_req     ( vw_req        ),
     .vw_rdy     ( vw_rdy        ),
     .vw_plane   ( vw_plane      ),

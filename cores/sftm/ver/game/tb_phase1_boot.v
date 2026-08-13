@@ -176,6 +176,9 @@ sftm_video u_video(
     .grm3_addr(grm3_addr), .grm3_data(16'h0000), .grm3_cs(grm3_cs), .grm3_ok(1'b1),
     .vram_addr(vram_addr), .vram_data(16'h0000), .vram_din(vram_din),
     .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(1'b1),
+    // vramrd: 32-bit read alias used by the scanline prefetch; this bench only
+    // needs it to not stall, matching the tied-high vram_ok above.
+    .vramrd_addr(), .vramrd_data(32'd0), .vramrd_cs(), .vramrd_ok(1'b1),
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),

@@ -213,6 +213,35 @@ always @(posedge clk) begin
     end
 end
 
+
+// vramrd: read-only 32-bit alias of vmem (mem.yaml offset 0); one access
+// returns the pixel pair {vmem[2j+1], vmem[2j]}.
+localparam [7:0] RDLAT = 8'd3;
+wire [20:2] vramrd_addr;
+wire        vramrd_cs;
+reg         vramrd_ok = 0;
+reg  [20:2] rok_addr;
+reg  [ 7:0] rok_cnt;
+reg  [31:0] vramrd_data_r;
+wire [31:0] vramrd_data = vramrd_data_r;
+reg         rd_last_cs = 0, rd_busy = 0;
+wire        rd_cs_posedge = vramrd_cs && !rd_last_cs;
+
+always @(posedge clk) begin
+    rd_last_cs <= vramrd_cs;
+    if( !vramrd_cs ) begin
+        rok_cnt <= 0; vramrd_ok <= 0; rd_busy <= 0;
+    end else if( rd_cs_posedge ) begin
+        rok_addr <= vramrd_addr; rok_cnt <= 0; vramrd_ok <= 0; rd_busy <= 1;
+    end else if( rd_busy ) begin
+        if( rok_cnt != RDLAT ) rok_cnt <= rok_cnt + 8'd1;
+        else if( !vramrd_ok ) begin
+            vramrd_data_r <= { vmem[{rok_addr,1'b1}], vmem[{rok_addr,1'b0}] };
+            vramrd_ok     <= 1;
+        end
+    end
+end
+
 // ---------------------------------------------------------------------------
 // DUT
 // ---------------------------------------------------------------------------
@@ -261,7 +290,9 @@ sftm_video u_video(
     .grom_addr(grom_addr), .grom_data(grom_data), .grom_cs(grom_cs), .grom_ok(grom_ok),
     .grm3_addr(grm3_addr), .grm3_data(16'h0000), .grm3_cs(grm3_cs), .grm3_ok(1'b1),
     .vram_addr(vram_addr), .vram_data(vram_data), .vram_din(vram_din),
-    .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(vram_ok),
+    .vram_dsn(vram_dsn),     .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(vram_ok),
+    .vramrd_addr(vramrd_addr), .vramrd_data(vramrd_data),
+    .vramrd_cs(vramrd_cs), .vramrd_ok(vramrd_ok),
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),

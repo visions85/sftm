@@ -61,6 +61,19 @@ sdram:
           addr_width: 21       # 2 MB -> port [20:1]
           data_width: 16
           rw: true
+        # Second, READ-ONLY 32-bit view of the same 2 MB, for the scanline
+        # prefetch. The prefetch needs 384 words per line and a line is only
+        # 508*6 = 3048 clk, a budget of 7.9 clk/word that a 16-bit single-word
+        # read cannot meet (see doc/PORTING.md "Bug A"). A 32-bit read returns
+        # two pixels per SDRAM access, halving accesses to 192 and doubling the
+        # budget to 15.9 clk/word. `offset: 0` aliases it onto `vram`, so it is
+        # the same memory. Coherence is a non-issue: this slot's cache holds
+        # two entries and the prefetch sweeps linearly, so any address is long
+        # evicted before the next frame reads it again.
+        - name: vramrd
+          addr_width: 21       # 2 MB -> port [20:2] at 32 bits
+          data_width: 32
+          offset: 0
         - name: grm3
           addr_width: 19       # 512 KB -> port [18:1]
           data_width: 16
