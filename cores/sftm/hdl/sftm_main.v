@@ -499,54 +499,87 @@ TG68KdotC_Kernel #(
 );
 
 // ---------------------------------------------------------------------------
-// Hardware bring-up diagnostics (Phase 4). JTFRAME renders st_dout as two hex
-// digits over the game image (debug_view, jtframe_debug.v:50). We cannot press
-// OSD buttons over SSH, so instead of selecting a view with debug_bus the
-// display AUTO-CYCLES 8 views, each tagged in bits [7:5] so every screenshot
-// is self-identifying:
+// Hardware bring-up diagnostics (Phase 4, revision 2).
 //
-//   tag 0..4 : the latched instruction-fetch address, 5 bits at a time
-//              (view0 = PC[4:0] ... view4 = {1'b0, PC[23:20]})
-//   tag 5    : sticky "did this ever happen" flags, group A
-//   tag 6    : sticky flags, group B
-//   tag 7    : live status (the original st_dout bits)
+// JTFRAME renders st_dout as two hex digits over the game image (debug_view,
+// jtframe_debug.v:50; the viewmux defaults to debug_view with sel=0). OSD
+// buttons are not reachable over SSH, so the display AUTO-CYCLES 16 views.
+// The tag is the WHOLE high nibble and the payload the whole low nibble, so a
+// screenshot reads directly as "<view><value>" with no bit juggling:
 //
-// PC is snapshotted once per full cycle so all five chunks describe the SAME
-// address rather than five different ones.
+//   0..5 : pc_vec   -- where the CPU JUMPED TO on its first exception,
+//                      i.e. the ISR entry address (nibble 0 = bits 3:0)
+//   6..B : pc_stuck -- the PC after vint has been asserted continuously for
+//                      >100 ms, i.e. where it spins while a vblank is pending
+//   C    : which exception vector was fetched: {0x60 spurious, 0x64 VINT,
+//          0x68 XINT, 0x6C QINT} -- the previous build lumped 0x60..0x6F into
+//          one bit, which could not tell a real autovector from a spurious one
+//   D    : sticky writes {vreg, VIDEO_COMMAND, VIDEO_INTENABLE, palette}
+//   E    : sticky {int1_ack (ISR completed), plane latch, prot read, snd latch}
+//   F    : live {boot_done, vint, blit_irq, scan_irq}
+//
+// pc_vec/pc_stuck latch on events and then hold forever, so one capture burst
+// always reconstructs a single coherent address (the previous revision
+// re-snapshotted per cycle and produced mixed nibbles).
 // ---------------------------------------------------------------------------
-reg [23:0] pc_live, pc_snap;
+reg [23:0] pc_live, pc_vec, pc_stuck;
+reg        vec_pend, pc_vec_done, pc_stuck_done;
+reg [22:0] vint_timer;                  // 100 ms @ 48 MHz = 4.8e6 -> 23 bits
 reg [28:0] diag_cnt;
-wire [2:0] view = diag_cnt[28:26];      // ~1.4 s per view, ~11 s per cycle
+wire [3:0] view = diag_cnt[28:25];      // ~0.7 s per view, ~11 s per cycle
 
-// sticky event flags: each latches the first time it ever happens
-reg sf_vreg_wr;    // CPU wrote any video register  (reached video init)
-reg sf_cmd_wr;     // CPU wrote VIDEO_COMMAND       (issued a blit)
-reg sf_pal_wr;     // CPU wrote palette RAM
-reg sf_plane_wr;   // CPU wrote itech020_plane_w
-reg sf_inten_wr;   // CPU wrote VIDEO_INTENABLE     (enabled video IRQs)
-reg sf_int_ack;    // CPU wrote 0x080000            (int1_ack_w -> ISR RAN)
-reg sf_vec_fetch;  // CPU read the autovector table (took an interrupt)
-reg sf_nvram_wr;   // CPU wrote NVRAM
-reg sf_prot_rd;    // CPU read the protection port
-reg sf_snd_wr;     // CPU wrote the sound latch
+// exception vector longwords (VBR = 0): 0x60 spurious, 0x64/0x68/0x6C autovec
+wire vec60 = A[23:2] == 22'h000018;
+wire vec64 = A[23:2] == 22'h000019;
+wire vec68 = A[23:2] == 22'h00001A;
+wire vec6c = A[23:2] == 22'h00001B;
+wire vec_rd = grant && bus_read && (vec60 | vec64 | vec68 | vec6c);
+
+reg sf_v60, sf_v64, sf_v68, sf_v6c;
+reg sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr;
+reg sf_int_ack, sf_plane_wr, sf_prot_rd, sf_snd_wr;
 
 // video register index within 0x500000-0x5000ff: registers are 4 bytes apart,
-// so k = A[7:2] -- same expression sftm_video decodes (its cpu_addr keeps the
-// [23:1] index numbering, so cpu_addr[7:2] is these same bits)
+// so k = A[7:2] (sftm_video's cpu_addr keeps [23:1] index numbering, so its
+// cpu_addr[7:2] selects these same bits)
 wire [5:0] vreg_k = A[7:2];
 
 always @(posedge clk) begin
     if( w_rst ) begin
-        pc_live <= 24'd0; pc_snap <= 24'd0; diag_cnt <= 29'd0;
-        { sf_vreg_wr, sf_cmd_wr, sf_pal_wr, sf_plane_wr, sf_inten_wr,
-          sf_int_ack, sf_vec_fetch, sf_nvram_wr, sf_prot_rd, sf_snd_wr } <= 10'd0;
+        pc_live <= 0; pc_vec <= 0; pc_stuck <= 0;
+        vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
+        vint_timer <= 0; diag_cnt <= 0;
+        { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
+        { sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr } <= 4'd0;
+        { sf_int_ack, sf_plane_wr, sf_prot_rd, sf_snd_wr } <= 4'd0;
     end else begin
         diag_cnt <= diag_cnt + 29'd1;
-        // snapshot the PC once per full view cycle
-        if( diag_cnt == {29{1'b1}} ) pc_snap <= pc_live;
-        // track the most recent instruction fetch
         if( grant && busstate == 2'b00 ) pc_live <= A;
-        // sticky flags
+
+        // --- which vector, and where did it jump to ------------------------
+        if( vec_rd ) begin
+            if( vec60 ) sf_v60 <= 1'b1;
+            if( vec64 ) sf_v64 <= 1'b1;
+            if( vec68 ) sf_v68 <= 1'b1;
+            if( vec6c ) sf_v6c <= 1'b1;
+            if( !pc_vec_done ) vec_pend <= 1'b1;
+        end
+        // the first instruction fetch after the vector read IS the ISR entry
+        if( vec_pend && grant && busstate == 2'b00 ) begin
+            pc_vec      <= A;
+            pc_vec_done <= 1'b1;
+            vec_pend    <= 1'b0;
+        end
+
+        // --- where is it spinning while a vblank sits unacknowledged? ------
+        if( !vint ) vint_timer <= 23'd0;
+        else if( vint_timer != {23{1'b1}} ) vint_timer <= vint_timer + 23'd1;
+        if( vint && vint_timer == 23'd4_800_000 && !pc_stuck_done ) begin
+            pc_stuck      <= pc_live;
+            pc_stuck_done <= 1'b1;
+        end
+
+        // --- sticky bus events ---------------------------------------------
         if( grant && bus_write ) begin
             if( vreg_sel  ) sf_vreg_wr  <= 1'b1;
             if( vreg_sel && vreg_k == 6'h04 ) sf_cmd_wr   <= 1'b1;  // COMMAND
@@ -554,26 +587,29 @@ always @(posedge clk) begin
             if( pal_sel   ) sf_pal_wr   <= 1'b1;
             if( plane_sel ) sf_plane_wr <= 1'b1;
             if( inp_p1    ) sf_int_ack  <= 1'b1;   // int1_ack_w: the ISR ran
-            if( nvram_cs  ) sf_nvram_wr <= 1'b1;
             if( sndlat_w  ) sf_snd_wr   <= 1'b1;
         end
-        if( grant && bus_read ) begin
-            // autovectors 25/26/27 live at 0x64/0x68/0x6C (VBR = 0)
-            if( A[23:4] == 20'h00006 ) sf_vec_fetch <= 1'b1;
-            if( prot_rd )              sf_prot_rd   <= 1'b1;
-        end
+        if( grant && bus_read && prot_rd ) sf_prot_rd <= 1'b1;
     end
 end
 
 assign st_dout =
-    view == 3'd0 ? { 3'd0, pc_snap[ 4: 0] } :
-    view == 3'd1 ? { 3'd1, pc_snap[ 9: 5] } :
-    view == 3'd2 ? { 3'd2, pc_snap[14:10] } :
-    view == 3'd3 ? { 3'd3, pc_snap[19:15] } :
-    view == 3'd4 ? { 3'd4, 1'b0, pc_snap[23:20] } :
-    view == 3'd5 ? { 3'd5, sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr, sf_plane_wr } :
-    view == 3'd6 ? { 3'd6, sf_int_ack, sf_vec_fetch, sf_nvram_wr, sf_prot_rd, sf_snd_wr } :
-                   { 3'd7, boot_done, vint, blit_irq, scan_irq, wdog_rst };
+    view == 4'h0 ? { 4'h0, pc_vec  [ 3: 0] } :
+    view == 4'h1 ? { 4'h1, pc_vec  [ 7: 4] } :
+    view == 4'h2 ? { 4'h2, pc_vec  [11: 8] } :
+    view == 4'h3 ? { 4'h3, pc_vec  [15:12] } :
+    view == 4'h4 ? { 4'h4, pc_vec  [19:16] } :
+    view == 4'h5 ? { 4'h5, pc_vec  [23:20] } :
+    view == 4'h6 ? { 4'h6, pc_stuck[ 3: 0] } :
+    view == 4'h7 ? { 4'h7, pc_stuck[ 7: 4] } :
+    view == 4'h8 ? { 4'h8, pc_stuck[11: 8] } :
+    view == 4'h9 ? { 4'h9, pc_stuck[15:12] } :
+    view == 4'hA ? { 4'hA, pc_stuck[19:16] } :
+    view == 4'hB ? { 4'hB, pc_stuck[23:20] } :
+    view == 4'hC ? { 4'hC, sf_v60, sf_v64, sf_v68, sf_v6c } :
+    view == 4'hD ? { 4'hD, sf_vreg_wr, sf_cmd_wr, sf_inten_wr, sf_pal_wr } :
+    view == 4'hE ? { 4'hE, sf_int_ack, sf_plane_wr, sf_prot_rd, sf_snd_wr } :
+                   { 4'hF, boot_done, vint, blit_irq, scan_irq };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
