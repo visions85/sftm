@@ -544,6 +544,14 @@ reg [23:0] pc_now;           // re-latched each view cycle (coherent nibbles)
 // ---------------------------------------------------------------------------
 reg [15:0] dbg_fbe;
 reg [ 7:0] dbg_406, dbg_407, dbg_408;
+// rev7 snoops, chosen from the disassembly:
+//   0x0400  SELF-TEST RESULT. The RAM test at 0x80158A exits via
+//           move.w #0/#1/#2,d0 -> jmp 0x800412, and the boot path stores d0
+//           here (0 = pass, 1 = pattern mismatch, 2 = address-as-data
+//           mismatch). Non-zero means the game thinks my RAM is broken.
+//   0x044E  task count for the dispatcher the main loop calls at 0x800802
+//   0x1104  raster-split index driving the QINT chain (0,2,4,6)
+reg [15:0] dbg_400, dbg_44e, dbg_1104;
 // pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
 // cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
 // without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
@@ -576,6 +584,7 @@ always @(posedge clk) begin
         pc_live <= 0; pc_vec <= 0; pc_stuck <= 0;
         pc_now <= 0; pc_max_hi <= 0;
         dbg_fbe <= 0; dbg_406 <= 0; dbg_407 <= 0; dbg_408 <= 0;
+        dbg_400 <= 0; dbg_44e <= 0; dbg_1104 <= 0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -621,6 +630,12 @@ always @(posedge clk) begin
         if( ram_cpu_we_hi && ram_addr == 14'h0203 ) dbg_406 <= cpu_do16[15:8];
         if( ram_cpu_we_lo && ram_addr == 14'h0203 ) dbg_407 <= cpu_do16[ 7:0];
         if( ram_cpu_we_hi && ram_addr == 14'h0204 ) dbg_408 <= cpu_do16[15:8];
+        if( ram_cpu_we_hi && ram_addr == 14'h0200 ) dbg_400[15:8] <= cpu_do16[15:8];
+        if( ram_cpu_we_lo && ram_addr == 14'h0200 ) dbg_400[ 7:0] <= cpu_do16[ 7:0];
+        if( ram_cpu_we_hi && ram_addr == 14'h0227 ) dbg_44e[15:8] <= cpu_do16[15:8];
+        if( ram_cpu_we_lo && ram_addr == 14'h0227 ) dbg_44e[ 7:0] <= cpu_do16[ 7:0];
+        if( ram_cpu_we_hi && ram_addr == 14'h0882 ) dbg_1104[15:8] <= cpu_do16[15:8];
+        if( ram_cpu_we_lo && ram_addr == 14'h0882 ) dbg_1104[ 7:0] <= cpu_do16[ 7:0];
         if( grant && bus_write ) begin
             if( vreg_sel  ) sf_vreg_wr  <= 1'b1;
             if( vreg_sel && vreg_k == 6'h04 ) sf_cmd_wr   <= 1'b1;  // COMMAND
@@ -674,23 +689,35 @@ end
 //   A-C : pc_max upper 12 bits
 //   D   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
 //   E-F : INTSTATE sticky-OR
+// View map (rev7). rev6 proved the interrupt infrastructure is fully alive:
+// the frame counter RAM[0x0406] advances, so the QINT chain runs and the
+// palette flush executes -- it just finds an empty queue. Both sound-queue
+// indices sit at 0. So the game's own logic never asks for anything, which
+// points at the self-test verdict it recorded at boot.
+//   0-3 : RAM[0x0400] SELF-TEST RESULT (0 pass / 1 pattern / 2 address)
+//   4-7 : RAM[0x044E] dispatcher task count
+//   8-B : RAM[0x1104] raster-split index
+//   C-D : RAM[0x0406] frame counter (confirms the chain is still running)
+//   E   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
+//   F   : sticky {ints_b6, ints_b2, cmd_wr, inten_wr}
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_fbe[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_fbe[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_fbe[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_fbe[15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_406[3:0] } :
-    view == 4'h5 ? { 4'h5, dbg_406[7:4] } :
-    view == 4'h6 ? { 4'h6, dbg_407[3:0] } :
-    view == 4'h7 ? { 4'h7, dbg_407[7:4] } :
-    view == 4'h8 ? { 4'h8, dbg_408[3:0] } :
-    view == 4'h9 ? { 4'h9, dbg_408[7:4] } :
-    view == 4'hA ? { 4'hA, pc_max_hi[ 3: 0] } :
-    view == 4'hB ? { 4'hB, pc_max_hi[ 7: 4] } :
-    view == 4'hC ? { 4'hC, pc_max_hi[11: 8] } :
-    view == 4'hD ? { 4'hD, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
-    view == 4'hE ? { 4'hE, dbg_intsticky[3:0] } :
-                   { 4'hF, dbg_intsticky[7:4] };
+    view == 4'h0 ? { 4'h0, dbg_400[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_400[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_400[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_400[15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_44e[ 3: 0] } :
+    view == 4'h5 ? { 4'h5, dbg_44e[ 7: 4] } :
+    view == 4'h6 ? { 4'h6, dbg_44e[11: 8] } :
+    view == 4'h7 ? { 4'h7, dbg_44e[15:12] } :
+    view == 4'h8 ? { 4'h8, dbg_1104[ 3: 0] } :
+    view == 4'h9 ? { 4'h9, dbg_1104[ 7: 4] } :
+    view == 4'hA ? { 4'hA, dbg_1104[11: 8] } :
+    view == 4'hB ? { 4'hB, dbg_1104[15:12] } :
+    view == 4'hC ? { 4'hC, dbg_406[3:0] } :
+    view == 4'hD ? { 4'hD, dbg_406[7:4] } :
+    view == 4'hE ? { 4'hE, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
+                   { 4'hF, dbg_intsticky[6], dbg_intsticky[2],
+                           sf_cmd_wr, sf_inten_wr };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
