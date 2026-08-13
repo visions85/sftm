@@ -587,6 +587,13 @@ reg [23:0] pc_at_1104;
 reg [15:0] dbg_44a;
 reg [ 7:0] tick_cnt, wrap_cnt;
 reg        task_ever;
+// MAME reference run (v0.289, same ROM) established the palette call chain:
+//   0x829908 boot task -> 0x82A26E -> 0x82A30E -> 0x82A498 -> 0x82A5F0,
+// where 0x82A5F0 writes 0x584000+ at frame 5. task_ever proves the core
+// reaches the first stage, so these flag which link it stops at. 256-byte
+// granularity is enough to separate the four stages.
+reg        a2_ever, a3_ever, a4_ever, a5_ever;
+reg [23:0] pc_now2;
 // pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
 // cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
 // without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
@@ -622,6 +629,7 @@ always @(posedge clk) begin
         dbg_400 <= 0; dbg_44e <= 0; dbg_1104 <= 0;
         pc_at_ack <= 24'd0; w1104_cnt <= 8'd0; pc_at_1104 <= 24'd0;
         dbg_44a <= 16'd0; tick_cnt <= 8'd0; wrap_cnt <= 8'd0; task_ever <= 1'b0;
+        { a2_ever, a3_ever, a4_ever, a5_ever } <= 4'd0; pc_now2 <= 24'd0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -685,6 +693,11 @@ always @(posedge clk) begin
             && wrap_cnt != 8'hFF ) wrap_cnt <= wrap_cnt + 8'd1;
         // did execution ever reach the boot task at 0x829908?
         if( pc_live[23:12] == 12'h829 ) task_ever <= 1'b1;
+        if( pc_live[23:8] == 16'h82A2 ) a2_ever <= 1'b1;
+        if( pc_live[23:8] == 16'h82A3 ) a3_ever <= 1'b1;
+        if( pc_live[23:8] == 16'h82A4 ) a4_ever <= 1'b1;
+        if( pc_live[23:8] == 16'h82A5 ) a5_ever <= 1'b1;
+        if( diag_cnt == {29{1'b1}} ) pc_now2 <= pc_live;
         if( ram_cpu_we_hi && ram_addr == 14'h0882 ) begin
             dbg_1104[15:8] <= cpu_do16[15:8];
             pc_at_1104     <= pc_live;
@@ -706,39 +719,38 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev13) -- the tick probe.
+// Debug view map (rev14) -- pinpoint the palette call chain.
 //
-// Disassembly trace: every piece of game activity depends on one path.
-//   QINT handler --(only when RAM[0x1104]==6)--> 0x80131C
-//        |-- jsr 0x800F24   flush the deferred palette queue
-//        |-- jsr 0x8004B6   read inputs, feed the event queue
-//        \-- addq.w #1,$44a.w   THE TIMER TICK  (0x801332)
-// The main loop's timer walker (0x8006BA) compares timestamps against that
-// tick, and 0x8005C4 installs the boot task at 0x829908. A frozen tick
-// therefore explains every remaining symptom at once.
-//
-//   0-3 : RAM[0x44A] tick value       4-5 : writes to it
-//   6-7 : wrap-branch count (writes of 0 to RAM[0x1104])
-//   8-9 : total writes to RAM[0x1104]
-//   A   : sticky {task_ever(PC in 0x829xxx), pal_wr, snd_wr, nvram_wr}
-//   B-D : pc_max upper 12 bits        E-F : scanline_hit count
+// A MAME v0.289 reference run on the same ROM settled several things: the
+// zero task count is NORMAL (MAME shows it too), the self-test passes in
+// both, the tick advances in both, and INTENABLE is 0x0144 in both. The one
+// divergence is the palette, which MAME writes at FRAME 5 from 0x82A5F0 via
+//   0x829908 (boot task) -> 0x82A26E -> 0x82A30E -> 0x82A498 -> 0x82A5F0
+// Hardware already shows the core enters 0x829xxx, so these flags say which
+// link it fails to reach.
+//   0   : {task_ever(829), a2(82A2), a3(82A3), a4(82A4)}
+//   1   : {a5(82A5 = the writer), pal_wr, snd_wr, nvram_wr}
+//   2-7 : pc_now (live PC, re-latched once per view cycle)
+//   8-A : pc_max upper 12 bits
+//   B-C : tick write count      D-E : wrap-branch count
+//   F   : scanline_hit high nibble
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_44a[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_44a[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_44a[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_44a[15:12] } :
-    view == 4'h4 ? { 4'h4, tick_cnt[3:0] } :
-    view == 4'h5 ? { 4'h5, tick_cnt[7:4] } :
-    view == 4'h6 ? { 4'h6, wrap_cnt[3:0] } :
-    view == 4'h7 ? { 4'h7, wrap_cnt[7:4] } :
-    view == 4'h8 ? { 4'h8, w1104_cnt[3:0] } :
-    view == 4'h9 ? { 4'h9, w1104_cnt[7:4] } :
-    view == 4'hA ? { 4'hA, task_ever, sf_pal_wr, sf_snd_wr, sf_nvram_wr } :
-    view == 4'hB ? { 4'hB, pc_max_hi[ 3: 0] } :
-    view == 4'hC ? { 4'hC, pc_max_hi[ 7: 4] } :
-    view == 4'hD ? { 4'hD, pc_max_hi[11: 8] } :
-    view == 4'hE ? { 4'hE, dbg_scanhits[3:0] } :
+    view == 4'h0 ? { 4'h0, task_ever, a2_ever, a3_ever, a4_ever } :
+    view == 4'h1 ? { 4'h1, a5_ever, sf_pal_wr, sf_snd_wr, sf_nvram_wr } :
+    view == 4'h2 ? { 4'h2, pc_now2[ 3: 0] } :
+    view == 4'h3 ? { 4'h3, pc_now2[ 7: 4] } :
+    view == 4'h4 ? { 4'h4, pc_now2[11: 8] } :
+    view == 4'h5 ? { 4'h5, pc_now2[15:12] } :
+    view == 4'h6 ? { 4'h6, pc_now2[19:16] } :
+    view == 4'h7 ? { 4'h7, pc_now2[23:20] } :
+    view == 4'h8 ? { 4'h8, pc_max_hi[ 3: 0] } :
+    view == 4'h9 ? { 4'h9, pc_max_hi[ 7: 4] } :
+    view == 4'hA ? { 4'hA, pc_max_hi[11: 8] } :
+    view == 4'hB ? { 4'hB, tick_cnt[3:0] } :
+    view == 4'hC ? { 4'hC, tick_cnt[7:4] } :
+    view == 4'hD ? { 4'hD, wrap_cnt[3:0] } :
+    view == 4'hE ? { 4'hE, wrap_cnt[7:4] } :
                    { 4'hF, dbg_scanhits[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
