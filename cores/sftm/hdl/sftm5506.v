@@ -296,25 +296,36 @@ end
 // ---------------------------------------------------------------------------
 // engine
 // ---------------------------------------------------------------------------
-localparam [3:0]
-    E_IDLE  = 4'd0,
-    E_VOICE = 4'd1,
-    E_ADDR1 = 4'd2,
-    E_ADDR2 = 4'd3,
-    E_WAITF = 4'd4,
-    E_INTERP= 4'd5,
-    E_FILT1 = 4'd6,
-    E_FILT2 = 4'd7,
-    E_FILT3 = 4'd8,
-    E_FILT4 = 4'd9,
-    E_ENV   = 4'd10,
-    E_ACCUM = 4'd11,
-    E_LOOP  = 4'd12,
-    E_NEXT  = 4'd13,
-    E_OUT   = 4'd14;
+localparam [4:0]
+    E_IDLE  = 5'd0,
+    E_VOICE = 5'd1,
+    E_ADDR1 = 5'd2,
+    E_ADDR2 = 5'd3,
+    E_WAITF = 5'd4,
+    E_INTERP= 5'd5,
+    // Each filter pole is split into a multiply stage (xxA) and an
+    // accumulate stage (xxB). Combined with the pre-latched coefficients
+    // below this keeps the 32:1 voice-array muxes and the multiplier off
+    // the same path -- that combination was the design's critical path
+    // (vn -> fsamp, -3.69 ns) during Phase 4 bring-up.
+    E_F1A   = 5'd6,  E_F1B = 5'd7,
+    E_F2A   = 5'd8,  E_F2B = 5'd9,
+    E_F3A   = 5'd10, E_F3B = 5'd11,
+    E_F4A   = 5'd12, E_F4B = 5'd13,
+    E_ENV   = 5'd14,
+    E_ACCUM = 5'd15,
+    E_LOOP  = 5'd16,
+    E_NEXT  = 5'd17,
+    E_OUT   = 5'd18;
 
-reg [3:0]  estate;
+reg [4:0]  estate;
 reg [4:0]  vn;
+// per-voice values latched once at E_VOICE so the filter stages read plain
+// registers instead of 32:1 muxes indexed by vn
+reg [15:0] k1_r, k2_r;
+reg signed [31:0] o1_r, o2a_r, o2b_r, o3a_r, o3b_r, o4_r;
+reg [ 1:0] lp_r;
+reg signed [45:0] prod;      // multiply stage output
 reg signed [31:0] acc_l, acc_r;
 reg [31:0] accum;
 reg [15:0] ctrl;
@@ -442,6 +453,12 @@ always @(posedge clk) begin
             ctrl   <= (v_start[vn] == v_end[vn]) ? v_control[vn] | 16'h0001
                                                  : v_control[vn];
             accum  <= v_accum[vn];
+            // snapshot everything the filter stages need
+            k1_r <= v_k1[vn];  k2_r <= v_k2[vn];  lp_r <= v_control[vn][9:8];
+            o1_r <= v_o1n1[vn];
+            o2a_r<= v_o2n1[vn]; o2b_r<= v_o2n2[vn];
+            o3a_r<= v_o3n1[vn]; o3b_r<= v_o3n2[vn];
+            o4_r <= v_o4n1[vn];
             estate <= E_ADDR1;
         end
         E_ADDR1: begin
@@ -493,35 +510,57 @@ always @(posedge clk) begin
                      + val2 * $signed({21'd0, frac}) ) >>> 11;
             accum <= ctrl[CR_DIR] ? accum - {15'd0, v_freq[vn]}
                                   : accum + {15'd0, v_freq[vn]};
-            estate <= E_FILT1;
+            estate <= E_F1A;
         end
-        // 4-pole filter (:556): poles 1/2 always low-pass with K1
-        E_FILT1: begin
-            fsamp  <= f_lp(fsamp, v_k1[vn], v_o1n1[vn]);
-            estate <= E_FILT2;
+        // 4-pole filter (:556): poles 1/2 always low-pass with K1.
+        // xxA computes the product only; xxB does the shift/add and the
+        // pole write-back. mulhi()/lp_add()/hp_add() mirror apply_lowpass
+        // and apply_highpass exactly, including truncating division.
+        E_F1A: begin
+            prod   <= $signed({2'b0, k1_r[15:4]}) * (fsamp - o1_r);
+            estate <= E_F1B;
         end
-        E_FILT2: begin
-            v_o1n1[vn] <= fsamp;
-            fsamp  <= f_lp(fsamp, v_k1[vn], v_o2n1[vn]);
-            estate <= E_FILT3;
+        E_F1B: begin
+            fsamp  <= divt(prod, 4'd12) + o1_r;
+            estate <= E_F2A;
         end
-        E_FILT3: begin
-            v_o2n2[vn] <= v_o2n1[vn];
+        E_F2A: begin
+            v_o1n1[vn] <= fsamp;                        // update_pole (:560)
+            prod   <= $signed({2'b0, k1_r[15:4]}) * (fsamp - o2a_r);
+            estate <= E_F2B;
+        end
+        E_F2B: begin
+            fsamp  <= divt(prod, 4'd12) + o2a_r;
+            estate <= E_F3A;
+        end
+        E_F3A: begin
+            v_o2n2[vn] <= o2a_r;                        // update_2_pole (:564)
             v_o2n1[vn] <= fsamp;
-            case( ctrl[9:8] )                          // get_lp (:187)
-                2'b00:   fsamp <= f_hp(fsamp, v_k2[vn], v_o3n1[vn], v_o2n2[vn]);
-                2'b01:   fsamp <= f_lp(fsamp, v_k1[vn], v_o3n1[vn]);  // LP3
-                default: fsamp <= f_lp(fsamp, v_k2[vn], v_o3n1[vn]);  // LP4+
-            endcase
-            estate <= E_FILT4;
+            // pole 3: LP with K1 (LP3), LP with K2 (LP4/LP3|LP4), else HP K2
+            prod <= lp_r == 2'b00 ? $signed({2'b0, k2_r[15:4]}) * o3a_r
+                  : lp_r == 2'b01 ? $signed({2'b0, k1_r[15:4]}) * (fsamp - o3a_r)
+                  :                 $signed({2'b0, k2_r[15:4]}) * (fsamp - o3a_r);
+            estate <= E_F3B;
         end
-        E_FILT4: begin
-            v_o3n2[vn] <= v_o3n1[vn];
+        E_F3B: begin
+            fsamp  <= lp_r == 2'b00
+                    ? fsamp - o2b_r + divt(prod, 4'd13) + divt({{14{o3a_r[31]}}, o3a_r}, 4'd1)
+                    : divt(prod, 4'd12) + o3a_r;
+            estate <= E_F4A;
+        end
+        E_F4A: begin
+            v_o3n2[vn] <= o3a_r;
             v_o3n1[vn] <= fsamp;
-            case( ctrl[9:8] )
-                2'b00, 2'b01: fsamp <= f_hp(fsamp, v_k2[vn], v_o4n1[vn], v_o3n2[vn]);
-                default:      fsamp <= f_lp(fsamp, v_k2[vn], v_o4n1[vn]);
-            endcase
+            // pole 4: HP with K2 for lp modes 00/01, else LP with K2
+            prod <= (lp_r == 2'b00 || lp_r == 2'b01)
+                  ? $signed({2'b0, k2_r[15:4]}) * o4_r
+                  : $signed({2'b0, k2_r[15:4]}) * (fsamp - o4_r);
+            estate <= E_F4B;
+        end
+        E_F4B: begin
+            fsamp  <= (lp_r == 2'b00 || lp_r == 2'b01)
+                    ? fsamp - o3b_r + divt(prod, 4'd13) + divt({{14{o4_r[31]}}, o4_r}, 4'd1)
+                    : divt(prod, 4'd12) + o4_r;
             estate <= E_ENV;
         end
         E_ENV: begin
