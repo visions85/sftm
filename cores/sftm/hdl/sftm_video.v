@@ -152,8 +152,18 @@ wire xfer_stb = vreg_wr && ridx == R_TRANSFER;
 reg [8:0] hcnt, vcnt;
 wire      line_end = hcnt == 9'd507;
 
-wire scanline_hit = pxl_cen && line_end &&
-                    vcnt == vregs[R_INTSCANLINE][8:0];
+// MAME arms the scanline interrupt with time_until_pos(VIDEO_INTSCANLINE)
+// (itech32_v.cpp:383/1399), and screen_device::time_until_pos normalises the
+// target modulo the screen height -- so a value past the end of the frame
+// still fires, one frame's worth later. An exact compare here would silently
+// never match and stall the game's whole raster-split chain (the QINT handler
+// reloads INTSCANLINE from a table every split, so one bad value would wedge
+// it permanently). Two conditional subtracts cover any plausible value.
+wire [15:0] isl_raw = vregs[R_INTSCANLINE];
+wire [15:0] isl_w1  = isl_raw >= 16'd286 ? isl_raw - 16'd286 : isl_raw;
+wire [15:0] isl_w2  = isl_w1  >= 16'd286 ? isl_w1  - 16'd286 : isl_w1;
+
+wire scanline_hit = pxl_cen && line_end && vcnt == isl_w2[8:0];
 
 integer i;
 always @(posedge clk) begin
