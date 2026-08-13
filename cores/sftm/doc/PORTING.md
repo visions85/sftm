@@ -563,3 +563,70 @@ prefetch now completes all 384 on real SDRAM.
 
 Bug B is unchanged, as expected -- the isolated-pixel fraction is still
 97.0-97.5% against MAME's 0.6%. The two really are independent.
+
+## Bug B found and fixed: overlapping SDRAM buses (2026-08-13)
+
+The glyph checkerboard was a **memory map error, not a blitter bug**.
+
+`jtframe_rom_2slots` and `jtframe_ram1_3slots` both default `SLOTn_OFFSET`
+to zero, and `cfg/mem.yaml` declared **no offsets at all**. Every bus in a
+bank therefore started at word 0, and the ones sharing a bank overlapped:
+
+| bank | buses | result |
+|------|-------|--------|
+| 0 | `main` @0, `snd` @0 | the 6809 was fetching the 68020's program ROM |
+| 3 | `vram` @0, `grm3` @0 | the blitter overwrote the glyph ROM in place; `grm3` reads returned framebuffer pixels |
+
+### What finally exposed it
+
+A MAME register tap on the *real* text draws. Those blits carry `bank=2`,
+so the GROM address is `0x207DE86` -- above `0x2000000`, which means the
+glyph data comes from **`grm3`**, not from `grom` in bank 2 where the
+background lives. That is precisely the asymmetry the symptom showed all
+along: the background is correct because `grom` is the only bus in bank 2,
+so its zero offset happens to be right.
+
+Everything else then falls out:
+- glyph pixels carried valid palette pens because they *were* framebuffer
+  pixels, re-read as RLE data;
+- the VRAM self-test passed because it only ever checked self-consistency;
+- simulation never reproduced it because every bench ties `grm3_ok` high and
+  `grm3_data` to zero, and bank offsets are not modelled in simulation at
+  all.
+
+### The fix
+
+`grm3` keeps offset 0 -- that is where the ROM download writes it. VRAM
+moves above it instead. `slot0_offset` is hardwired to zero in the generated
+wrapper and this generator cannot express a non-zero offset, so the bias
+lives in our own HDL and the buses are widened to make room:
+
+| bus | addr_width | bias |
+|-----|-----------|------|
+| `vram` / `vramrd` | 21 -> 22 (4 MB) | `VRAM_ORG` = `0x40000` words (512 KB, clear of grm3) |
+| `snd` | 18 -> 21 (2 MB) | `SND_ORG` = `0x100000` bytes (clear of maindata) |
+
+The ROM download layout is unchanged -- same `JTFRAME_BAn_START` values,
+same region sizes -- so **the MRA does not need regenerating**. Only the
+slot addressing moved.
+
+The sound overlap is the same class of bug, found while fixing this one. It
+means sound has never actually worked on hardware.
+
+### Lesson
+
+Two independent things hid this for many cycles:
+
+1. **The benches stubbed the broken path.** `grm3_ok` tied high and
+   `grm3_data` tied to zero meant the glyph source was never simulated even
+   once. A stub that never fails is indistinguishable from a path that
+   works.
+2. **Self-consistent tests prove less than they appear to.** The rev15 VRAM
+   self-test wrote and read through the same address computation and
+   reported 0 mismatches, which I read as "the memory path is fine". It only
+   ever showed that VRAM agreed with itself; it could not see that VRAM was
+   sitting on top of somebody else's data.
+
+Widening `rom_addr` also required widening `last_addr` in `sftm_snd`;
+leaving it at 18 bits truncated the address-stable comparison and broke
+voice playback, which the phase 3 bench caught immediately.
