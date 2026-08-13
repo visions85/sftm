@@ -123,7 +123,8 @@ module sftm_main #(
     input      [15:0] dbg_lastack,      // last value the CPU wrote to INTSTATE
     input      [ 7:0] dbg_ackcnt,       // count of INTACK writes
     input      [ 7:0] dbg_b2rise,
-    input      [ 7:0] dbg_vtest,       // count of INTSTATE bit2 rising edges
+    input      [ 7:0] dbg_vtest,
+    input      [ 7:0] dbg_rletp,       // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
 
@@ -722,7 +723,7 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev15) -- palette chain + VRAM SDRAM self-test.
+// Debug view map (rev16) -- RLE transparent-skip census.
 //
 // A MAME v0.289 reference run on the same ROM settled several things: the
 // zero task count is NORMAL (MAME shows it too), the self-test passes in
@@ -754,8 +755,8 @@ assign st_dout =
     view == 4'hA ? { 4'hA, pc_max_hi[11: 8] } :
     view == 4'hB ? { 4'hB, tick_cnt[3:0] } :
     view == 4'hC ? { 4'hC, tick_cnt[7:4] } :
-    view == 4'hD ? { 4'hD, wrap_cnt[3:0] } :
-    view == 4'hE ? { 4'hE, wrap_cnt[7:4] } :
+    view == 4'hD ? { 4'hD, dbg_rletp[3:0] } :
+    view == 4'hE ? { 4'hE, dbg_rletp[7:4] } :
                    { 4'hF, dbg_scanhits[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL

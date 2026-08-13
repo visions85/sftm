@@ -107,7 +107,8 @@ module sftm_video(
     output reg [15:0] st_lastack,     // last value written to INTSTATE (INTACK)
     output reg [ 7:0] st_ackcnt,      // saturating count of INTACK writes
     output reg [ 7:0] st_b2rise,      // saturating count of INTSTATE bit2 rises
-    output     [ 7:0] st_vtest        // startup VRAM write/readback self-test
+    output     [ 7:0] st_vtest,       // startup VRAM write/readback self-test
+    output     [ 7:0] st_rletp        // transparent skips per 256 RLE literal px
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -271,6 +272,7 @@ sftm_blit u_blit(
     .done_pulse ( blit_done     ),
     .st_state   ( blit_state    ),
     .st_waiting ( blit_waiting  ),
+    .st_rletp   ( st_rletp      ),
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06
     .r_width    ( vregs[6'h07]  ),  // 0x0e

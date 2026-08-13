@@ -44,6 +44,13 @@ module sftm_blit(
                                     // -> VIDEO_INTSTATE |= VIDEOINT_BLITTER
     output     [4:0]  st_state,     // bring-up: live FSM state
     output            st_waiting,   // bring-up: stalled on a GROM fetch
+    // Diagnostic: transparent skips per 256 RLE literal pixels. The screen
+    // shows ~50% of glyph pixels missing while the raw-path background (same
+    // GROM fetcher, same VRAM write path) renders correctly, so the fault is
+    // confined to the RLE path plus TRANSPARENT. This splits it: ~128 means
+    // half the fetched source bytes read as 0xFF and are skipped, ~0 means the
+    // data is right and the writes are lost downstream.
+    output reg [7:0]  st_rletp,
 
     // video registers, valid at start (indices are byte offset / 2)
     input      [15:0] r_flags,      // 0x06 VIDEO_TRANSFER_FLAGS
@@ -314,6 +321,24 @@ reg [15:0] shrow[0:511];
 reg [15:0] shrow_q;
 
 wire vw_free = !vw_req || vw_rdy;
+
+// transparent-skip census over a 256-pixel window of RLE literal runs
+reg [7:0] lit_win, tp_win;
+wire      lit_step  = state == S_RLE_PIX && rle_phase == 2'd1 && rle_lit
+                      && fetch_ok && vw_free;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        lit_win <= 8'd0; tp_win <= 8'd0; st_rletp <= 8'd0;
+    end else if( lit_step ) begin
+        lit_win <= lit_win + 8'd1;
+        if( lit_win == 8'hFF ) begin
+            st_rletp <= tp_win + (pix_transp ? 8'd1 : 8'd0);
+            tp_win   <= 8'd0;
+        end else if( pix_transp )
+            tp_win <= tp_win + 8'd1;
+    end
+end
 
 // ---------------------------------------------------------------------------
 // Main FSM
