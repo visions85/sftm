@@ -486,3 +486,61 @@ Two hypotheses were stated confidently here and then killed by measurement
 exactly MAME's text colour) and "prefetch starvation explains it" (killed
 by the x-distribution above). Measure the artifact's *shape* before
 theorising about mechanism; an x-histogram would have saved a full cycle.
+
+## Bug A fixed: two pixels per SDRAM access (2026-08-13)
+
+The prefetch budget is fixed by arithmetic: 384 words per line, a line is
+508 x 6 = 3048 clk, so 7.9 clk per word. **Buffering cannot fix this** --
+more line buffers absorb variance, but the average demand is 384 words per
+line no matter how many there are. The per-access cost had to come down.
+
+Two changes, in order of how much they bought:
+
+1. **32-bit reads (the real fix).** `cfg/mem.yaml` declares a second bus,
+   `vramrd`: read-only, `data_width: 32`, `offset: 0` -- aliased onto the
+   same 2 MB as `vram`. One access returns a pixel pair, so a line costs 192
+   accesses instead of 384 and the budget doubles to 15.9 clk/word. Writes
+   still use the 16-bit rw `vram` port. The read slot's cache holds two
+   entries and the prefetch sweeps linearly, so coherence with blitter
+   writes is a non-issue: an address is long evicted before the next frame
+   reads it. `sftm_vram` unpacks each pair over two cycles (`A_PFWR`) and
+   discards the low half of the first pair when `line_base` is odd.
+
+2. **`settle` 2 -> 1.** `jtframe_ram_rq` assigns `data_ok <= 0` on the same
+   cycle it sees the `cs` rising edge, so `ok` is guaranteed low from the
+   second cycle; waiting a third was a wasted clock.
+
+Latency at which the whole 384-pixel line is still served:
+
+| version                | holds to | detail                        |
+|------------------------|----------|-------------------------------|
+| before                 | 3 clk    | 380/384 at 3, 179 at 12       |
+| `settle` fix only      | 3 clk    | 384/384 at 3, 190 at 12       |
+| with 32-bit reads      | 7 clk    | 384/384 to 7, 380 at 9, 304 at 13 |
+
+### A_GAP is not redundant -- do not remove it again
+
+The first attempt also deleted `A_GAP`, reasoning that `A_IDLE` already
+provides the one `cs`-low cycle the slot needs. That is true but beside the
+point: `wf_pop` and `vr_ack` are **registered**, so the write-FIFO pop and
+the read requester's index advance only take effect the cycle *after*
+`A_WAIT` completes. `A_GAP` was absorbing that latency. Without it `A_IDLE`
+re-issued the stale `wf_head`, producing 1556 SDRAM writes where 456 were
+expected, and the VRAM self-test went from 0 mismatches to 15. The reason is
+now a comment in the source.
+
+This was caught only because `tb_rle_long` checks the *exact* write count
+and the self-test result, not just the final pixels. A test that asserted
+"the pixels are right" would have passed -- the blit output was still
+correct; it was the self-test and the write count that exposed it.
+
+### Generator note
+
+`jtframe mem` renders a bus `offset` as `<offset>[SDRAMW-2:0]`, so
+`offset: 0` emits `0[SDRAMW-2:0]` -- a bit-select on a bare literal, which
+Icarus rejects outright. `jtframe mem` also rewrites the wrapper on every
+invocation, so a pre-build patch cannot survive. If Quartus also rejects it,
+the options are an offset expression that is a bare identifier evaluating to
+zero (`PROM_START` is 0 unless `JTFRAME_PROM_START` is defined, but that is
+obscure and fragile), or splitting generation from synthesis in the build
+flow.
