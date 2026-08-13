@@ -66,14 +66,14 @@ module sftm_video(
     input             grm3_ok,
 
     // VRAM SDRAM bus
-    output     [20:1] vram_addr,
+    output     [21:1] vram_addr,
     input      [15:0] vram_data,
     output     [15:0] vram_din,
     output     [ 1:0] vram_dsn,
     output            vram_we,
     output            vram_cs,
     input             vram_ok,
-    output     [20:2] vramrd_addr,   // 32-bit read alias for the prefetch
+    output     [21:2] vramrd_addr,   // 32-bit read alias for the prefetch
     input      [31:0] vramrd_data,
     output            vramrd_cs,
     input             vramrd_ok,

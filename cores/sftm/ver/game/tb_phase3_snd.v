@@ -65,13 +65,13 @@ end
 // ---------------------------------------------------------------------------
 // snd ROM model (SDRAM bank 0 style: 8-bit, ok latency)
 // ---------------------------------------------------------------------------
-wire [17:0] rom_addr;
+wire [20:0] rom_addr;   // biased by SND_ORG (see cfg/mem.yaml)
 wire        rom_cs;
 reg  [ 7:0] rom[0:262143];
 reg         rom_ok = 0;
-reg  [17:0] ok_addr = 0;
+reg  [20:0] ok_addr = 0;
 reg  [ 2:0] ok_cnt = 0;
-wire [ 7:0] rom_data = rom[ok_addr];
+wire [ 7:0] rom_data = rom[ok_addr[17:0]];
 
 always @(posedge clk) begin
     if( !rom_cs ) begin

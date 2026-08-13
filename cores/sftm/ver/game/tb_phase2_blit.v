@@ -184,18 +184,18 @@ end
 // ---------------------------------------------------------------------------
 // VRAM SDRAM model (jtframe-ish rw bus): init 0x1111
 // ---------------------------------------------------------------------------
-wire [20:1] vram_addr;
+wire [21:1] vram_addr;
 wire [15:0] vram_din;
 wire [ 1:0] vram_dsn;
 wire        vram_we, vram_cs;
-reg  [15:0] vmem[0:1048575];
+reg  [15:0] vmem[0:2097151];   // 4 MB window: VRAM is biased to +0x40000
 reg         vram_ok = 0;
-reg  [20:1] vok_addr;
+reg  [21:1] vok_addr;
 reg  [ 1:0] vok_cnt;
 reg  [15:0] vram_data_r;
 wire [15:0] vram_data = vram_data_r;
 
-initial for( k=0; k<1048576; k=k+1 ) vmem[k] = 16'h1111;
+initial for( k=0; k<2097152; k=k+1 ) vmem[k] = 16'h1111;
 
 always @(posedge clk) begin
     if( !vram_cs ) begin
@@ -217,10 +217,10 @@ end
 // vramrd: read-only 32-bit alias of vmem (mem.yaml offset 0); one access
 // returns the pixel pair {vmem[2j+1], vmem[2j]}.
 localparam [7:0] RDLAT = 8'd3;
-wire [20:2] vramrd_addr;
+wire [21:2] vramrd_addr;
 wire        vramrd_cs;
 reg         vramrd_ok = 0;
-reg  [20:2] rok_addr;
+reg  [21:2] rok_addr;
 reg  [ 7:0] rok_cnt;
 reg  [31:0] vramrd_data_r;
 wire [31:0] vramrd_data = vramrd_data_r;
@@ -302,8 +302,10 @@ sftm_video u_video(
 // ---------------------------------------------------------------------------
 // checks
 // ---------------------------------------------------------------------------
-function [19:0] vp0(input [9:0] yy, input [8:0] xx);
-    vp0 = { 1'b0, yy, xx };            // plane 0 word index {plane,y,x}
+function [21:0] vp0(input [9:0] yy, input [8:0] xx);
+    // plane 0 word index {plane,y,x}, biased by VRAM_ORG (VRAM sits above
+    // grm3 in bank 3 -- see cfg/mem.yaml)
+    vp0 = 22'h40000 + { 1'b0, yy, xx };
 endfunction
 
 reg seen_scan = 0;

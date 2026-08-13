@@ -38,8 +38,15 @@ sdram:
         - name: main          # 68EC020 program, 32-bit ("prog" is reserved by JTFRAME for the download port)
           addr_width: 20       # 1 MB -> port [19:2]
           data_width: 32
+        # NOTE: jtframe_rom_2slots defaults SLOT1_OFFSET to 0, and this
+        # generator cannot express a non-zero offset (see the vramrd comment
+        # below), so every bus in a bank starts at word 0 and they OVERLAP.
+        # The download puts soundcpu at bank-0 byte 0x100000, right after
+        # maindata's 1 MB, so sftm_snd biases its address by that amount and
+        # the bus is widened to 2 MB to make room. Without the bias the 6809
+        # was fetching the 68020's program ROM.
         - name: snd           # 6809 program, 8-bit
-          addr_width: 18       # 256 KB -> port [17:0]
+          addr_width: 21       # 2 MB window -> port [20:0]; data at +0x100000
           data_width: 8
     # ---- bank 1: ES5506 sample ROM (16-bit words) -----------------------
     - buses:
@@ -57,8 +64,14 @@ sdram:
     - buses:
         # VRAM: 2 planes x 512x1024 x 16-bit pen (pixel|color, as MAME stores
         # it -- see doc/PHASE2-DESIGN.md). 2 MB cannot fit in BRAM.
+        # grm3 sits at bank-3 word 0 (that is where the download writes it)
+        # and its slot offset is 0, so VRAM must NOT also start at 0 -- it did,
+        # and the blitter was overwriting the glyph ROM while grm3 reads
+        # returned framebuffer pixels. That was the glyph checkerboard.
+        # sftm_vram biases VRAM by VRAM_ORG (0x40000 words = 512 KB, clear of
+        # grm3) and the bus is widened to 4 MB to make room.
         - name: vram
-          addr_width: 21       # 2 MB -> port [20:1]
+          addr_width: 22       # 4 MB window -> port [21:1]; VRAM at +0x40000
           data_width: 16
           rw: true
         # Second, READ-ONLY 32-bit view of the same 2 MB, for the scanline
@@ -71,7 +84,7 @@ sdram:
         # two entries and the prefetch sweeps linearly, so any address is long
         # evicted before the next frame reads it again.
         - name: vramrd
-          addr_width: 21       # 2 MB -> port [20:2] at 32 bits
+          addr_width: 22       # 4 MB window -> port [21:2] at 32 bits
           data_width: 32
           # offset must be ZERO to alias the vram bus, but `jtframe mem`
           # renders it as "<offset>[SDRAMW-2:0]", so a literal 0 emits

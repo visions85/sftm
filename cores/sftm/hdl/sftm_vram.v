@@ -35,7 +35,7 @@ module sftm_vram(
     input             clk,
 
     // SDRAM rw bus (jtframe `vram` bus, bank 3)
-    output reg [20:1] vram_addr,
+    output reg [21:1] vram_addr,
     input      [15:0] vram_data,     // read data
     output reg [15:0] vram_din,      // write data
     output reg [ 1:0] vram_dsn,      // byte disables (active low select)
@@ -48,7 +48,7 @@ module sftm_vram(
     // pixels: 192 accesses per line instead of 384, doubling the per-word
     // budget from 7.9 to 15.9 clk. Writes still go through the 16-bit rw
     // `vram` port above.
-    output reg [20:2] vramrd_addr,
+    output reg [21:2] vramrd_addr,
     input      [31:0] vramrd_data,
     output reg        vramrd_cs,
     input             vramrd_ok,
@@ -80,6 +80,14 @@ module sftm_vram(
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
+
+// Bank 3 holds grm3 (the blitter's extra graphics ROM) at word 0, because
+// that is where the ROM download writes it and its slot offset is 0. This
+// generator cannot express a non-zero slot offset, so VRAM cannot also live
+// at 0 -- it did, and the blitter was overwriting the glyph ROM in place
+// while grm3 reads returned framebuffer pixels. That was the checkerboard.
+// VRAM is therefore biased clear of grm3's 512 KB.
+localparam [20:0] VRAM_ORG = 21'h40000;      // 16-bit words (= 512 KB)
 
 // ---------------------------------------------------------------------------
 // Startup VRAM self-test.
@@ -248,21 +256,21 @@ always @(posedge clk) begin
             vram_we <= 0;
             if( pf_active ) begin
                 owner       <= 2'd0;
-                vramrd_addr <= pf_j;
+                vramrd_addr <= VRAM_ORG[20:1] + pf_j;   // 32-bit word units
                 vramrd_cs   <= 1;
                 settle      <= 0;
                 astate      <= A_WAIT;
             end else if( (tdone ? vr_req : t_rreq) && wf_empty ) begin
                 owner     <= 2'd1;
-                vram_addr <= tdone ? { vr_plane, vr_addr }
-                                   : { 1'b0, (TEST_BASE + {10'd0, ti}) };
+                vram_addr <= VRAM_ORG + (tdone ? { vr_plane, vr_addr }
+                                              : { 1'b0, (TEST_BASE + {10'd0, ti}) });
                 vram_we   <= 0;
                 vram_cs   <= 1;
                 settle    <= 0;
                 astate    <= A_WAIT;
             end else if( !wf_empty ) begin
                 owner     <= 2'd2;
-                vram_addr <= { wf_head[35], wf_head[34:16] };   // {plane, addr}
+                vram_addr <= VRAM_ORG + { wf_head[35], wf_head[34:16] }; // {plane,addr}
                 vram_din  <= wf_head[15:0];
                 vram_dsn  <= 2'b00;
                 vram_we   <= 1;

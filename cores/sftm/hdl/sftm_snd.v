@@ -41,7 +41,7 @@ module sftm_snd(
     input             es_cen,      // 16 MHz enable (ES5506)
 
     // 6809 program ROM (SDRAM bank 0, "snd" bus = MAME soundcpu region)
-    output     [17:0] rom_addr,
+    output     [20:0] rom_addr,
     input      [ 7:0] rom_data,
     output            rom_cs,
     input             rom_ok,
@@ -86,13 +86,19 @@ wire rom_sel   = brom_cs || from_cs;
 
 // ROM data validator: require rom_ok with the address stable for 2+ clks
 // (jtframe_romrq drops ok a cycle after an address change)
-reg [17:0] last_addr;
+reg [20:0] last_addr;   // must match rom_addr's width (biased by SND_ORG)
 reg [ 1:0] addr_stable;
 wire       rom_good = rom_ok && addr_stable == 2'd2;
 
 reg [7:0] bank;      // sound_bank_w (:663)
-assign rom_addr = brom_cs ? 18'h10000 + {bank, A[13:0]}   // region 0x10000+
-                          : {2'd0, A};                    // region == address
+// Bank 0 holds maindata at word 0 and soundcpu right after it, at byte
+// 0x100000. jtframe_rom_2slots defaults SLOT1_OFFSET to 0 and this generator
+// cannot express a non-zero one, so the bias is applied here -- without it
+// the 6809 fetched the 68020's program ROM. See cfg/mem.yaml.
+localparam [20:0] SND_ORG = 21'h100000;
+assign rom_addr = SND_ORG +
+                  ( brom_cs ? 21'h10000 + {7'd0, bank, A[13:0]}  // region 0x10000+
+                            : {7'd0, 2'd0, A} );                 // region == address
 assign rom_cs   = rom_sel;
 
 always @(posedge clk) begin
