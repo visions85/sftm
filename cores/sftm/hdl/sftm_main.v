@@ -654,42 +654,44 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev8). Superseded maps are not kept here -- see the git
-// history; stacking them just made this file misleading.
+// Debug view map (rev9).
 //
-// rev7 measured RAM[0x1104] pinned at 6. Only the QINT handler ever changes
-// it (clears at 6, then +=2), so the SCANLINE interrupt is not firing. The
-// frame counter kept advancing only because the XINT handler also increments
-// it at 0x801384 -- that motion never proved QINT was alive. These views
-// watch the scanline path directly rather than inferring it:
+// rev8 result: the self-test verdict reads 0 (PASS), scanline_hit saturated
+// at 255 and vcnt reaches 285 -- so the scanline compare now fires and the
+// CRT is correct. Yet RAM[0x1104] is still pinned at 6, so the QINT handler
+// still never runs. The break must therefore be in the short chain
+//   scanline_hit -> INTSTATE bit2 -> (AND INTENABLE bit2) -> scan_irq -> IPL3
+// and since the XINT handler demonstrably runs at IPL2 the CPU cannot be
+// refusing a higher level. The prime suspect is INTENABLE losing bit 2:
+// the ROM contains move.w #$20,$500014 at 0x801D06, which would enable
+// neither the scanline (0x04) nor the blitter (0x40) source.
 //
-//   0-3 : INTSCANLINE after modulo reduction -- what the compare actually uses
-//   4-5 : count of scanline_hit pulses; 0 means the compare never matches
-//   6-8 : highest vcnt reached (confirms the CRT counter spans the target)
-//   9   : RAM[0x0400] self-test verdict (0 pass / 1 pattern / 2 address)
-//   A-B : RAM[0x044E] dispatcher task count (measured 0 = no tasks queued)
-//   C-D : RAM[0x1104] raster-split index
-//   E   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
-//   F   : sticky {ints_b6, ints_b2, cmd_wr, inten_wr}
+// So this map restores the two registers rev8 had to drop, keeping just
+// enough of the scanline probes to confirm the compare is still firing.
+//   0-3 : INTENABLE (live)      4-7 : INTSTATE (live)
+//   8-9 : scanline_hit count    A-B : RAM[0x1104] raster index
+//   C   : RAM[0x0400] self-test verdict
+//   D-E : RAM[0x044E] task count
+//   F   : sticky {pal_wr, snd_wr, ints_b2, ints_b6}
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_islmod[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_islmod[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_islmod[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_islmod[15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_scanhits[3:0] } :
-    view == 4'h5 ? { 4'h5, dbg_scanhits[7:4] } :
-    view == 4'h6 ? { 4'h6, dbg_vcntmax[3:0] } :
-    view == 4'h7 ? { 4'h7, dbg_vcntmax[7:4] } :
-    view == 4'h8 ? { 4'h8, 3'd0, dbg_vcntmax[8] } :
-    view == 4'h9 ? { 4'h9, dbg_400[3:0] } :
-    view == 4'hA ? { 4'hA, dbg_44e[3:0] } :
-    view == 4'hB ? { 4'hB, dbg_44e[7:4] } :
-    view == 4'hC ? { 4'hC, dbg_1104[3:0] } :
-    view == 4'hD ? { 4'hD, dbg_1104[7:4] } :
-    view == 4'hE ? { 4'hE, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
-                   { 4'hF, dbg_intsticky[6], dbg_intsticky[2],
-                           sf_cmd_wr, sf_inten_wr };
+    view == 4'h0 ? { 4'h0, dbg_intenable[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_intenable[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_intenable[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_intenable[15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_intstate [ 3: 0] } :
+    view == 4'h5 ? { 4'h5, dbg_intstate [ 7: 4] } :
+    view == 4'h6 ? { 4'h6, dbg_intstate [11: 8] } :
+    view == 4'h7 ? { 4'h7, dbg_intstate [15:12] } :
+    view == 4'h8 ? { 4'h8, dbg_scanhits[3:0] } :
+    view == 4'h9 ? { 4'h9, dbg_scanhits[7:4] } :
+    view == 4'hA ? { 4'hA, dbg_1104[3:0] } :
+    view == 4'hB ? { 4'hB, dbg_1104[7:4] } :
+    view == 4'hC ? { 4'hC, dbg_400[3:0] } :
+    view == 4'hD ? { 4'hD, dbg_44e[3:0] } :
+    view == 4'hE ? { 4'hE, dbg_44e[7:4] } :
+                   { 4'hF, sf_pal_wr, sf_snd_wr,
+                           dbg_intsticky[2], dbg_intsticky[6] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
