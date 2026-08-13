@@ -558,6 +558,13 @@ reg [ 7:0] dbg_406, dbg_407, dbg_408;
 //   0x044E  task count for the dispatcher the main loop calls at 0x800802
 //   0x1104  raster-split index driving the QINT chain (0,2,4,6)
 reg [15:0] dbg_400, dbg_44e, dbg_1104;
+// PC captured at the moment the CPU writes INTSTATE (0x500004). The ack
+// value is 0x04 (VIDEOINT_SCANLINE) and it repeats endlessly while
+// RAM[0x1104] never moves -- but the QINT handler only acks at 0x801304,
+// AFTER it has cleared 0x1104 at 0x8012EC. So the acks are coming from
+// somewhere else: almost certainly a software poll-and-ack wait loop, which
+// would also explain why no interrupt is ever serviced. This names it.
+reg [23:0] pc_at_ack;
 // pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
 // cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
 // without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
@@ -591,6 +598,7 @@ always @(posedge clk) begin
         pc_now <= 0; pc_max_hi <= 0;
         dbg_fbe <= 0; dbg_406 <= 0; dbg_407 <= 0; dbg_408 <= 0;
         dbg_400 <= 0; dbg_44e <= 0; dbg_1104 <= 0;
+        pc_at_ack <= 24'd0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -600,6 +608,9 @@ always @(posedge clk) begin
     end else begin
         diag_cnt <= diag_cnt + 29'd1;
         if( grant && busstate == 2'b00 ) pc_live <= A;
+        // INTSTATE is video register index 1 (byte offsets 0x500004-7)
+        if( grant && bus_write && vreg_sel && A[7:2] == 6'h01 )
+            pc_at_ack <= pc_live;
         // compare against the registered copy, never against A itself: the
         // address bus is on the critical path and a 24-bit comparator there
         // would cost timing the design does not have
@@ -657,37 +668,40 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev10).
+// Debug view map (rev11).
 //
-// rev9 refuted the INTENABLE theory: INTENABLE reads 0x0144 (scanline AND
-// blitter both enabled) while INTSTATE reads 0x0000, its sticky-OR says bit2
-// HAS been set, and scanline_hit is saturated. So the bit is being cleared
-// about as fast as it is set. The only thing that can clear it is a CPU
-// write to 0x500004, so capture those directly: how many, and with what
-// value. b2rise counts how often the bit actually gets set, which separates
-// "set then cleared" from "never set at all".
-//   0-3 : last value written to INTSTATE (INTACK data)
-//   4-5 : count of INTACK writes         6-7 : count of INTSTATE bit2 rises
-//   8-9 : scanline_hit count             A-B : RAM[0x1104] raster index
-//   C-F : INTSTATE live
+// rev10 result: INTSTATE bit2 rising edges saturated, INTACK write count
+// saturated, and the last INTACK value is 0x0004 -- the scanline bit is set
+// and immediately acknowledged, endlessly. Yet RAM[0x1104] never moves, and
+// the QINT handler only acks (0x801304) AFTER clearing 0x1104 (0x8012EC).
+// Both cannot hold, so the acks are not coming from the handler: the game is
+// almost certainly polling INTSTATE and acking in a software wait loop,
+// never taking the interrupt -- which also explains the idle dispatcher,
+// unqueued palette and silent sound.
+//
+// pc_at_ack names the routine doing it, which the disassembler can then
+// identify directly.
+//   0-5 : PC at the last INTSTATE write      6-9 : last INTACK value
+//   A-B : RAM[0x1104]                        C-D : INTACK write count
+//   E-F : scanline_hit count
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_lastack[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_lastack[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_lastack[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_lastack[15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_ackcnt[3:0] } :
-    view == 4'h5 ? { 4'h5, dbg_ackcnt[7:4] } :
-    view == 4'h6 ? { 4'h6, dbg_b2rise[3:0] } :
-    view == 4'h7 ? { 4'h7, dbg_b2rise[7:4] } :
-    view == 4'h8 ? { 4'h8, dbg_scanhits[3:0] } :
-    view == 4'h9 ? { 4'h9, dbg_scanhits[7:4] } :
+    view == 4'h0 ? { 4'h0, pc_at_ack[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, pc_at_ack[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, pc_at_ack[11: 8] } :
+    view == 4'h3 ? { 4'h3, pc_at_ack[15:12] } :
+    view == 4'h4 ? { 4'h4, pc_at_ack[19:16] } :
+    view == 4'h5 ? { 4'h5, pc_at_ack[23:20] } :
+    view == 4'h6 ? { 4'h6, dbg_lastack[ 3: 0] } :
+    view == 4'h7 ? { 4'h7, dbg_lastack[ 7: 4] } :
+    view == 4'h8 ? { 4'h8, dbg_lastack[11: 8] } :
+    view == 4'h9 ? { 4'h9, dbg_lastack[15:12] } :
     view == 4'hA ? { 4'hA, dbg_1104[3:0] } :
     view == 4'hB ? { 4'hB, dbg_1104[7:4] } :
-    view == 4'hC ? { 4'hC, dbg_intstate[ 3: 0] } :
-    view == 4'hD ? { 4'hD, dbg_intstate[ 7: 4] } :
-    view == 4'hE ? { 4'hE, dbg_intstate[11: 8] } :
-                   { 4'hF, dbg_intstate[15:12] };
+    view == 4'hC ? { 4'hC, dbg_ackcnt[3:0] } :
+    view == 4'hD ? { 4'hD, dbg_ackcnt[7:4] } :
+    view == 4'hE ? { 4'hE, dbg_scanhits[3:0] } :
+                   { 4'hF, dbg_scanhits[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
