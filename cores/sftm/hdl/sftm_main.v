@@ -529,6 +529,21 @@ TG68KdotC_Kernel #(
 // ---------------------------------------------------------------------------
 reg [23:0] pc_live, pc_vec, pc_stuck;
 reg [23:0] pc_now;           // re-latched each view cycle (coherent nibbles)
+
+// ---------------------------------------------------------------------------
+// Game-state snoops. Rather than infer what the game is doing, read its own
+// variables by watching CPU writes to known addresses (found by disassembling
+// the ROM):
+//   0x0FBE  the exception/status code the fault handlers store (the L1/VINT
+//           crash trap at 0x800918 writes #$5 here, other handlers write
+//           their own codes) -- non-zero means the game took a fault
+//   0x0406  frame counter, incremented by the routine the QINT handler calls
+//   0x0407  sound-queue READ index   } equal => queue empty => the game has
+//   0x0408  sound-queue WRITE index  } never queued a sound command
+// Word addresses: byte>>1. 0x0FBE->0x7DF, 0x0406/7->0x203, 0x0408->0x204.
+// ---------------------------------------------------------------------------
+reg [15:0] dbg_fbe;
+reg [ 7:0] dbg_406, dbg_407, dbg_408;
 // pc_max tracks only the UPPER 12 bits: a full 24-bit magnitude comparator
 // cost ~0.2 ns and pushed the design negative (build 6 closed at +0.115
 // without it, build 8 hit -0.289 with it). 4 KB granularity is ample for
@@ -560,6 +575,7 @@ always @(posedge clk) begin
     if( w_rst ) begin
         pc_live <= 0; pc_vec <= 0; pc_stuck <= 0;
         pc_now <= 0; pc_max_hi <= 0;
+        dbg_fbe <= 0; dbg_406 <= 0; dbg_407 <= 0; dbg_408 <= 0;
         vec_pend <= 0; pc_vec_done <= 0; pc_stuck_done <= 0;
         vint_timer <= 0; diag_cnt <= 0;
         { sf_v60, sf_v64, sf_v68, sf_v6c } <= 4'd0;
@@ -599,6 +615,12 @@ always @(posedge clk) begin
         end
 
         // --- sticky bus events ---------------------------------------------
+        // game-state snoops (see comment at the declarations)
+        if( ram_cpu_we_hi && ram_addr == 14'h07DF ) dbg_fbe[15:8] <= cpu_do16[15:8];
+        if( ram_cpu_we_lo && ram_addr == 14'h07DF ) dbg_fbe[ 7:0] <= cpu_do16[ 7:0];
+        if( ram_cpu_we_hi && ram_addr == 14'h0203 ) dbg_406 <= cpu_do16[15:8];
+        if( ram_cpu_we_lo && ram_addr == 14'h0203 ) dbg_407 <= cpu_do16[ 7:0];
+        if( ram_cpu_we_hi && ram_addr == 14'h0204 ) dbg_408 <= cpu_do16[15:8];
         if( grant && bus_write ) begin
             if( vreg_sel  ) sf_vreg_wr  <= 1'b1;
             if( vreg_sel && vreg_k == 6'h04 ) sf_cmd_wr   <= 1'b1;  // COMMAND
@@ -641,24 +663,34 @@ end
 //   C   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
 //   D   : sticky {intstate bit6, intstate bit2, cmd_wr, inten_wr}
 //   E-F : live INTSTATE low byte
+// View map (rev6). The CPU, interrupts and blitter are all confirmed healthy
+// and pc_max (0x8C1xxx) turned out to be legitimate code, so the question is
+// no longer "is my hardware working" but "what is the GAME waiting for".
+// These views read the game's own variables:
+//   0-3 : RAM[0x0FBE] exception/status code (non-zero => it took a fault)
+//   4-5 : RAM[0x0406] frame counter (proves the QINT path runs, and how fast)
+//   6-7 : RAM[0x0407] sound queue read index
+//   8-9 : RAM[0x0408] sound queue write index  (== read index => never queued)
+//   A-C : pc_max upper 12 bits
+//   D   : sticky {pal_wr, snd_wr, nvram_wr, prot_rd}
+//   E-F : INTSTATE sticky-OR
 assign st_dout =
-    view == 4'h0 ? { 4'h0, pc_now[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, pc_now[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, pc_now[11: 8] } :
-    view == 4'h3 ? { 4'h3, pc_now[15:12] } :
-    view == 4'h4 ? { 4'h4, pc_now[19:16] } :
-    view == 4'h5 ? { 4'h5, pc_now[23:20] } :
-    view == 4'h6 ? { 4'h6, pc_max_hi[ 3: 0] } :   // pc_max bits 15:12
-    view == 4'h7 ? { 4'h7, pc_max_hi[ 7: 4] } :   // pc_max bits 19:16
-    view == 4'h8 ? { 4'h8, pc_max_hi[11: 8] } :   // pc_max bits 23:20
-    view == 4'h9 ? { 4'h9, dbg_intsticky[3:0] } :
-    view == 4'hA ? { 4'hA, dbg_intsticky[7:4] } :
-    view == 4'hB ? { 4'hB, sf_plane_wr, sf_int_ack, sf_vreg_wr, sf_nvram_wr } :
-    view == 4'hC ? { 4'hC, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
-    view == 4'hD ? { 4'hD, dbg_intsticky[6], dbg_intsticky[2],
-                           sf_cmd_wr, sf_inten_wr } :
-    view == 4'hE ? { 4'hE, dbg_intstate[3:0] } :
-                   { 4'hF, dbg_intstate[7:4] };
+    view == 4'h0 ? { 4'h0, dbg_fbe[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_fbe[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_fbe[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_fbe[15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_406[3:0] } :
+    view == 4'h5 ? { 4'h5, dbg_406[7:4] } :
+    view == 4'h6 ? { 4'h6, dbg_407[3:0] } :
+    view == 4'h7 ? { 4'h7, dbg_407[7:4] } :
+    view == 4'h8 ? { 4'h8, dbg_408[3:0] } :
+    view == 4'h9 ? { 4'h9, dbg_408[7:4] } :
+    view == 4'hA ? { 4'hA, pc_max_hi[ 3: 0] } :
+    view == 4'hB ? { 4'hB, pc_max_hi[ 7: 4] } :
+    view == 4'hC ? { 4'hC, pc_max_hi[11: 8] } :
+    view == 4'hD ? { 4'hD, sf_pal_wr, sf_snd_wr, sf_nvram_wr, sf_prot_rd } :
+    view == 4'hE ? { 4'hE, dbg_intsticky[3:0] } :
+                   { 4'hF, dbg_intsticky[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
