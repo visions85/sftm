@@ -120,6 +120,9 @@ module sftm_main #(
     input      [15:0] dbg_islmod,       // INTSCANLINE after modulo reduction
     input      [ 7:0] dbg_scanhits,     // saturating count of scanline hits
     input      [ 8:0] dbg_vcntmax,      // highest vcnt the CRT reached
+    input      [15:0] dbg_lastack,      // last value the CPU wrote to INTSTATE
+    input      [ 7:0] dbg_ackcnt,       // count of INTACK writes
+    input      [ 7:0] dbg_b2rise,       // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
 
@@ -654,44 +657,37 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// Debug view map (rev9).
+// Debug view map (rev10).
 //
-// rev8 result: the self-test verdict reads 0 (PASS), scanline_hit saturated
-// at 255 and vcnt reaches 285 -- so the scanline compare now fires and the
-// CRT is correct. Yet RAM[0x1104] is still pinned at 6, so the QINT handler
-// still never runs. The break must therefore be in the short chain
-//   scanline_hit -> INTSTATE bit2 -> (AND INTENABLE bit2) -> scan_irq -> IPL3
-// and since the XINT handler demonstrably runs at IPL2 the CPU cannot be
-// refusing a higher level. The prime suspect is INTENABLE losing bit 2:
-// the ROM contains move.w #$20,$500014 at 0x801D06, which would enable
-// neither the scanline (0x04) nor the blitter (0x40) source.
-//
-// So this map restores the two registers rev8 had to drop, keeping just
-// enough of the scanline probes to confirm the compare is still firing.
-//   0-3 : INTENABLE (live)      4-7 : INTSTATE (live)
-//   8-9 : scanline_hit count    A-B : RAM[0x1104] raster index
-//   C   : RAM[0x0400] self-test verdict
-//   D-E : RAM[0x044E] task count
-//   F   : sticky {pal_wr, snd_wr, ints_b2, ints_b6}
+// rev9 refuted the INTENABLE theory: INTENABLE reads 0x0144 (scanline AND
+// blitter both enabled) while INTSTATE reads 0x0000, its sticky-OR says bit2
+// HAS been set, and scanline_hit is saturated. So the bit is being cleared
+// about as fast as it is set. The only thing that can clear it is a CPU
+// write to 0x500004, so capture those directly: how many, and with what
+// value. b2rise counts how often the bit actually gets set, which separates
+// "set then cleared" from "never set at all".
+//   0-3 : last value written to INTSTATE (INTACK data)
+//   4-5 : count of INTACK writes         6-7 : count of INTSTATE bit2 rises
+//   8-9 : scanline_hit count             A-B : RAM[0x1104] raster index
+//   C-F : INTSTATE live
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, dbg_intenable[ 3: 0] } :
-    view == 4'h1 ? { 4'h1, dbg_intenable[ 7: 4] } :
-    view == 4'h2 ? { 4'h2, dbg_intenable[11: 8] } :
-    view == 4'h3 ? { 4'h3, dbg_intenable[15:12] } :
-    view == 4'h4 ? { 4'h4, dbg_intstate [ 3: 0] } :
-    view == 4'h5 ? { 4'h5, dbg_intstate [ 7: 4] } :
-    view == 4'h6 ? { 4'h6, dbg_intstate [11: 8] } :
-    view == 4'h7 ? { 4'h7, dbg_intstate [15:12] } :
+    view == 4'h0 ? { 4'h0, dbg_lastack[ 3: 0] } :
+    view == 4'h1 ? { 4'h1, dbg_lastack[ 7: 4] } :
+    view == 4'h2 ? { 4'h2, dbg_lastack[11: 8] } :
+    view == 4'h3 ? { 4'h3, dbg_lastack[15:12] } :
+    view == 4'h4 ? { 4'h4, dbg_ackcnt[3:0] } :
+    view == 4'h5 ? { 4'h5, dbg_ackcnt[7:4] } :
+    view == 4'h6 ? { 4'h6, dbg_b2rise[3:0] } :
+    view == 4'h7 ? { 4'h7, dbg_b2rise[7:4] } :
     view == 4'h8 ? { 4'h8, dbg_scanhits[3:0] } :
     view == 4'h9 ? { 4'h9, dbg_scanhits[7:4] } :
     view == 4'hA ? { 4'hA, dbg_1104[3:0] } :
     view == 4'hB ? { 4'hB, dbg_1104[7:4] } :
-    view == 4'hC ? { 4'hC, dbg_400[3:0] } :
-    view == 4'hD ? { 4'hD, dbg_44e[3:0] } :
-    view == 4'hE ? { 4'hE, dbg_44e[7:4] } :
-                   { 4'hF, sf_pal_wr, sf_snd_wr,
-                           dbg_intsticky[2], dbg_intsticky[6] };
+    view == 4'hC ? { 4'hC, dbg_intstate[ 3: 0] } :
+    view == 4'hD ? { 4'hD, dbg_intstate[ 7: 4] } :
+    view == 4'hE ? { 4'hE, dbg_intstate[11: 8] } :
+                   { 4'hF, dbg_intstate[15:12] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

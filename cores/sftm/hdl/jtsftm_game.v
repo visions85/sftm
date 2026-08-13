@@ -48,6 +48,8 @@ wire [ 7:0] dbg_blitflags;
 wire [15:0] dbg_islmod;
 wire [ 7:0] dbg_scanhits;
 wire [ 8:0] dbg_vcntmax;
+wire [15:0] dbg_lastack;
+wire [ 7:0] dbg_ackcnt, dbg_b2rise;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -105,6 +107,9 @@ sftm_main u_main(
     .dbg_islmod   ( dbg_islmod    ),
     .dbg_scanhits ( dbg_scanhits  ),
     .dbg_vcntmax  ( dbg_vcntmax   ),
+    .dbg_lastack  ( dbg_lastack   ),
+    .dbg_ackcnt   ( dbg_ackcnt    ),
+    .dbg_b2rise   ( dbg_b2rise    ),
     .st_dout      ( st_main       )
 );
 
@@ -168,7 +173,10 @@ sftm_video u_video(
     .st_blitflags ( dbg_blitflags ),
     .st_islmod    ( dbg_islmod    ),
     .st_scanhits  ( dbg_scanhits  ),
-    .st_vcntmax   ( dbg_vcntmax   )
+    .st_vcntmax   ( dbg_vcntmax   ),
+    .st_lastack   ( dbg_lastack   ),
+    .st_ackcnt    ( dbg_ackcnt    ),
+    .st_b2rise    ( dbg_b2rise    )
 );
 
 sftm_snd u_snd(

@@ -100,7 +100,13 @@ module sftm_video(
     output reg [ 7:0] st_blitflags,   // {sh_ever,bd_ever,cmd_ever,busy,waiting,state[2:0]}
     output     [15:0] st_islmod,      // INTSCANLINE after modulo reduction
     output reg [ 7:0] st_scanhits,    // saturating count of scanline_hit pulses
-    output reg [ 8:0] st_vcntmax      // highest vcnt reached (sanity on the CRT)
+    output reg [ 8:0] st_vcntmax,     // highest vcnt reached (sanity on the CRT)
+    // INTSTATE reads 0 live while its sticky-OR says bit2 HAS been set and
+    // scanline_hit fires constantly -- so something clears it as fast as it
+    // is set. Only a CPU write to 0x500004 can. Capture exactly that.
+    output reg [15:0] st_lastack,     // last value written to INTSTATE (INTACK)
+    output reg [ 7:0] st_ackcnt,      // saturating count of INTACK writes
+    output reg [ 7:0] st_b2rise       // saturating count of INTSTATE bit2 rises
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -167,6 +173,7 @@ wire      line_end = hcnt == 9'd507;
 // yields 0xFFFF, which needs 229 subtractions of 286 -- far beyond what two
 // stages reach. INTSCANLINE changes at most a few times per frame, so a
 // one-subtract-per-clock reduction settles long before it is next needed.
+reg        b2_d;      // delayed INTSTATE bit2, for edge detection
 reg [15:0] isl_mod;
 always @(posedge clk) begin
     if( rst )
@@ -185,9 +192,20 @@ always @(posedge clk) begin
     if( rst ) begin
         st_scanhits <= 8'd0;
         st_vcntmax  <= 9'd0;
+        st_lastack  <= 16'd0;
+        st_ackcnt   <= 8'd0;
+        st_b2rise   <= 8'd0;
+        b2_d        <= 1'b0;
     end else begin
         if( scanline_hit && st_scanhits != 8'hFF ) st_scanhits <= st_scanhits + 8'd1;
         if( vcnt > st_vcntmax ) st_vcntmax <= vcnt;
+        if( vreg_wr && ridx == R_INTSTATE ) begin
+            st_lastack <= cpu_dout;
+            if( st_ackcnt != 8'hFF ) st_ackcnt <= st_ackcnt + 8'd1;
+        end
+        b2_d <= vregs[R_INTSTATE][2];
+        if( vregs[R_INTSTATE][2] && !b2_d && st_b2rise != 8'hFF )
+            st_b2rise <= st_b2rise + 8'd1;
     end
 end
 
