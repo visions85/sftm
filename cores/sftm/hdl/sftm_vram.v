@@ -73,7 +73,7 @@ module sftm_vram(
     input             line_sel,      // buffer to fill
     // scanout read of the other buffer
     input      [ 8:0] scan_x,
-    output reg [15:0] scan_pen
+    output     [15:0] scan_pen
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
@@ -131,15 +131,26 @@ reg [15:0] lbuf0[0:511], lbuf1[0:511];
 reg        lb_we;
 reg [ 8:0] lb_waddr;
 reg [15:0] lb_wdata;
+reg [15:0] lb_q0, lb_q1;
+
+// One simple dual-port RAM each: a single write port and a single registered
+// read port, in its own always block. Writing both arrays and muxing the two
+// reads inside one block kept these out of M10K -- the fitter built 16 Kbit of
+// flip-flops instead and sftm_vram cost 7,578 ALMs, which is most of why the
+// design stopped fitting. Latency is unchanged: still one clock, with the
+// buffer select applied after the RAM rather than inside it.
+always @(posedge clk) begin
+    if( lb_we && !line_sel ) lbuf0[lb_waddr] <= lb_wdata;
+    lb_q0 <= lbuf0[scan_x];
+end
 
 always @(posedge clk) begin
-    if( lb_we ) begin
-        if( line_sel ) lbuf1[lb_waddr] <= lb_wdata;
-        else           lbuf0[lb_waddr] <= lb_wdata;
-    end
-    // scanout reads the buffer NOT being filled
-    scan_pen <= line_sel ? lbuf0[scan_x] : lbuf1[scan_x];
+    if( lb_we &&  line_sel ) lbuf1[lb_waddr] <= lb_wdata;
+    lb_q1 <= lbuf1[scan_x];
 end
+
+// scanout reads the buffer NOT being filled
+assign scan_pen = line_sel ? lb_q0 : lb_q1;
 
 // ---------------------------------------------------------------------------
 // arbiter / SDRAM sequencer

@@ -315,9 +315,13 @@ always @(posedge clk) begin
     end
 end
 
-// shiftreg row buffer (512 x 16)
-reg [15:0] shrow[0:511];
-reg [15:0] shrow_q;
+// Shiftreg row buffer (512 x 16). The array lives in its own always block so
+// it infers an M10K; accessing it directly from inside the main FSM built it
+// out of flip-flops instead, a large part of sftm_blit's 5,185 ALMs. The
+// enables and addresses are combinational, so the access timing is exactly
+// what it was: shrow_q still lags sh_idx by one clock.
+reg  [15:0] shrow[0:511];
+reg  [15:0] shrow_q;
 
 wire vw_free = !vw_req || vw_rdy;
 
@@ -650,7 +654,6 @@ always @(posedge clk) begin
         S_SH_READ: begin
             if( vr_ack ) begin
                 vr_req <= 0;
-                shrow[sh_idx[8:0]] <= vr_data;
                 if( sh_idx == 10'd511 ) begin
                     sh_idx <= 0;
                     state  <= S_SH_WRITE;
@@ -666,7 +669,6 @@ always @(posedge clk) begin
             if( vw_free ) begin
                 // shrow_q lags sh_idx by one; reload ONLY when advancing so
                 // a write-FIFO stall cannot shift the pipeline
-                shrow_q <= shrow[sh_idx[8:0]];
                 if( sh_idx != 0 ) begin
                     vw_req   <= 1;
                     vw_plane <= pass;
@@ -747,6 +749,16 @@ always @(posedge clk) begin
 end
 
 assign c3_active_o = c3_active;
+
+// shiftreg row RAM: single write port, single registered read port
+wire        shrow_we = (state == S_SH_READ)  && vr_ack;
+wire        shrow_rd = (state == S_SH_WRITE) && vw_free;
+wire [ 8:0] shrow_a  = sh_idx[8:0];
+
+always @(posedge clk) begin
+    if( shrow_we ) shrow[shrow_a] <= vr_data;
+    if( shrow_rd ) shrow_q <= shrow[shrow_a];
+end
 
 // verilator lint_off UNUSEDSIGNAL
 wire unused = &{ command[15:3], 1'b0 };
