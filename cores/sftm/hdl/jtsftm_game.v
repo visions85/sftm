@@ -116,6 +116,11 @@ sftm_main u_main(
     .dbg_crn      ( dbg_crn       ),
     .dbg_crv      ( dbg_crv       ),
     .dbg_crp      ( dbg_crp       ),
+    .ioctl_addr   ( ioctl_addr    ),
+    .ioctl_ram    ( ioctl_ram     ),
+    .ioctl_wr     ( ioctl_wr      ),
+    .ioctl_dout   ( ioctl_dout    ),
+    .ioctl_din    ( ioctl_din     ),
 
     .st_dout      ( st_main       )
 );

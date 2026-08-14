@@ -49,8 +49,12 @@ JTFRAME_BA3_START=0x23D0000
 # doc/PHASE2-DESIGN.md), which requires write access to the bank.
 JTFRAME_BA3_WEN
 #
-# NVRAM (0x600000-0x61ffff) is on-chip BRAM inside sftm_main for now; SD-card
-# persistence (JTFRAME ioctl save/restore) is deferred - see cfg/mem.yaml.
+# NVRAM (0x600000-0x61ffff) is on-chip BRAM inside sftm_main. The low 32 KB is
+# persisted to the SD card through the ioctl interface; MiSTer firmware
+# mishandles dumps of 64 kB and above, and the operator settings (including the
+# volume, which starts at zero and makes the game silent) live in the first
+# 64 bytes. See cfg/mem.yaml.
+JTFRAME_IOCTL_RD=32768
 
 [mister]
 # OSD extras for MiSTer

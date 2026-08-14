@@ -161,7 +161,10 @@ sftm_main u_main(
     .snd_latch1(snd_latch1), .snd_latch2(snd_latch2),
     .snd_pending1(snd_pending1), .snd_pending2(snd_pending2),
     .snd_latch1_rd(1'b0), .snd_latch2_rd(1'b0),
-    .debug_bus(8'h00), .st_dout(st_dout)
+    .debug_bus(8'h00), .st_dout(st_dout),
+    // NVRAM persistence ports: idle in these benches
+    .ioctl_addr(27'd0), .ioctl_ram(1'b0), .ioctl_wr(1'b0),
+    .ioctl_dout(8'h00), .ioctl_din()
 );
 
 sftm_video u_video(

@@ -104,14 +104,20 @@ sdram:
           addr_width: 19       # 512 KB -> port [18:1]
           data_width: 16
 
-  # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board) is
-  # currently kept in on-chip BRAM inside sftm_main (u_nvram) so the CPU can
-  # boot and run self-test. Persistence is deferred: add a top-level bram entry
-  #   bram:
-  #     - name: nvram
-  #       addr_width: 14        # < 64 KB: MiSTer cannot dump NVRAM >= 64 KB
-  #       data_width: 16
-  #       rw: true
-  #       ioctl: { save: true, order: 0 }
-  # (see modules/jtframe/doc/sdram.md) once JTFRAME is vendored, then wire the
-  # generated nvram_* ports back into sftm_main.
+  # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board).
+  # MiSTer firmware mishandles NVRAM dumps of 64 kB and above (see
+  # modules/jtframe/doc/sdram.md), so only the low 32 KB is persisted. That is
+  # where the operator settings live: a MAME dump diff shows changing the
+  # volume touches just 5 bytes in 0x00014..0x000B4, and the first 64 bytes
+  # hold two 32-byte setting records with their own checksums -- so a partial
+  # restore is self-consistent. The upper 96 KB stays in plain BRAM inside
+  # sftm_main; it holds high-entropy scratch the game refills.
+  #
+  # NOT declared as a `bram` with `ioctl: save` here: this jtframe's generator
+  # emits a broken restore path. It computes the muxed write signals
+  # (nvram_dimx / nvram_wemx) but wires the BRAM's data/we to the RAW game
+  # signals and passes we0 = 2'd0 to the dump module, so the two muxed outputs
+  # are consumed by nothing. Saving would work and restoring would silently do
+  # nothing. sftm_main therefore drives the documented ioctl interface
+  # (JTFRAME_IOCTL_RD + ioctl_ram/ioctl_din/ioctl_dout) against its own BRAM.
+

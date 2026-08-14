@@ -124,6 +124,14 @@ module sftm_main #(
     input      [ 7:0] dbg_crn,
     input      [ 7:0] dbg_crv,
     input      [ 6:0] dbg_crp,
+
+    // NVRAM persistence (JTFRAME_IOCTL_RD). ioctl_ram marks NVRAM traffic; it
+    // is also high while the firmware restores during download.
+    input      [26:0] ioctl_addr,
+    input             ioctl_ram,
+    input             ioctl_wr,
+    input      [ 7:0] ioctl_dout,
+    output reg [ 7:0] ioctl_din,
        // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
@@ -253,14 +261,43 @@ reg [7:0] nvram_hi[0:65535], nvram_lo[0:65535];
 reg [7:0] nvram_hi_q, nvram_lo_q;
 wire [15:0] nvram_addr = A[16:1];
 
+// ---------------------------------------------------------------------------
+// SD-card persistence for the low 32 KB.
+//
+// The region is a 32-bit big-endian one in MAME, so file byte 0 is the high
+// byte of word 0: even ioctl addresses map to nvram_hi, odd to nvram_lo. That
+// keeps the dump byte-identical to MAME's nvram32, which is what made it
+// possible to find the volume setting by diffing two dumps.
+//
+// The ioctl address is muxed into the array read/write ports rather than
+// adding a second port: the firmware only touches NVRAM while the game is
+// paused for a save, or during download for a restore, so it never races the
+// CPU. ioctl_din is registered, one clock behind ioctl_addr.
+// ---------------------------------------------------------------------------
+wire [14:0] io_a  = ioctl_addr[14:0];
+wire [13:0] io_w  = io_a[14:1];
+wire        io_hi = ~io_a[0];                 // even byte -> high lane
+wire        nv_io = ioctl_ram;
+wire        nv_restore = nv_io && ioctl_wr;
+wire [15:0] nv_ra = nv_io ? {2'd0, io_w} : nvram_addr;
+
 always @(posedge clk) begin
-    if( grant && bus_write && nvram_cs && !cpu_uds_n ) nvram_hi[nvram_addr] <= cpu_do16[15:8];
-    nvram_hi_q <= nvram_hi[nvram_addr];
+    if( nv_restore && io_hi )
+        nvram_hi[{2'd0, io_w}] <= ioctl_dout;
+    else if( !nv_io && grant && bus_write && nvram_cs && !cpu_uds_n )
+        nvram_hi[nvram_addr] <= cpu_do16[15:8];
+    nvram_hi_q <= nvram_hi[nv_ra];
 end
 always @(posedge clk) begin
-    if( grant && bus_write && nvram_cs && !cpu_lds_n ) nvram_lo[nvram_addr] <= cpu_do16[7:0];
-    nvram_lo_q <= nvram_lo[nvram_addr];
+    if( nv_restore && !io_hi )
+        nvram_lo[{2'd0, io_w}] <= ioctl_dout;
+    else if( !nv_io && grant && bus_write && nvram_cs && !cpu_lds_n )
+        nvram_lo[nvram_addr] <= cpu_do16[7:0];
+    nvram_lo_q <= nvram_lo[nv_ra];
 end
+
+// dump: serve the byte the firmware is asking for
+always @(posedge clk) ioctl_din <= io_hi ? nvram_hi_q : nvram_lo_q;
 
 // ---------------------------------------------------------------------------
 // Input ports (INPUT_PORTS_START(sftm) + itech32_base_32bit, itech32.cpp:1396
