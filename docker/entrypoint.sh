@@ -44,6 +44,16 @@ JTFRAME_PATCHES="/workspace/docker/jtframe-patches"
 if [ -d "${JTFRAME_PATCHES}" ]; then
     cp -r "${JTFRAME_PATCHES}/." "${JTFRAME_DIR}/"
 fi
+# SLOT0_ERASE=0 on the bank-3 rw slot. jtframe_ram_rq's ERASE walks erase_cnt
+# across the slot's ENTIRE address window after reset, writing zeros at
+# sdram_addr = erase_cnt + offset. Bank 3 holds vram on slot 0 (offset 0,
+# 4 MB window) and grm3 on slot 2, so the erase wiped the grm3 glyph ROM that
+# the download had just written -- a real glyph blit read 0x00 as its first
+# source byte on hardware. VRAM needs no erase: the game draws a full
+# background every frame and never reads VRAM before writing it. mem.yaml
+# cannot express this, so patch the default here.
+sed -i 's/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/' "${JTFRAME_DIR}/hdl/sdram/jtframe_ram1_3slots.v" 2>/dev/null || true
+
 # GAMMA=0: disable gamma correction LUT tables (~2k ALMs saved; no dedicated macro exists)
 sed -i 's/GAMMA=1/GAMMA=0/' "${JTFRAME_DIR}/target/mister/hdl/sys/arcade_video.v" 2>/dev/null || true
 
