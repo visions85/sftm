@@ -346,7 +346,9 @@ wire [8:0] fetch_line = vcnt == 9'd284 ? 9'd0 :
 wire       fetch_vis  = vcnt <= 9'd253 || vcnt >= 9'd284;
 
 wire [15:0] scan_pen;
-wire [ 8:0] scan_x = hcnt;
+// active video starts at hcnt 50 (HBLANK_END), so the line-buffer index
+// is hcnt-50; the value during blanking is not displayed
+wire [ 8:0] scan_x = hcnt - 9'd50;
 
 sftm_vram u_vram(
     .rst        ( rst           ),
@@ -447,12 +449,25 @@ always @(posedge clk) begin
         vblank_irq <= 0;
         line_go    <= 0;
         if( pxl_cen ) begin
+            // Horizontal phase follows the CRTC registers literally
+            // (itech32_v.cpp:75-78, values at startup):
+            //   HTOTAL 0x1FC=508  HBLANK_END 0x32=50  HBLANK_START 0x1B2=434
+            //   HSYNC  0x1E4=484
+            // so active video is hcnt 50..433 (384 px, matching MAME's
+            // visarea max_x = HBSTART-HBEND-1 = 383) and sync runs 484..507:
+            // front porch 51, sync 24, back porch 50.
+            //
+            // This previously normalised active to hcnt 0..383 with sync at
+            // 419..457 -- same line length, but a different sync phase and a
+            // 39-pixel sync. A scaler that locks to HS and counts a fixed back
+            // porch then places the image at the wrong offset, which showed up
+            // as the picture wrapping horizontally on the SuperStation One.
             hcnt <= line_end ? 9'd0 : hcnt + 9'd1;
-            if( hcnt == 9'd383 ) LHBL <= 1'b0;
-            if( hcnt == 9'd419 ) HS <= 1'b1;
-            if( hcnt == 9'd457 ) HS <= 1'b0;
+            if( hcnt == 9'd433 ) LHBL <= 1'b0;
+            if( hcnt == 9'd483 ) HS   <= 1'b1;
+            if( hcnt == 9'd49  ) LHBL <= 1'b1;
             if( line_end ) begin
-                LHBL <= 1'b1;
+                HS <= 1'b0;
                 vcnt <= vcnt == 9'd285 ? 9'd0 : vcnt + 9'd1;
                 if( vcnt == 9'd255 ) begin
                     LVBL       <= 1'b0;
