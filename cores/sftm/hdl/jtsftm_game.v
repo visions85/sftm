@@ -59,6 +59,8 @@ wire [15:0] dbg_lastack;
 wire [ 7:0] dbg_ackcnt, dbg_b2rise, dbg_vtest, dbg_rletp, dbg_g3b0;
 wire [11:0] dbg_g3addr;
 wire        dbg_g3vld;
+wire [ 7:0] dbg_eswr;
+wire [15:0] dbg_peak;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -123,6 +125,8 @@ sftm_main u_main(
     .dbg_rletp    ( dbg_rletp     ),
     .dbg_g3addr   ( dbg_g3addr    ),
     .dbg_g3vld    ( dbg_g3vld     ),
+    .dbg_eswr     ( dbg_eswr      ),
+    .dbg_peak     ( dbg_peak      ),
     .dbg_g3b0     ( dbg_g3b0      ),
 
     .st_dout      ( st_main       )
@@ -229,7 +233,9 @@ sftm_snd u_snd(
 
     .snd_left     ( snd_left      ),
     .snd_right    ( snd_right     ),
-    .sample       ( sample        )
+    .sample       ( sample        ),
+    .st_eswr      ( dbg_eswr      ),
+    .st_peak      ( dbg_peak      )
 );
 
 // OSD debug view: main CPU status ({boot_done, vint, blit, scan, state, wdog})

@@ -227,6 +227,14 @@ initial begin
     check( u_snd.ram[13'h0003] == 8'h00, "ES5506 CR readback == 0" );
     check( u_snd.ram[13'h0004] >= 8'd2,  "FIRQ taken and cleared repeatedly" );
     check( seen_audio,                   "voice 0 produces nonzero audio" );
+    // The sound-verification probe added for hardware bring-up: prove here
+    // that it actually observes activity, so a zero reading on hardware means
+    // sound is dead rather than the probe being wrong.
+    $display("sound probe: ES5506 register writes=%0d  peak|snd_left|=0x%04X",
+             u_snd.st_eswr, u_snd.st_peak);
+    check( u_snd.st_eswr != 8'd0,  "probe counts ES5506 register writes" );
+    check( u_snd.st_peak != 16'd0, "probe sees a nonzero audio peak" );
+
     check( errors == 0, "ALL PHASE 3 CHECKS" );
     $finish;
 end

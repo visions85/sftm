@@ -62,7 +62,16 @@ module sftm_snd(
 
     output signed [15:0] snd_left,
     output signed [15:0] snd_right,
-    output               sample
+    output               sample,
+
+    // Sound verification. The 6809 spent the whole project fetching the
+    // 68020's program ROM (snd and main both sat at bank-0 word 0 -- see
+    // cfg/mem.yaml), so sound has never actually run. st_eswr counts ES5506
+    // register writes, which requires the CPU to boot and execute its init
+    // correctly; st_peak is the largest |snd_left| seen, which additionally
+    // requires the sample ROM path to work.
+    output reg [ 7:0] st_eswr,
+    output reg [15:0] st_peak
 );
 
 // ---------------------------------------------------------------------------
@@ -162,6 +171,19 @@ wire firq_n = ~firq;
 // ---------------------------------------------------------------------------
 wire [7:0] es_dout;
 wire       es_wr = cen_E && es_cs && !RnW;
+
+wire signed [15:0] sl_probe = snd_left;
+wire        [15:0] sl_mag   = sl_probe[15] ? (~sl_probe + 16'd1) : sl_probe;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        st_eswr <= 8'd0;
+        st_peak <= 16'd0;
+    end else begin
+        if( es_wr && st_eswr != 8'hFF ) st_eswr <= st_eswr + 8'd1;
+        if( sample && sl_mag > st_peak ) st_peak <= sl_mag;
+    end
+end
 wire       es_rd = cen_E && es_cs &&  RnW;
 
 sftm5506 u_es(
