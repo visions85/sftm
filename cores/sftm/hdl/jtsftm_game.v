@@ -50,15 +50,6 @@ wire        snd_pending1, snd_pending2;
 wire        snd_latch1_rd, snd_latch2_rd;
 
 wire [ 7:0] st_main;
-wire [15:0] dbg_intstate, dbg_intenable, dbg_intsticky, dbg_intscanline;
-wire [ 7:0] dbg_blitflags;
-wire [15:0] dbg_islmod;
-wire [ 7:0] dbg_scanhits;
-wire [ 8:0] dbg_vcntmax;
-wire [15:0] dbg_lastack;
-wire [ 7:0] dbg_ackcnt, dbg_b2rise, dbg_vtest, dbg_rletp, dbg_g3b0;
-wire [11:0] dbg_g3addr;
-wire        dbg_g3vld;
 wire [ 7:0] dbg_eswr, dbg_sromn, dbg_sromd, dbg_cr0;
 wire [ 4:0] dbg_actv;
 wire        dbg_anyrun;
@@ -112,21 +103,6 @@ sftm_main u_main(
     .snd_latch2_rd( snd_latch2_rd ),
 
     .debug_bus    ( debug_bus     ),
-    .dbg_intstate ( dbg_intstate  ),
-    .dbg_intenable( dbg_intenable ),
-    .dbg_intsticky( dbg_intsticky ),
-    .dbg_intscanline(dbg_intscanline),
-    .dbg_blitflags( dbg_blitflags ),
-    .dbg_islmod   ( dbg_islmod    ),
-    .dbg_scanhits ( dbg_scanhits  ),
-    .dbg_vcntmax  ( dbg_vcntmax   ),
-    .dbg_lastack  ( dbg_lastack   ),
-    .dbg_ackcnt   ( dbg_ackcnt    ),
-    .dbg_b2rise   ( dbg_b2rise    ),
-    .dbg_vtest    ( dbg_vtest     ),
-    .dbg_rletp    ( dbg_rletp     ),
-    .dbg_g3addr   ( dbg_g3addr    ),
-    .dbg_g3vld    ( dbg_g3vld     ),
     .dbg_eswr     ( dbg_eswr      ),
     .dbg_peak     ( dbg_peak      ),
     .dbg_sromn    ( dbg_sromn     ),
@@ -136,7 +112,6 @@ sftm_main u_main(
     .dbg_cmdr     ( cmd_rcnt      ),
     .dbg_anyrun   ( dbg_anyrun    ),
     .dbg_cr0      ( dbg_cr0       ),
-    .dbg_g3b0     ( dbg_g3b0      ),
 
     .st_dout      ( st_main       )
 );
@@ -197,23 +172,7 @@ sftm_video u_video(
     .green        ( green         ),
     .blue         ( blue          ),
     .gfx_en       ( gfx_en        ),
-    .debug_bus    ( debug_bus     ),
-    .st_intstate  ( dbg_intstate  ),
-    .st_intenable ( dbg_intenable ),
-    .st_intsticky ( dbg_intsticky ),
-    .st_intscanline(dbg_intscanline),
-    .st_blitflags ( dbg_blitflags ),
-    .st_islmod    ( dbg_islmod    ),
-    .st_scanhits  ( dbg_scanhits  ),
-    .st_vcntmax   ( dbg_vcntmax   ),
-    .st_lastack   ( dbg_lastack   ),
-    .st_ackcnt    ( dbg_ackcnt    ),
-    .st_b2rise    ( dbg_b2rise    ),
-    .st_vtest     ( dbg_vtest     ),
-    .st_rletp     ( dbg_rletp     ),
-    .st_g3addr    ( dbg_g3addr    ),
-    .st_g3vld     ( dbg_g3vld     ),
-    .st_g3b0      ( dbg_g3b0      ),
+    .debug_bus    ( debug_bus     )
 
 );
 

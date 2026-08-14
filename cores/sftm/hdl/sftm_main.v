@@ -112,21 +112,6 @@ module sftm_main #(
     input             snd_latch2_rd,
 
     input      [ 7:0] debug_bus,
-    input      [15:0] dbg_intstate,     // live INTSTATE  from sftm_video
-    input      [15:0] dbg_intenable,    // live INTENABLE from sftm_video
-    input      [15:0] dbg_intsticky,    // OR of every INTSTATE value seen
-    input      [15:0] dbg_intscanline,  // INTSCANLINE contents
-    input      [ 7:0] dbg_blitflags,    // blitter observation
-    input      [15:0] dbg_islmod,       // INTSCANLINE after modulo reduction
-    input      [ 7:0] dbg_scanhits,     // saturating count of scanline hits
-    input      [ 8:0] dbg_vcntmax,      // highest vcnt the CRT reached
-    input      [15:0] dbg_lastack,      // last value the CPU wrote to INTSTATE
-    input      [ 7:0] dbg_ackcnt,       // count of INTACK writes
-    input      [ 7:0] dbg_b2rise,
-    input      [ 7:0] dbg_vtest,
-    input      [ 7:0] dbg_rletp,
-    input      [11:0] dbg_g3addr,
-    input             dbg_g3vld,
     input      [ 7:0] dbg_eswr,
     input      [15:0] dbg_peak,
     input      [ 7:0] dbg_sromn,
@@ -136,7 +121,6 @@ module sftm_main #(
     input      [ 7:0] dbg_cmdr,
     input             dbg_anyrun,
     input      [ 7:0] dbg_cr0,
-    input      [ 7:0] dbg_g3b0,
        // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
@@ -734,47 +718,41 @@ always @(posedge clk) begin
         if( grant && bus_read && prot_rd ) sf_prot_rd <= 1'b1;
     end
 end
-
 // ---------------------------------------------------------------------------
-// Debug view map (rev24) -- sound verification.
+// ---------------------------------------------------------------------------
+// Debug view map (rev25) -- sound bring-up only.
 //
-// A MAME v0.289 reference run on the same ROM settled several things: the
-// zero task count is NORMAL (MAME shows it too), the self-test passes in
-// both, the tick advances in both, and INTENABLE is 0x0144 in both. The one
-// divergence is the palette, which MAME writes at FRAME 5 from 0x82A5F0 via
-//   0x829908 (boot task) -> 0x82A26E -> 0x82A30E -> 0x82A498 -> 0x82A5F0
-// Hardware already shows the core enters 0x829xxx, so these flags say which
-// link it fails to reach.
-//   0   : {task_ever(829), a2(82A2), a3(82A3), a4(82A4)}
-//   1   : {a5(82A5 = the writer), pal_wr, snd_wr, nvram_wr}
-//   2-7 : pc_now (live PC, re-latched once per view cycle)
-//   8   : VRAM self-test mismatch count (0 = every word read back correctly)
-//   9   : VRAM self-test status, bit3 = test finished
-//   A-B : ES5506 register writes by the 6809 (saturating; 0 = CPU not running)
-//   C-D : sound commands WRITTEN by the 68020 (latch pending rising edges)
-//   E-F : sound commands READ by the 6809 (latch read strobes)
-//         writes without reads = the IRQ/read path is broken
-//   A   : pc_max upper 4 bits
-//   B-C : tick write count      D-E : wrap-branch count
-//   F   : scanline_hit high nibble
+// The video diagnostics were stripped once Bug A and Bug B were fixed: the
+// design had grown past the device (build 41: "requires 4287 LABs but the
+// device contains only 4191"). What remains is the sound investigation.
+//   0   : {pal_wr, snd_wr, nvram_wr, 1'b0} -- the CPU reached those regions
+//   1-2 : ES5506 register writes by the 6809
+//   3   : ACTV, the voice count the driver programmed
+//   4   : {3'd0, any voice ever had STOP clear}
+//   5-6 : voice 0 CR low byte (bits 1:0 = STOP1/STOP0; 3 = still stopped)
+//   7-8 : ES5506 sample-ROM fetches
+//   9-A : last nonzero sample byte fetched
+//   B-C : sound commands written by the 68020
+//   D-E : sound commands read by the 6809
+//   F   : peak |snd_left| high nibble (0 = no audio produced)
 // ---------------------------------------------------------------------------
 assign st_dout =
-    view == 4'h0 ? { 4'h0, task_ever, a2_ever, a3_ever, a4_ever } :
-    view == 4'h1 ? { 4'h1, a5_ever, sf_pal_wr, sf_snd_wr, sf_nvram_wr } :
-    view == 4'h2 ? { 4'h2, pc_now2[ 3: 0] } :
-    view == 4'h3 ? { 4'h3, pc_now2[ 7: 4] } :
-    view == 4'h4 ? { 4'h4, pc_now2[11: 8] } :
-    view == 4'h5 ? { 4'h5, pc_now2[15:12] } :
-    view == 4'h6 ? { 4'h6, pc_now2[19:16] } :
-    view == 4'h7 ? { 4'h7, pc_now2[23:20] } :
-    view == 4'h8 ? { 4'h8, dbg_vtest[3:0] } :
-    view == 4'h9 ? { 4'h9, dbg_vtest[7:4] } :
-    view == 4'hA ? { 4'hA, dbg_eswr[3:0] } :
-    view == 4'hB ? { 4'hB, dbg_eswr[7:4] } :
-    view == 4'hC ? { 4'hC, dbg_cmdw[3:0] } :
-    view == 4'hD ? { 4'hD, dbg_cmdw[7:4] } :
-    view == 4'hE ? { 4'hE, dbg_cmdr[3:0] } :
-                   { 4'hF, dbg_cmdr[7:4] };
+    view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
+    view == 4'h1 ? { 4'h1, dbg_eswr[3:0] } :
+    view == 4'h2 ? { 4'h2, dbg_eswr[7:4] } :
+    view == 4'h3 ? { 4'h3, dbg_actv[3:0] } :
+    view == 4'h4 ? { 4'h4, 3'd0, dbg_anyrun } :
+    view == 4'h5 ? { 4'h5, dbg_cr0[3:0] } :
+    view == 4'h6 ? { 4'h6, dbg_cr0[7:4] } :
+    view == 4'h7 ? { 4'h7, dbg_sromn[3:0] } :
+    view == 4'h8 ? { 4'h8, dbg_sromn[7:4] } :
+    view == 4'h9 ? { 4'h9, dbg_sromd[3:0] } :
+    view == 4'hA ? { 4'hA, dbg_sromd[7:4] } :
+    view == 4'hB ? { 4'hB, dbg_cmdw[3:0] } :
+    view == 4'hC ? { 4'hC, dbg_cmdw[7:4] } :
+    view == 4'hD ? { 4'hD, dbg_cmdr[3:0] } :
+    view == 4'hE ? { 4'hE, dbg_cmdr[7:4] } :
+                   { 4'hF, dbg_peak[15:12] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

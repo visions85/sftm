@@ -44,28 +44,11 @@ module sftm_blit(
                                     // -> VIDEO_INTSTATE |= VIDEOINT_BLITTER
     output     [4:0]  st_state,     // bring-up: live FSM state
     output            st_waiting,   // bring-up: stalled on a GROM fetch
-    // Diagnostic: transparent skips per 256 RLE literal pixels. The screen
-    // shows ~50% of glyph pixels missing while the raw-path background (same
-    // GROM fetcher, same VRAM write path) renders correctly, so the fault is
-    // confined to the RLE path plus TRANSPARENT. This splits it: ~128 means
-    // half the fetched source bytes read as 0xFF and are skipped, ~0 means the
-    // data is right and the writes are lost downstream.
-    output reg [7:0]  st_rletp,
     // grm3 read-back self-test. The real text glyphs live in grm3 (blits
     // carry bank=2 -> GROM address 0x207xxxx), and a Python decode of the
     // ROM confirms 0x207DE86 begins 81 FF 07 2C. Fetch those four bytes
     // through the normal fetcher before any blit and report which matched,
     // plus byte 0 raw so a wrong byte order is visible.
-    // PASSIVE grm3 capture. Every previous probe hijacked this fetcher and
-    // was unreliable for it -- the control pass read 0xFF from grom, a bank
-    // the blitter demonstrably reads correctly. This one takes no fetch of
-    // its own: it just latches the first source byte of a real glyph blit
-    // (one whose grom_base is in the grm3 region) as it flows through the
-    // normal RLE path, plus enough of grom_base to identify which glyph, so
-    // the bytes can be checked against the ROM offline.
-    output reg [7:0]  st_g3b0,     // first source byte of that blit
-    output reg [11:0] st_g3addr,   // grom_base[11:0] of that blit
-    output reg        st_g3vld,
 
 
     // video registers, valid at start (indices are byte offset / 2)
@@ -338,40 +321,6 @@ reg [15:0] shrow_q;
 
 wire vw_free = !vw_req || vw_rdy;
 
-// Passive capture of the first source byte of a grm3-sourced blit. fetch_ok
-// means the cache holds the word for the current fetch_addr, and in the RLE
-// states fetch_addr is src_addr, so pix is exactly the byte at src_addr.
-wire blit_is3   = grom_base >= 26'h2000000;
-wire in_rle     = state == S_RLE_RUN || state == S_RLE_VAL || state == S_RLE_PIX;
-
-always @(posedge clk) begin
-    if( rst ) begin
-        st_g3b0 <= 8'd0; st_g3addr <= 12'd0; st_g3vld <= 1'b0;
-    end else if( !st_g3vld && in_rle && blit_is3 && fetch_ok
-                 && src_addr == grom_base ) begin
-        st_g3b0   <= pix;
-        st_g3addr <= grom_base[11:0];
-        st_g3vld  <= 1'b1;      // hold the first one; it is enough to check
-    end
-end
-
-// transparent-skip census over a 256-pixel window of RLE literal runs
-reg [7:0] lit_win, tp_win;
-wire      lit_step  = state == S_RLE_PIX && rle_phase == 2'd1 && rle_lit
-                      && fetch_ok && vw_free;
-
-always @(posedge clk) begin
-    if( rst ) begin
-        lit_win <= 8'd0; tp_win <= 8'd0; st_rletp <= 8'd0;
-    end else if( lit_step ) begin
-        lit_win <= lit_win + 8'd1;
-        if( lit_win == 8'hFF ) begin
-            st_rletp <= tp_win + (pix_transp ? 8'd1 : 8'd0);
-            tp_win   <= 8'd0;
-        end else if( pix_transp )
-            tp_win <= tp_win + 8'd1;
-    end
-end
 
 // ---------------------------------------------------------------------------
 // Main FSM

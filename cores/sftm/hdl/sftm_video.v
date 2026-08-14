@@ -92,30 +92,7 @@ module sftm_video(
     output reg [ 4:0] green,
     output reg [ 4:0] blue,
     input      [ 3:0] gfx_en,
-    input      [ 7:0] debug_bus,
-
-    // bring-up diagnostics: the live interrupt registers. INTENABLE is
-    // written from a runtime RAM shadow ($31A4) by the game, so its value
-    // cannot be determined by reading the ROM -- it has to be measured.
-    output     [15:0] st_intstate,
-    output     [15:0] st_intenable,
-    output reg [15:0] st_intsticky,   // OR of every INTSTATE value ever seen
-    output reg [15:0] st_intscanline, // what the game left in INTSCANLINE
-    output reg [ 7:0] st_blitflags,   // {sh_ever,bd_ever,cmd_ever,busy,waiting,state[2:0]}
-    output     [15:0] st_islmod,      // INTSCANLINE after modulo reduction
-    output reg [ 7:0] st_scanhits,    // saturating count of scanline_hit pulses
-    output reg [ 8:0] st_vcntmax,     // highest vcnt reached (sanity on the CRT)
-    // INTSTATE reads 0 live while its sticky-OR says bit2 HAS been set and
-    // scanline_hit fires constantly -- so something clears it as fast as it
-    // is set. Only a CPU write to 0x500004 can. Capture exactly that.
-    output reg [15:0] st_lastack,     // last value written to INTSTATE (INTACK)
-    output reg [ 7:0] st_ackcnt,      // saturating count of INTACK writes
-    output reg [ 7:0] st_b2rise,      // saturating count of INTSTATE bit2 rises
-    output     [ 7:0] st_vtest,       // startup VRAM write/readback self-test
-    output     [ 7:0] st_rletp,       // transparent skips per 256 RLE literal px
-    output     [ 7:0] st_g3b0,        // first source byte of a grm3 blit
-    output     [11:0] st_g3addr,      // grom_base[11:0] of that blit
-    output            st_g3vld
+    input      [ 7:0] debug_bus
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -150,8 +127,6 @@ assign vreg_dout = ridx == 6'd0       ? ((vreg_q & ~16'h0008) | 16'h0004 | 16'h0
                    ridx == R_TRANSFER && c3_active ? xfer_rdata :
                    vreg_q;
 
-assign st_intstate  = vregs[R_INTSTATE];
-assign st_intenable = vregs[R_INTENABLE];
 
 assign scan_irq = |(vregs[R_INTSTATE] & vregs[R_INTENABLE] & VIDEOINT_SCANLINE);
 assign blit_irq = |(vregs[R_INTSTATE] & vregs[R_INTENABLE] & VIDEOINT_BLITTER);
@@ -195,26 +170,14 @@ end
 
 wire scanline_hit = pxl_cen && line_end && vcnt == isl_mod[8:0];
 
-assign st_islmod = isl_mod;
 
 always @(posedge clk) begin
     if( rst ) begin
-        st_scanhits <= 8'd0;
-        st_vcntmax  <= 9'd0;
-        st_lastack  <= 16'd0;
-        st_ackcnt   <= 8'd0;
-        st_b2rise   <= 8'd0;
         b2_d        <= 1'b0;
     end else begin
-        if( scanline_hit && st_scanhits != 8'hFF ) st_scanhits <= st_scanhits + 8'd1;
-        if( vcnt > st_vcntmax ) st_vcntmax <= vcnt;
         if( vreg_wr && ridx == R_INTSTATE ) begin
-            st_lastack <= cpu_dout;
-            if( st_ackcnt != 8'hFF ) st_ackcnt <= st_ackcnt + 8'd1;
         end
         b2_d <= vregs[R_INTSTATE][2];
-        if( vregs[R_INTSTATE][2] && !b2_d && st_b2rise != 8'hFF )
-            st_b2rise <= st_b2rise + 8'd1;
     end
 end
 
@@ -253,22 +216,6 @@ wire [15:0] vw_data, vr_data;
 
 wire [4:0] blit_state;
 wire       blit_waiting;
-reg        sh_ever, bd_ever, cmd_ever;
-
-always @(posedge clk) begin
-    if( rst ) begin
-        sh_ever <= 0; bd_ever <= 0; cmd_ever <= 0;
-        st_intsticky <= 0;
-    end else begin
-        if( scanline_hit ) sh_ever  <= 1'b1;
-        if( blit_done    ) bd_ever  <= 1'b1;
-        if( cmd_stb      ) cmd_ever <= 1'b1;
-        st_intsticky <= st_intsticky | vregs[R_INTSTATE];
-    end
-    st_intscanline <= vregs[R_INTSCANLINE];
-    st_blitflags   <= { sh_ever, bd_ever, cmd_ever, blit_busy, blit_waiting,
-                        blit_state[2:0] };
-end
 
 sftm_blit u_blit(
     .rst        ( rst           ),
@@ -279,10 +226,6 @@ sftm_blit u_blit(
     .done_pulse ( blit_done     ),
     .st_state   ( blit_state    ),
     .st_waiting ( blit_waiting  ),
-    .st_rletp   ( st_rletp      ),
-    .st_g3addr  ( st_g3addr     ),
-    .st_g3vld   ( st_g3vld      ),
-    .st_g3b0    ( st_g3b0       ),
 
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06
@@ -378,8 +321,7 @@ sftm_vram u_vram(
     .line_base  ( line_base     ),
     .line_sel   ( line_sel      ),
     .scan_x     ( scan_x        ),
-    .scan_pen   ( scan_pen      ),
-    .st_vtest   ( st_vtest      )
+    .scan_pen   ( scan_pen      )
 );
 
 // ---------------------------------------------------------------------------

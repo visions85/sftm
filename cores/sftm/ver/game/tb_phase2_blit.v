@@ -310,7 +310,9 @@ endfunction
 
 reg seen_scan = 0;
 always @(posedge clk) begin
-    if( pxl_cen && u_video.vcnt == 9'd20 && u_video.hcnt == 9'd11 &&
+    // active video starts at hcnt 50 (HBLANK_END), so screen x maps to
+    // hcnt = x + 50 -- see tb_htime.v
+    if( pxl_cen && u_video.vcnt == 9'd20 && u_video.hcnt == 9'd61 &&
         u_video.scan_pen == 16'h1202 )
         seen_scan <= 1;
 end

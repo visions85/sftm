@@ -73,10 +73,7 @@ module sftm_vram(
     input             line_sel,      // buffer to fill
     // scanout read of the other buffer
     input      [ 8:0] scan_x,
-    output reg [15:0] scan_pen,
-
-    // startup VRAM self-test result: {done, 3'd0, mismatch count saturating at 15}
-    output     [ 7:0] st_vtest
+    output reg [15:0] scan_pen
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
@@ -89,31 +86,6 @@ localparam [18:0] VRAM_MASK = 19'h7FFFF;
 // VRAM is therefore biased clear of grm3's 512 KB.
 localparam [20:0] VRAM_ORG = 21'h40000;      // 16-bit words (= 512 KB)
 
-// ---------------------------------------------------------------------------
-// Startup VRAM self-test.
-//
-// Simulation (scratchpad tb_rle_long.v) shows the blitter and this module
-// write every pixel of a 100-pixel RLE literal run correctly, including the
-// two-plane pass and with a model faithful to jtframe_ram_rq's "cs must
-// toggle per request" rule. Hardware still draws every other pixel. That
-// leaves the real SDRAM path as the only untested link, so measure it
-// directly: before the CPU can have issued any blit, write a known ramp and
-// read it back, counting mismatches.
-//
-// A nonzero count proves writes (or reads) are being lost in the SDRAM path
-// rather than in the blitter.
-// ---------------------------------------------------------------------------
-localparam [8:0] TEST_N = 9'd256;
-localparam [18:0] TEST_BASE = 19'h01000;
-
-reg  [1:0] ts;              // 0=write 1=drain 2=read 3=done
-reg  [8:0] ti;
-reg  [3:0] tbad;
-reg        t_wreq, t_rreq;
-wire       tdone = ts == 2'd3;
-wire [15:0] t_expect = { 8'hA5, ti[7:0] };
-
-assign st_vtest = { tdone, 3'd0, tbad };
 
 // ---------------------------------------------------------------------------
 // write FIFO (16 deep)
@@ -124,14 +96,9 @@ reg [ 4:0] wf_cnt;
 
 wire wf_full  = wf_cnt == 5'd16;
 wire wf_empty = wf_cnt == 5'd0;
-assign vw_rdy = !wf_full && tdone;
+assign vw_rdy = !wf_full;
 
-wire        f_req  = tdone ? vw_req  : t_wreq;
-wire        f_plane= tdone ? vw_plane : 1'b0;
-wire [18:0] f_addr = tdone ? vw_addr : (TEST_BASE + {10'd0, ti});
-wire [15:0] f_data = tdone ? vw_data : t_expect;
-
-wire wf_push = f_req && !wf_full;
+wire wf_push = vw_req && !wf_full;
 reg  wf_pop;
 
 always @(posedge clk) begin
@@ -141,7 +108,7 @@ always @(posedge clk) begin
         wf_cnt <= 0;
     end else begin
         if( wf_push ) begin
-            wfifo[wf_wr] <= { f_plane, f_addr, f_data };
+            wfifo[wf_wr] <= { vw_plane, vw_addr, vw_data };
             wf_wr <= wf_wr + 4'd1;
         end
         if( wf_pop )
@@ -156,31 +123,6 @@ end
 
 wire [35:0] wf_head = wfifo[wf_rd];
 
-always @(posedge clk) begin
-    if( rst ) begin
-        ts <= 2'd0; ti <= 9'd0; tbad <= 4'd0;
-        t_wreq <= 0; t_rreq <= 0;
-    end else case( ts )
-        2'd0: begin                       // write the ramp
-            t_wreq <= 1;
-            if( t_wreq && !wf_full ) begin
-                if( ti == TEST_N-9'd1 ) begin
-                    t_wreq <= 0; ti <= 9'd0; ts <= 2'd1;
-                end else
-                    ti <= ti + 9'd1;
-            end
-        end
-        2'd1: if( wf_empty ) begin ts <= 2'd2; t_rreq <= 1; end
-        2'd2: begin                       // read back and compare
-            if( vr_ack ) begin
-                if( vr_data != t_expect && tbad != 4'hF ) tbad <= tbad + 4'd1;
-                if( ti == TEST_N-9'd1 ) begin t_rreq <= 0; ts <= 2'd3; end
-                else ti <= ti + 9'd1;
-            end
-        end
-        default: ;
-    endcase
-end
 
 // ---------------------------------------------------------------------------
 // line buffers (2 x 512 x 16)
@@ -260,10 +202,9 @@ always @(posedge clk) begin
                 vramrd_cs   <= 1;
                 settle      <= 0;
                 astate      <= A_WAIT;
-            end else if( (tdone ? vr_req : t_rreq) && wf_empty ) begin
+            end else if( vr_req && wf_empty ) begin
                 owner     <= 2'd1;
-                vram_addr <= VRAM_ORG + (tdone ? { vr_plane, vr_addr }
-                                              : { 1'b0, (TEST_BASE + {10'd0, ti}) });
+                vram_addr <= VRAM_ORG + { vr_plane, vr_addr };
                 vram_we   <= 0;
                 vram_cs   <= 1;
                 settle    <= 0;
