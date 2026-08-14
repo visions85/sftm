@@ -125,9 +125,11 @@ module sftm_main #(
     input      [ 7:0] dbg_b2rise,
     input      [ 7:0] dbg_vtest,
     input      [ 7:0] dbg_rletp,
-    input      [ 3:0] dbg_g3ok,
+    input      [ 3:0] dbg_g3ok0,
+    input      [ 3:0] dbg_g3ok1,
+    input      [ 3:0] dbg_g3ok2,
     input      [ 7:0] dbg_g3b0,
-    input      [ 3:0] dbg_g3pass,       // count of INTSTATE bit2 rising edges
+       // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
 
@@ -757,10 +759,10 @@ assign st_dout =
     view == 4'h9 ? { 4'h9, dbg_vtest[7:4] } :
     view == 4'hA ? { 4'hA, pc_max_hi[11: 8] } :
     view == 4'hB ? { 4'hB, tick_cnt[3:0] } :
-    view == 4'hC ? { 4'hC, dbg_g3pass } :
-    view == 4'hD ? { 4'hD, dbg_g3ok } :
-    view == 4'hE ? { 4'hE, dbg_g3b0[3:0] } :
-                   { 4'hF, dbg_g3b0[7:4] };
+    view == 4'hC ? { 4'hC, dbg_g3ok0 } :
+    view == 4'hD ? { 4'hD, dbg_g3ok1 } :
+    view == 4'hE ? { 4'hE, dbg_g3ok2 } :
+                   { 4'hF, dbg_g3b0[7:4] };  // grm3 base byte0, high nibble
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

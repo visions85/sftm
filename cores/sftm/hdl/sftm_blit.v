@@ -56,9 +56,11 @@ module sftm_blit(
     // ROM confirms 0x207DE86 begins 81 FF 07 2C. Fetch those four bytes
     // through the normal fetcher before any blit and report which matched,
     // plus byte 0 raw so a wrong byte order is visible.
-    output reg [3:0]  st_g3ok,
+    output reg [3:0]  st_g3ok0,   // grom  0x0000000 control
+    output reg [3:0]  st_g3ok1,   // grm3  0x2000000
+    output reg [3:0]  st_g3ok2,   // grm3  0x207DE86
     output reg [7:0]  st_g3b0,
-    output reg [3:0]  st_g3pass,
+
 
     // video registers, valid at start (indices are byte offset / 2)
     input      [15:0] r_flags,      // 0x06 VIDEO_TRANSFER_FLAGS
@@ -366,17 +368,29 @@ wire [7:0] g3_expect =
 
 always @(posedge clk) begin
     if( rst ) begin
-        g3i <= 0; g3run <= 0; st_g3ok <= 0; st_g3b0 <= 0; g3wait <= 0; g3pass <= 0;
+        g3i <= 0; g3run <= 0; st_g3b0 <= 0; g3wait <= 0; g3pass <= 0;
+        st_g3ok0 <= 0; st_g3ok1 <= 0; st_g3ok2 <= 0;
     end else begin
         g3wait <= g3wait + 26'd1;
         if( &g3wait ) begin              // ~1.4 s: start a fresh pass
-            g3run   <= 1'b1;
-            g3i     <= 2'd0;
-            st_g3ok <= 4'd0;
+            g3run <= 1'b1;
+            g3i   <= 2'd0;
+            // clear only this pass's result, so each view stays correlated
+            // with its own address -- the previous version rotated a single
+            // result register and the pass id was sampled in a different
+            // frame than the mask, making them impossible to pair up
+            case( g3pass )
+                2'd0: st_g3ok0 <= 4'd0;
+                2'd1: st_g3ok1 <= 4'd0;
+                default: st_g3ok2 <= 4'd0;
+            endcase
         end else if( g3run && state == S_IDLE && fetch_ok ) begin
-            if( pix == g3_expect ) st_g3ok[g3i] <= 1'b1;
-            if( g3i == 2'd0 ) st_g3b0 <= pix;
-            if( g3i == 2'd3 ) st_g3pass <= { 2'd0, g3pass };
+            if( pix == g3_expect ) case( g3pass )
+                2'd0: st_g3ok0[g3i] <= 1'b1;
+                2'd1: st_g3ok1[g3i] <= 1'b1;
+                default: st_g3ok2[g3i] <= 1'b1;
+            endcase
+            if( g3i == 2'd0 && g3pass == 2'd1 ) st_g3b0 <= pix;  // grm3 base byte
             if( g3i == 2'd3 ) begin
                 g3run  <= 1'b0;
                 g3pass <= g3pass == 2'd2 ? 2'd0 : g3pass + 2'd1;

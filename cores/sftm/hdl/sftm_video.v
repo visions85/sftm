@@ -113,9 +113,10 @@ module sftm_video(
     output reg [ 7:0] st_b2rise,      // saturating count of INTSTATE bit2 rises
     output     [ 7:0] st_vtest,       // startup VRAM write/readback self-test
     output     [ 7:0] st_rletp,       // transparent skips per 256 RLE literal px
-    output     [ 3:0] st_g3ok,        // grm3 read-back self-test
-    output     [ 7:0] st_g3b0,
-    output     [ 3:0] st_g3pass
+    output     [ 3:0] st_g3ok0,       // probe: grom control
+    output     [ 3:0] st_g3ok1,       // probe: grm3 base
+    output     [ 3:0] st_g3ok2,       // probe: grm3 glyph
+    output     [ 7:0] st_g3b0
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -280,9 +281,11 @@ sftm_blit u_blit(
     .st_state   ( blit_state    ),
     .st_waiting ( blit_waiting  ),
     .st_rletp   ( st_rletp      ),
-    .st_g3ok    ( st_g3ok       ),
+    .st_g3ok0   ( st_g3ok0      ),
+    .st_g3ok1   ( st_g3ok1      ),
+    .st_g3ok2   ( st_g3ok2      ),
     .st_g3b0    ( st_g3b0       ),
-    .st_g3pass  ( st_g3pass     ),
+
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06
     .r_width    ( vregs[6'h07]  ),  // 0x0e
