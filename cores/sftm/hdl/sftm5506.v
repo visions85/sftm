@@ -370,9 +370,17 @@ wire        bank_ok1  = bank == 2'd0 ? addr_int1 < 21'h100000 :
 wire        bank_ok2  = bank == 2'd0 ? addr_int2 < 21'h100000 :
                         bank == 2'd3 ? addr_int2 < 21'h080000 : 1'b0;
 
-// region word addr -> SDRAM byte addr: bank0 at 0, bank3 at +0x200000
+// region word addr -> SDRAM byte addr: bank0 at 0, bank3 at +0x200000.
+// SROM_ORG then biases the pair into bank 0 of the SDRAM, where the samples
+// now live alongside the 68020 and 6809 program ROMs. grom needed a whole
+// bank to itself per 16 MB half (see cfg/macros.def), which pushed srom out
+// of its own bank. The download stream puts ensoniq.0 at byte 0x150000, and
+// bank 0 starts at stream byte 0, so that offset is also the bank offset.
+// It is even, so srom_byte's cur_baddr[0] byte select is unaffected.
+localparam [21:0] SROM_ORG = 22'h150000;
 function [21:0] srom_baddr(input [1:0] b, input [20:0] w);
-    srom_baddr = b == 2'd0 ? {1'b0, w} : 22'h200000 + {3'd0, w[18:0]};
+    srom_baddr = SROM_ORG +
+                 (b == 2'd0 ? {1'b0, w} : 22'h200000 + {3'd0, w[18:0]});
 endfunction
 
 wire [ 7:0] srom_byte = cur_baddr[0] ? srom_data[15:8] : srom_data[7:0];

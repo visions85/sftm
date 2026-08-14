@@ -25,12 +25,13 @@ integer k;
 // ---------------------------------------------------------------------------
 // GROM model (data[7:0] = even byte address), 3-cycle ok latency
 // ---------------------------------------------------------------------------
-wire [24:1] grom_addr;
+wire [23:1] grom_addr;
 wire        grom_cs;
 reg  [ 7:0] gmem[0:2047];
 reg         grom_ok = 0;
 reg  [24:1] gok_addr;
 reg  [ 1:0] gok_cnt;
+wire        grom1_cs;
 wire [ 9:0] gmem_a = grom_addr[10:1];
 wire [15:0] grom_data = { gmem[{gmem_a,1'b1}], gmem[{gmem_a,1'b0}] };
 
@@ -173,7 +174,8 @@ sftm_video u_video(
     .vreg_dout(vreg_dout), .pal_dout(pal_dout), .cpu_wait(vid_wait),
     .plane_en(2'b11), .grom_bank(2'b00),
     .color_latch0(PEN0), .color_latch1(7'h00),
-    .grom_addr(grom_addr), .grom_data(grom_data), .grom_cs(grom_cs), .grom_ok(grom_ok),
+    .grom0_addr(grom_addr), .grom0_data(grom_data), .grom0_cs(grom_cs), .grom0_ok(grom_ok),
+    .grom1_addr(), .grom1_data(16'h0000), .grom1_cs(grom1_cs), .grom1_ok(1'b1),
     .grm3_addr(grm3_addr), .grm3_data(16'h0000), .grm3_cs(grm3_cs), .grm3_ok(1'b1),
     .vram_addr(vram_addr), .vram_data(vram_data), .vram_din(vram_din),
     .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(vram_ok),

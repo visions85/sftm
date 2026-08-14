@@ -64,13 +64,22 @@ JTFRAME_SDRAM_BANKS
 # therefore runs on 64 MB and 128 MB modules alike. See doc/PORTING.md.
 JTFRAME_SDRAM_LARGE
 #
-# SDRAM bank byte-offset boundaries in the ROM download stream.
-# Download order: BA0 (prog+snd), BA1 (srom), BA2 (grom), BA3 (grm3).
-# maindata=1MB(0x100000) soundcpu=0x50000(pad 0x10000+ROM 0x40000)
-# ensoniq.0=2MB(0x200000) ensoniq.3=512KB(0x80000)
-# grom rm0+rm1=32MB(0x2000000) grom grm3=512KB(0x80000)
-JTFRAME_BA1_START=0x150000
-JTFRAME_BA2_START=0x3D0000
+# SDRAM bank byte-offset boundaries in the ROM download stream. The stream is
+# maindata 1MB(0x100000), soundcpu 0x50000 (pad 0x10000 + ROM 0x40000),
+# ensoniq.0 2MB(0x200000), ensoniq.3 512KB(0x80000), then the single grom
+# region: rm0 16MB(0x1000000), rm1 16MB(0x1000000), grm3 512KB(0x80000).
+#
+#   BA0 0x0000000  main + snd + srom        0x3D0000  (3.8 MB)
+#   BA1 0x03D0000  grom0 = rm0             0x1000000  (16 MB, fills the bank)
+#   BA2 0x13D0000  grom1 = rm1             0x1000000  (16 MB, fills the bank)
+#   BA3 0x23D0000  grm3 + vram + vramrd     ~0x180000 (1.5 MB)
+#
+# Every bank is <= 16 MB, so this layout also runs on a 64 MB module. Note the
+# BA1/BA2 boundaries fall INSIDE the grom region; that is fine for the
+# JTFRAME_BA*_START macros, which are plain byte offsets, but it is exactly
+# what the JTFRAME_SDRAM_XL header.offset mechanism cannot express.
+JTFRAME_BA1_START=0x3D0000
+JTFRAME_BA2_START=0x13D0000
 JTFRAME_BA3_START=0x23D0000
 # Bank 3 hosts the vram R/W bus (Phase 2: VRAM lives in SDRAM, see
 # doc/PHASE2-DESIGN.md), which requires write access to the bank.

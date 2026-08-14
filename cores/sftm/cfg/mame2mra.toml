@@ -2,9 +2,17 @@
 #
 # ROM download order must match SDRAM bank assignment in macros.def:
 #   BA0: maindata (1 MB, 32-bit) + soundcpu (256 KB, 8-bit)
-#   BA1: ensoniq.0 (2 MB, 16-bit) + ensoniq.3 (512 KB, 16-bit)
-#   BA2: grom rm0+rm1 (32 MB, 16-bit output from 32-bit interleave)
-#   BA3: grom grm3 (512 KB from grom offset 0x2000000)
+#        + ensoniq.0 (2 MB) + ensoniq.3 (512 KB), all 16-bit
+#   BA1: grom rm0 (16 MB, 16-bit output from 32-bit interleave)
+#   BA2: grom rm1 (16 MB)
+#   BA3: grom grm3 (512 KB, from grom offset 0x2000000)
+#
+# The BA1/BA2/BA3 boundaries fall INSIDE the single MAME `grom` region, which
+# mame2mra cannot split -- collect_rom_regions iterates MAME's own regions, so
+# a second toml entry for the same region emits nothing. That is why the bank
+# starts are plain byte offsets in macros.def rather than header.offset
+# entries. Do not switch to JTFRAME_SDRAM_XL: it forbids the byte offsets and
+# only accepts header offsets, which must land on region starts.
 
 [global]
 author   = ["SFTM contributors"]
@@ -30,18 +38,13 @@ regions = [
     { name="maindata", width=32 },
     # BA0: 6809 sound CPU ROM (8-bit, 256 KB loaded at MAME offset 0x10000)
     { name="soundcpu", width=8 },
-    # BA1: ES5506 sample ROMs (16-bit)
-    { name="ensoniq.0", width=16, start="JTFRAME_BA1_START" },
+    # BA0 (cont): ES5506 sample ROMs (16-bit). These land naturally at
+    # 0x150000 and 0x350000, which is where sftm5506.v's SROM_ORG expects them.
+    { name="ensoniq.0", width=16 },
     { name="ensoniq.3", width=16 },
-    # BA2: main graphics (rm0+rm1, 32 MB, 32-bit interleaved -> 16-bit SDRAM words)
-    { name="grom", width=32, start="JTFRAME_BA2_START" },
-    # BA3: grm3 extra graphics (512 KB at MAME grom offset 0x2000000).
-    # This second entry emits nothing -- mame2mra does not split a region, so
-    # the generated MRA contains ONE contiguous grom block (rm0 16 MB, rm1
-    # 16 MB, grm3 512 KB) and no BA3_START marker. That is still correct
-    # because JTFRAME_BA3_START in macros.def is set by hand to
-    # 0x3D0000 + 0x2000000 = 0x23D0000, which lands exactly on grm3. Kept for
-    # documentation; verify against the emitted MRA before changing it.
-    { name="grom", width=32, start="JTFRAME_BA3_START" },
+    # BA1/BA2/BA3: one contiguous grom block -- rm0 16 MB, rm1 16 MB, grm3
+    # 512 KB, 32-bit interleaved into 16-bit SDRAM words. The bank boundaries
+    # inside it are set by JTFRAME_BA2_START/BA3_START in macros.def.
+    { name="grom", width=32, start="JTFRAME_BA1_START" },
 ]
 order = ["maindata","soundcpu","ensoniq.0","ensoniq.3","grom"]

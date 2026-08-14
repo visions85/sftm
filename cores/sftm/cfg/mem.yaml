@@ -5,13 +5,22 @@
 # ROM regions — download order must match SDRAM bank order (see cfg/mame2mra.toml):
 #   prog   1.00 MB  4x256KB PROMs, 32-bit interleaved   (68EC020 program)
 #   snd    0.25 MB  sound CPU (6809)
+#   srom   2.50 MB  srom0 (2MB) + srom3 (512KB)  (ES5506 samples)
 #   grom  32.00 MB  rm0-0..3 + rm1-0..3 (blitter graphics)
 #   grm3   0.50 MB  sfm_grm3_0..3 (extra graphics plane)
-#   srom   2.50 MB  srom0 (2MB) + srom3 (512KB)  (ES5506 samples)
 #
-# Total ~36 MB -> requires the 128 MB SDRAM module. Banks are split so the big
-# 32 MB grom lives alone and the blitter (grom) and ES5506 (srom) never share a
-# bank, minimising read contention.
+# Total ~36 MB. NO BUS MAY BE WIDER THAN ITS BANK. JTFRAME_SDRAM_LARGE gives
+# four 16 MB banks, and a bus declared wider than that silently loses its top
+# address bit -- jtframe_romrq_bcache.v:114 forms the address as
+# offset + {{SDRAMW-AW{1'b0}}, addr_req}, and when AW > SDRAMW that
+# replication width goes NEGATIVE, with no Quartus warning. grom used to be
+# one 32 MB bus in one 16 MB bank, so grom_addr[24] was discarded: the rm1
+# mask ROMs aliased onto rm0 and, downloading second, overwrote them.
+# Confirmed on hardware; see cfg/macros.def.
+#
+# So grom is split at bit 24 into two 16 MB buses, one per bank, and srom
+# moves in beside the CPUs. Everything then fits four 16 MB banks, which also
+# means the core runs on 64 MB modules, not just 128 MB ones.
 #
 # NOTE: jtframe addr_width counts BYTE-address bits regardless of data_width;
 # the generated port is [addr_width-1 : log2(data_width/8)]. The previous
@@ -33,7 +42,7 @@ clocks:
 
 sdram:
   banks:
-    # ---- bank 0: program + sound CPU ------------------------------------
+    # ---- bank 0: program + sound CPU + ES5506 samples -------------------
     - buses:
         - name: main          # 68EC020 program, 32-bit ("prog" is reserved by JTFRAME for the download port)
           addr_width: 20       # 1 MB -> port [19:2]
@@ -48,15 +57,21 @@ sdram:
         - name: snd           # 6809 program, 8-bit
           addr_width: 21       # 2 MB window -> port [20:0]; data at +0x100000
           data_width: 8
-    # ---- bank 1: ES5506 sample ROM (16-bit words) -----------------------
-    - buses:
+        # ES5506 samples, biased by SROM_ORG (0x150000) in sftm5506.v -- the
+        # download puts ensoniq.0 there and bank 0 starts at stream byte 0.
+        # 4 MB window so the bus can reach srom3 at +0x350000.
         - name: srom
-          addr_width: 22       # 2.5 MB (srom0 2MB + srom3 512KB) -> port [21:1]
+          addr_width: 22       # 4 MB window -> port [21:1]; data at +0x150000
           data_width: 16
-    # ---- bank 2: main graphics (32 MB, 128 MB module required) ----------
+    # ---- bank 1: blitter graphics, rm0 half (grom 0x0000000-0x0FFFFFF) --
     - buses:
-        - name: grom          # blitter source data
-          addr_width: 25       # 32 MB -> port [24:1]
+        - name: grom0
+          addr_width: 24       # 16 MB -> port [23:1]; exactly fills the bank
+          data_width: 16
+    # ---- bank 2: blitter graphics, rm1 half (grom 0x1000000-0x1FFFFFF) --
+    - buses:
+        - name: grom1
+          addr_width: 24       # 16 MB -> port [23:1]; exactly fills the bank
           data_width: 16
     # ---- bank 3: VRAM + extra graphics plane ----------------------------
     # VRAM first: the vendored jtframe's ram1_2slots implements the R/W
