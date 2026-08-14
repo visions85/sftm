@@ -58,6 +58,7 @@ module sftm_blit(
     // plus byte 0 raw so a wrong byte order is visible.
     output reg [3:0]  st_g3ok,
     output reg [7:0]  st_g3b0,
+    output reg [3:0]  st_g3pass,
 
     // video registers, valid at start (indices are byte offset / 2)
     input      [15:0] r_flags,      // 0x06 VIDEO_TRANSFER_FLAGS
@@ -221,7 +222,15 @@ assign st_state = state;
 // carry bank=2, giving GROM address 0x207xxxx -- and a Python decode of the
 // ROM shows 0x207DE86 begins 81 FF 07 2C.
 // ---------------------------------------------------------------------------
+// Three probes, to separate "bank 3 gets no download" from "download
+// truncated" from "our grm3 addressing is wrong":
+//   pass 0: grom  0x0000000 -> 19 FF 81 FF   (bank 2 control: known-good path)
+//   pass 1: grm3  0x2000000 -> 8B E7 D0 E7   (first byte of the grm3 region)
+//   pass 2: grm3  0x207DE86 -> 81 FF 07 2C   (the glyph the MAME tap named)
 localparam [25:0] G3_BASE = 26'h207DE86;
+reg  [1:0] g3pass;
+wire [25:0] g3_base = g3pass==2'd0 ? 26'h0000000 :
+                      g3pass==2'd1 ? 26'h2000000 : G3_BASE;
 reg [1:0] g3i;
 // One-shot probes keep sampling too early: grm3 is the LAST region of a
 // 37 MB download, so it is written many seconds in, and a fixed delay after
@@ -250,7 +259,7 @@ always @(*) begin
     fetch_addr = mod_len({6'd0, src_addr});
     if( g3run && state == S_IDLE ) begin
         fetch_req  = 1'b1;
-        fetch_addr = G3_BASE + {24'd0, g3i};
+        fetch_addr = g3_base + {24'd0, g3i};
     end else
     case( state )
         S_PIX: begin
@@ -350,13 +359,14 @@ reg [15:0] shrow_q;
 wire vw_free = !vw_req || vw_rdy;
 
 // grm3 self-test logic: fetch four known bytes before any blit can run
-wire [7:0] g3_expect = g3i==2'd0 ? 8'h81 :
-                       g3i==2'd1 ? 8'hFF :
-                       g3i==2'd2 ? 8'h07 : 8'h2C;
+wire [7:0] g3_expect =
+    g3pass==2'd0 ? (g3i==2'd0 ? 8'h19 : g3i==2'd1 ? 8'hFF : g3i==2'd2 ? 8'h81 : 8'hFF) :
+    g3pass==2'd1 ? (g3i==2'd0 ? 8'h8B : g3i==2'd1 ? 8'hE7 : g3i==2'd2 ? 8'hD0 : 8'hE7) :
+                   (g3i==2'd0 ? 8'h81 : g3i==2'd1 ? 8'hFF : g3i==2'd2 ? 8'h07 : 8'h2C);
 
 always @(posedge clk) begin
     if( rst ) begin
-        g3i <= 0; g3run <= 0; st_g3ok <= 0; st_g3b0 <= 0; g3wait <= 0;
+        g3i <= 0; g3run <= 0; st_g3ok <= 0; st_g3b0 <= 0; g3wait <= 0; g3pass <= 0;
     end else begin
         g3wait <= g3wait + 26'd1;
         if( &g3wait ) begin              // ~1.4 s: start a fresh pass
@@ -366,7 +376,11 @@ always @(posedge clk) begin
         end else if( g3run && state == S_IDLE && fetch_ok ) begin
             if( pix == g3_expect ) st_g3ok[g3i] <= 1'b1;
             if( g3i == 2'd0 ) st_g3b0 <= pix;
-            if( g3i == 2'd3 ) g3run <= 1'b0;
+            if( g3i == 2'd3 ) st_g3pass <= { 2'd0, g3pass };
+            if( g3i == 2'd3 ) begin
+                g3run  <= 1'b0;
+                g3pass <= g3pass == 2'd2 ? 2'd0 : g3pass + 2'd1;
+            end
             g3i <= g3i + 2'd1;
         end
     end
