@@ -59,6 +59,15 @@ module sftm5506(
     output reg        srom_cs,
     input             srom_ok,
 
+    // Sample-ROM observation. The 6809 now programs the chip (ES5506
+    // register writes saturate on hardware) but audio output stays 0, so
+    // split the remaining possibilities: no fetches at all means the voices
+    // were never started, fetches returning zero means the srom mapping or
+    // the ROM itself is wrong, and live nonzero data means the fault is
+    // downstream in the voice/mix pipeline.
+    output reg [ 7:0] st_sromn,     // saturating count of completed fetches
+    output reg [ 7:0] st_sromd,     // last sample byte fetched
+
     // stereo output, refreshed once per sample period
     output reg signed [15:0] snd_left,
     output reg signed [15:0] snd_right,
@@ -357,6 +366,8 @@ always @(posedge clk) begin
     if( rst ) begin
         estate  <= E_IDLE;
         srom_cs <= 0;
+        st_sromn <= 8'd0;
+        st_sromd <= 8'd0;
         hw_pend <= 0;
         irqv_ack<= 0;
         page    <= 0;
@@ -495,6 +506,8 @@ always @(posedge clk) begin
                 srom_settle <= srom_settle + 2'd1;
             else if( srom_ok ) begin
                 srom_cs <= 0;
+                if( st_sromn != 8'hFF ) st_sromn <= st_sromn + 8'd1;
+                if( srom_byte != 8'd0 ) st_sromd <= srom_byte;
                 if( !fetch2 ) begin
                     val1   <= fetched;
                     estate <= E_ADDR2;

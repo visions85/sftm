@@ -236,6 +236,9 @@ initial begin
              u_snd.st_eswr, u_snd.st_peak);
     check( u_snd.st_eswr != 8'd0,  "probe counts ES5506 register writes" );
     check( u_snd.st_peak != 16'd0, "probe sees a nonzero audio peak" );
+    $display("srom probe: fetches=%0d  last sample byte=0x%02X",
+             u_snd.st_sromn, u_snd.st_sromd);
+    check( u_snd.st_sromn != 8'd0, "probe counts ES5506 sample fetches" );
 
     check( errors == 0, "ALL PHASE 3 CHECKS" );
     $finish;

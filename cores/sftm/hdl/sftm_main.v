@@ -129,6 +129,8 @@ module sftm_main #(
     input             dbg_g3vld,
     input      [ 7:0] dbg_eswr,
     input      [15:0] dbg_peak,
+    input      [ 7:0] dbg_sromn,
+    input      [ 7:0] dbg_sromd,
     input      [ 7:0] dbg_g3b0,
        // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
@@ -744,7 +746,8 @@ end
 //   8   : VRAM self-test mismatch count (0 = every word read back correctly)
 //   9   : VRAM self-test status, bit3 = test finished
 //   A-B : ES5506 register writes by the 6809 (saturating; 0 = CPU not running)
-//   C-F : peak |snd_left| (0 = no audio produced)
+//   C-D : ES5506 sample-ROM fetches (0 = no voice ever started)
+//   E-F : last nonzero sample byte fetched (0 = srom reads return nothing)
 //   A   : pc_max upper 4 bits
 //   B-C : tick write count      D-E : wrap-branch count
 //   F   : scanline_hit high nibble
@@ -762,10 +765,10 @@ assign st_dout =
     view == 4'h9 ? { 4'h9, dbg_vtest[7:4] } :
     view == 4'hA ? { 4'hA, dbg_eswr[3:0] } :
     view == 4'hB ? { 4'hB, dbg_eswr[7:4] } :
-    view == 4'hC ? { 4'hC, dbg_peak[ 3: 0] } :
-    view == 4'hD ? { 4'hD, dbg_peak[ 7: 4] } :
-    view == 4'hE ? { 4'hE, dbg_peak[11: 8] } :
-                   { 4'hF, dbg_peak[15:12] };
+    view == 4'hC ? { 4'hC, dbg_sromn[3:0] } :
+    view == 4'hD ? { 4'hD, dbg_sromn[7:4] } :
+    view == 4'hE ? { 4'hE, dbg_sromd[3:0] } :
+                   { 4'hF, dbg_sromd[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

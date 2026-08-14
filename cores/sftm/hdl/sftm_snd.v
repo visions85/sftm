@@ -71,7 +71,9 @@ module sftm_snd(
     // correctly; st_peak is the largest |snd_left| seen, which additionally
     // requires the sample ROM path to work.
     output reg [ 7:0] st_eswr,
-    output reg [15:0] st_peak
+    output reg [15:0] st_peak,
+    output     [ 7:0] st_sromn,   // ES5506 sample fetches
+    output     [ 7:0] st_sromd    // last sample byte
 );
 
 // ---------------------------------------------------------------------------
@@ -204,6 +206,8 @@ end
 wire       es_rd = cen_E && es_cs &&  RnW;
 
 sftm5506 u_es(
+    .st_sromn  ( st_sromn   ),
+    .st_sromd  ( st_sromd   ),
     .rst       ( rst        ),
     .clk       ( clk        ),
     .es_cen    ( es_cen     ),
