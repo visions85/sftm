@@ -12,8 +12,11 @@
 #
 # The .rbf output will be at:
 #   release/mister/sftm.rbf   (Quartus project is named 'sftm')
-#   release/mister/jtsftm.rbf (copy created after synthesis for MRA compatibility;
-#                               the MRA <rbf> tag uses the JTFRAME jt-prefix name)
+#
+# The 'jt' prefix belongs to JOTEGO's own cores, so this core ships as 'sftm'.
+# JTFRAME's generators hardcode that prefix in two places -- the MRA <rbf> tag
+# and the generated wrapper module name -- so the tag is rewritten below and
+# the wrapper keeps its generated name (it is internal and never user-visible).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -81,13 +84,13 @@ if [[ -f "$OUTRBF" ]]; then
     echo "[run-synth.sh] Promoted output_files/sftm.rbf -> release/mister/sftm.rbf"
 fi
 
-# Create the jtsftm.rbf alias expected by the MRA <rbf> tag.
-# The Quartus project is named 'sftm' so Quartus outputs sftm.rbf;
-# JTFRAME MRA generation uses the jt-prefix convention (jtsftm).
-RBF="${REPO_DIR}/release/mister/sftm.rbf"
-if [[ -f "$RBF" ]]; then
-    cp "$RBF" "${REPO_DIR}/release/mister/jtsftm.rbf"
-    echo "[run-synth.sh] Copied sftm.rbf -> jtsftm.rbf"
-fi
+# Point any generated MRA at 'sftm' rather than JTFRAME's jt-prefixed default.
+for MRA in "${REPO_DIR}"/release/mra/*.mra; do
+    [[ -f "$MRA" ]] || continue
+    if grep -q "<rbf>jtsftm</rbf>" "$MRA"; then
+        sed -i.bak 's|<rbf>jtsftm</rbf>|<rbf>sftm</rbf>|' "$MRA" && rm -f "$MRA.bak"
+        echo "[run-synth.sh] MRA <rbf> tag set to sftm: $(basename "$MRA")"
+    fi
+done
 
 exit $RC

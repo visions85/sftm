@@ -34,7 +34,7 @@ the standard JTFRAME flow:
 ├── cores/
 │   └── sftm/
 │       ├── cfg/           # macros.def, files.yaml, mame2mra.toml
-│       ├── hdl/           # jtsftm_*.v, jt5506.v, mem.yaml
+│       ├── hdl/           # sftm_*.v, mem.yaml
 │       ├── ver/game/      # simulation test benches
 │       └── doc/           # core notes
 └── modules/               # JTFRAME goes here (git submodule)

@@ -2,8 +2,11 @@
 # JTFRAME macro configuration. Evaluated with `jtframe cfgstr sftm`.
 
 CORENAME=SFTM
-# jtframe mem generates jtsftm_game_sdram.v (jt+core+_game_sdram).
-# GAMETOP must match that name so jtframe files syn adds the right file to files.qip.
+# jtframe mem hardcodes a jt+core+_game_sdram name for the wrapper it
+# generates, so GAMETOP must match it for `jtframe files syn` to add the right
+# file to files.qip. This is internal only -- the core ships as sftm.rbf and
+# the MRA <rbf> tag is rewritten to match (see docker/run-synth.sh). The 'jt'
+# prefix is JOTEGO's and is not used for this core's distributed name.
 GAMETOP=jtsftm_game_sdram
 
 # Measured refresh (itech32 P/N 1083: VSync 59.7612 Hz)
