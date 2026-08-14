@@ -132,6 +132,8 @@ sftm_main u_main(
     .dbg_sromn    ( dbg_sromn     ),
     .dbg_sromd    ( dbg_sromd     ),
     .dbg_actv     ( dbg_actv      ),
+    .dbg_cmdw     ( cmd_wcnt      ),
+    .dbg_cmdr     ( cmd_rcnt      ),
     .dbg_anyrun   ( dbg_anyrun    ),
     .dbg_cr0      ( dbg_cr0       ),
     .dbg_g3b0     ( dbg_g3b0      ),
@@ -249,6 +251,26 @@ sftm_snd u_snd(
     .st_anyrun    ( dbg_anyrun    ),
     .st_cr0       ( dbg_cr0       )
 );
+
+// ---------------------------------------------------------------------------
+// Sound command handshake. Hardware says the 6809 boots, completes its ES5506
+// init and sets ACTV, but never clears a voice's STOP bits -- so it is idle,
+// waiting for a command. The main CPU does write the latch (sf_snd_wr is set
+// in the video debug view), so count both ends: writes by the 68020 and reads
+// by the 6809. Writes without reads means the IRQ/read path is broken; both
+// nonzero means commands flow and the driver is declining to play.
+// ---------------------------------------------------------------------------
+reg [7:0] cmd_wcnt, cmd_rcnt;
+reg       pend_d;
+always @(posedge clk) begin
+    if( rst ) begin
+        cmd_wcnt <= 8'd0; cmd_rcnt <= 8'd0; pend_d <= 1'b0;
+    end else begin
+        pend_d <= snd_pending1;
+        if( snd_pending1 && !pend_d && cmd_wcnt != 8'hFF ) cmd_wcnt <= cmd_wcnt + 8'd1;
+        if( snd_latch1_rd          && cmd_rcnt != 8'hFF ) cmd_rcnt <= cmd_rcnt + 8'd1;
+    end
+end
 
 // OSD debug view: main CPU status ({boot_done, vint, blit, scan, state, wdog})
 assign debug_view = st_main;
