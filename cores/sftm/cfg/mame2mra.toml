@@ -35,8 +35,13 @@ regions = [
     { name="ensoniq.3", width=16 },
     # BA2: main graphics (rm0+rm1, 32 MB, 32-bit interleaved -> 16-bit SDRAM words)
     { name="grom", width=32, start="JTFRAME_BA2_START" },
-    # BA3: grm3 extra graphics (512 KB from grom offset 0x2000000, 32-bit interleaved)
-    # TODO: confirm mame2mra syntax for region split at MAME region offset 0x2000000
+    # BA3: grm3 extra graphics (512 KB at MAME grom offset 0x2000000).
+    # This second entry emits nothing -- mame2mra does not split a region, so
+    # the generated MRA contains ONE contiguous grom block (rm0 16 MB, rm1
+    # 16 MB, grm3 512 KB) and no BA3_START marker. That is still correct
+    # because JTFRAME_BA3_START in macros.def is set by hand to
+    # 0x3D0000 + 0x2000000 = 0x23D0000, which lands exactly on grm3. Kept for
+    # documentation; verify against the emitted MRA before changing it.
     { name="grom", width=32, start="JTFRAME_BA3_START" },
 ]
 order = ["maindata","soundcpu","ensoniq.0","ensoniq.3","grom"]

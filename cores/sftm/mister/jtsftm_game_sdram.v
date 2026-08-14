@@ -37,7 +37,7 @@ wire mute;
 wire [19:2] main_addr;
 wire [31:0] main_data;
 wire        main_cs, main_ok;
-wire [17:0] snd_addr;
+wire [20:0] snd_addr;
 wire [ 7:0] snd_data;
 wire        snd_cs, snd_ok;
 wire [21:1] srom_addr;
@@ -46,16 +46,19 @@ wire        srom_cs, srom_ok;
 wire [24:1] grom_addr;
 wire [15:0] grom_data;
 wire        grom_cs, grom_ok;
-wire [18:1] grm3_addr;
-wire [15:0] grm3_data;
-wire        grm3_cs, grm3_ok;
-wire [20:1] vram_addr;
+wire [21:1] vram_addr;
 wire [15:0] vram_data;
 wire        vram_cs, vram_ok;
 wire        vram_we;
 wire [15:0] vram_din;
 wire [ 1:0] vram_dsn;
 
+wire [21:2] vramrd_addr;
+wire [31:0] vramrd_data;
+wire        vramrd_cs, vramrd_ok;
+wire [18:1] grm3_addr;
+wire [15:0] grm3_data;
+wire        grm3_cs, grm3_ok;
 wire        prom_we, header;
 wire [SDRAMW-2:0] raw_addr, post_addr;
 wire [SDRAMW-2:0] ioctl_prog_addr   = ioctl_addr[SDRAMW-2:0];
@@ -180,11 +183,6 @@ jtsftm_game u_game(
     .grom_ok   ( grom_ok   ),
     .grom_data ( grom_data ),
     
-    .grm3_addr ( grm3_addr ),
-    .grm3_cs   ( grm3_cs   ),
-    .grm3_ok   ( grm3_ok   ),
-    .grm3_data ( grm3_data ),
-    
     .vram_addr ( vram_addr ),
     .vram_cs   ( vram_cs   ),
     .vram_ok   ( vram_ok   ),
@@ -192,6 +190,16 @@ jtsftm_game u_game(
     .vram_we   ( vram_we   ),
     .vram_dsn  ( vram_dsn  ),
     .vram_din  ( vram_din  ),
+    
+    .vramrd_addr ( vramrd_addr ),
+    .vramrd_cs   ( vramrd_cs   ),
+    .vramrd_ok   ( vramrd_ok   ),
+    .vramrd_data ( vramrd_data ),
+    
+    .grm3_addr ( grm3_addr ),
+    .grm3_cs   ( grm3_cs   ),
+    .grm3_ok   ( grm3_ok   ),
+    .grm3_data ( grm3_data ),
     
     // Memory interface - BRAM
 
@@ -336,7 +344,7 @@ jtframe_rom_2slots #(
     .SLOT0_AW(19),
     .SLOT0_DW(32), 
     // snd
-    .SLOT1_AW(18),
+    .SLOT1_AW(21),
     .SLOT1_DW( 8)
 `ifdef JTFRAME_BA0_LEN
     ,.SLOT0_DOUBLE(1)
@@ -423,36 +431,47 @@ jtframe_rom_1slot #(
 assign ba_wr[2] = 0;
 assign ba2_din  = 0;
 assign ba2_dsn  = 3;
-jtframe_ram1_2slots #(
+jtframe_ram1_3slots #(
     .SDRAMW(SDRAMW-1),
-    // grm3
-    .SLOT0_AW(18),
-    .SLOT0_DW(16), 
     // vram
-    .SLOT1_AW(20),
-    .SLOT1_DW(16)
+    .SLOT0_AW(21),
+    .SLOT0_DW(16), 
+    // vramrd
+    .SLOT1_OFFSET(PROM_START[SDRAMW-2:0]),
+    .SLOT1_AW(21),
+    .SLOT1_DW(32), 
+    // grm3
+    .SLOT2_AW(18),
+    .SLOT2_DW(16)
 `ifdef JTFRAME_BA3_LEN
-    ,.SLOT0_DOUBLE(1)
+    ,.SLOT1_DOUBLE(1)
+    ,.SLOT2_DOUBLE(1)
 `endif
 ) u_bank3(
     .rst         ( rst        ),
     .clk         ( clk        ),
     
-    .slot0_addr  ( grm3_addr  ),
-    .slot0_clr   ( 1'b0       ), // only 1'b0 supported in mem.yaml
-    .slot0_dout  ( grm3_data  ),
-    .slot0_cs    ( grm3_cs    ),
-    .slot0_ok    ( grm3_ok    ),
-    
-    .slot1_addr  ( vram_addr  ),
+    .slot0_addr  ( vram_addr  ),
     .hold_rst    (  hold_rst  ),
-    .slot1_wen   ( vram_we    ),
-    .slot1_din   ( vram_din   ),
-    .slot1_wrmask( vram_dsn   ),
-    .slot1_offset( {(SDRAMW-1){1'b0}} ),
-    .slot1_dout  ( vram_data  ),
-    .slot1_cs    ( vram_cs    ),
-    .slot1_ok    ( vram_ok    ),
+    .slot0_wen   ( vram_we    ),
+    .slot0_din   ( vram_din   ),
+    .slot0_wrmask( vram_dsn   ),
+    .slot0_offset( {(SDRAMW-1){1'b0}} ),
+    .slot0_dout  ( vram_data  ),
+    .slot0_cs    ( vram_cs    ),
+    .slot0_ok    ( vram_ok    ),
+    
+    .slot1_addr  ( { vramrd_addr, 1'b0 } ),
+    .slot1_clr   ( 1'b0       ), // only 1'b0 supported in mem.yaml
+    .slot1_dout  ( vramrd_data  ),
+    .slot1_cs    ( vramrd_cs    ),
+    .slot1_ok    ( vramrd_ok    ),
+    
+    .slot2_addr  ( grm3_addr  ),
+    .slot2_clr   ( 1'b0       ), // only 1'b0 supported in mem.yaml
+    .slot2_dout  ( grm3_data  ),
+    .slot2_cs    ( grm3_cs    ),
+    .slot2_ok    ( grm3_ok    ),
     
     // SDRAM controller interface
     .sdram_ack   ( ba_ack[3]  ),

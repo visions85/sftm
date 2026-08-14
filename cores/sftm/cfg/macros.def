@@ -35,10 +35,21 @@ JTFRAME_PXLCLK=8
 # ~36 MB of ROM (see cfg/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
 # module, because 4 x 8 MB = 32 MB on the standard module is not enough.
 JTFRAME_SDRAM_BANKS
-# 128 MB SDRAM module (4 x 32 MB banks). JTFRAME_SDRAM_LARGE sets SDRAMW=24
-# (24-bit per-bank address = 32 MB per bank), required for the 32 MB grom
-# region and for correct 128 MB SDRAM initialisation.
-JTFRAME_SDRAM_LARGE
+# 128 MB SDRAM module -> 4 x 32 MB banks, i.e. a 24-bit per-bank word address.
+#
+# This MUST be XL, not LARGE. jtframe_emu.sv sets SDRAMW=24 (128 MB) for XL but
+# only 23 (64 MB) for LARGE, and jtframe_mem_ports.inc sizes ba*_addr to match
+# ([23:0] vs [22:0]). The grom bus is 32 MB, so grom_addr is [24:1] -- a full
+# 24-bit word address. Under LARGE the bank only carries 23 of those bits and
+# jtframe_romrq_bcache.v:114 pads with {SDRAMW-AW{1'b0}}, a NEGATIVE width,
+# silently dropping grom_addr[24]. Everything at grom 0x1000000+ (the rm1 mask
+# ROMs) then aliases onto 0x0000000+ and, being downloaded second, overwrites
+# the rm0 mask ROMs. Blits therefore read rm1 data at rm0 addresses.
+#
+# Confirmed on hardware: the passive probe in sftm_blit.v captured bytes
+# 40 40 at a grom_base ending in 0xCA. No address ending in 0xCA in the low
+# 64 KB of rm0 holds 40 40; rm1 at 0x0000CA holds exactly that, uniquely.
+JTFRAME_SDRAM_XL
 #
 # SDRAM bank byte-offset boundaries in the ROM download stream.
 # Download order: BA0 (prog+snd), BA1 (srom), BA2 (grom), BA3 (grm3).

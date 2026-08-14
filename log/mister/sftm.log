@@ -15,7 +15,7 @@ Info: Running Quartus Prime Shell
     Info: Intel and sold by Intel or its authorized distributors.  Please
     Info: refer to the applicable agreement for further details, at
     Info: https://fpgasoftware.intel.com/eula.
-    Info: Processing started: Wed Aug 12 23:39:15 2026
+    Info: Processing started: Fri Aug 14 18:52:37 2026
 Info: Command: quartus_sh --flow compile sftm
 Info: Quartus(args): compile sftm
 Info: Project Name = /workspace/cores/sftm/mister/sftm
@@ -29,7 +29,7 @@ Warning (125092): Tcl Script File rtl/pll.qip not found
 Info: *******************************************************************
 Info: Running Quartus Prime Shell
     Info: Version 21.1.0 Build 842 10/21/2021 SJ Lite Edition
-    Info: Processing started: Wed Aug 12 23:39:16 2026
+    Info: Processing started: Fri Aug 14 18:52:38 2026
 Info: Command: quartus_sh -t /workspace/modules/jtframe/target/mister/hdl/sys/build_id.tcl compile sftm sftm
 Info: Quartus(args): compile sftm sftm
 Info: Copied /workspace/modules/jtframe/target/mister/hdl/sys/sys_top.sdc -> /workspace/cores/sftm/mister/sys_top.sdc
@@ -39,17 +39,17 @@ Warning (125092): Tcl Script File sys/sys.qip not found
     Info (125063): set_global_assignment -name QIP_FILE sys/sys.qip
 Warning (125092): Tcl Script File rtl/pll.qip not found
     Info (125063): set_global_assignment -name QIP_FILE rtl/pll.qip -qip /workspace/modules/jtframe/target/mister/syn/../hdl/sys/pll_q17.qip
-Info: Generated: /workspace/cores/sftm/mister/build_id.v: `define BUILD_DATE "260812"
+Info: Generated: /workspace/cores/sftm/mister/build_id.v: `define BUILD_DATE "260814"
 Info (23030): Evaluation of Tcl script /workspace/modules/jtframe/target/mister/hdl/sys/build_id.tcl was successful
 Info: Quartus Prime Shell was successful. 0 errors, 2 warnings
-    Info: Peak virtual memory: 826 megabytes
-    Info: Processing ended: Wed Aug 12 23:39:17 2026
+    Info: Peak virtual memory: 827 megabytes
+    Info: Processing ended: Fri Aug 14 18:52:39 2026
     Info: Elapsed time: 00:00:01
     Info: Total CPU time (on all processors): 00:00:01
 Info: *******************************************************************
 Info: Running Quartus Prime Analysis & Synthesis
     Info: Version 21.1.0 Build 842 10/21/2021 SJ Lite Edition
-    Info: Processing started: Wed Aug 12 23:39:18 2026
+    Info: Processing started: Fri Aug 14 18:52:40 2026
 Info: Command: quartus_map --read_settings_files=on --write_settings_files=off sftm -c sftm
 Warning (125092): Tcl Script File sys/sys.qip not found
     Info (125063): set_global_assignment -name QIP_FILE sys/sys.qip
@@ -57,8 +57,6 @@ Warning (125092): Tcl Script File rtl/pll.qip not found
     Info (125063): set_global_assignment -name QIP_FILE rtl/pll.qip -qip /workspace/modules/jtframe/target/mister/syn/../hdl/sys/pll_q17.qip
 Info (16303): High Performance Effort optimization mode selected -- timing performance will be prioritized at the potential cost of increased compilation time
 Info (20030): Parallel compilation is enabled and will use 10 of the 10 processors detected
-Info (12021): Found 1 design units, including 1 entities, in source file /workspace/modules/jtframe/hdl/cpu/mc6809i.v
-    Info (12023): Found entity 1: mc6809i File: /workspace/modules/jtframe/hdl/cpu/mc6809i.v Line: 45
 Info (12021): Found 1 design units, including 1 entities, in source file /workspace/cores/sftm/hdl/jtsftm_game.v
     Info (12023): Found entity 1: jtsftm_game File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 20
 Info (12021): Found 1 design units, including 1 entities, in source file /workspace/cores/sftm/hdl/sftm_main.v
@@ -84,6 +82,8 @@ Info (12021): Found 1 design units, including 0 entities, in source file /worksp
 Info (12021): Found 2 design units, including 1 entities, in source file /workspace/cores/sftm/hdl/tg68k/TG68KdotC_Kernel.vhd
     Info (12022): Found design unit 1: TG68KdotC_Kernel-logic File: /workspace/cores/sftm/hdl/tg68k/TG68KdotC_Kernel.vhd Line: 145
     Info (12023): Found entity 1: TG68KdotC_Kernel File: /workspace/cores/sftm/hdl/tg68k/TG68KdotC_Kernel.vhd Line: 107
+Info (12021): Found 1 design units, including 1 entities, in source file /workspace/modules/jtframe/hdl/cpu/mc6809i.v
+    Info (12023): Found entity 1: mc6809i File: /workspace/modules/jtframe/hdl/cpu/mc6809i.v Line: 45
 Info (12021): Found 1 design units, including 1 entities, in source file /workspace/modules/jtframe/hdl/jtframe_board.v
     Info (12023): Found entity 1: jtframe_board File: /workspace/modules/jtframe/hdl/jtframe_board.v Line: 19
 Info (12021): Found 1 design units, including 1 entities, in source file /workspace/modules/jtframe/hdl/jtframe_board_sdram.v
@@ -529,8 +529,8 @@ Info (12021): Found 2 design units, including 2 entities, in source file /worksp
     Info (12023): Found entity 2: jtframe_sync_cen File: /workspace/modules/jtframe/hdl/clocking/jtframe_sync.v Line: 65
 Info (12021): Found 1 design units, including 1 entities, in source file jtsftm_game_sdram.v
     Info (12023): Found entity 1: jtsftm_game_sdram File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 13
-Warning (10236): Verilog HDL Implicit Net warning at jtsftm_game.v(176): created implicit net for "snd_left" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 176
-Warning (10236): Verilog HDL Implicit Net warning at jtsftm_game.v(177): created implicit net for "snd_right" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 177
+Warning (10236): Verilog HDL Implicit Net warning at jtsftm_game.v(224): created implicit net for "snd_left" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 224
+Warning (10236): Verilog HDL Implicit Net warning at jtsftm_game.v(225): created implicit net for "snd_right" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 225
 Warning (10037): Verilog HDL or VHDL warning at jtframe_emu.sv(288): conditional expression evaluates to a constant File: /workspace/modules/jtframe/target/mister/hdl/jtframe_emu.sv Line: 288
 Info (12127): Elaborating entity "sys_top" for the top level hierarchy
 Info (12128): Elaborating entity "mcp23009" for hierarchy "mcp23009:mcp23009" File: /workspace/modules/jtframe/target/mister/hdl/sys/sys_top.v Line: 175
@@ -1312,25 +1312,205 @@ Info (12128): Elaborating entity "video_freak" for hierarchy "emu:emu|jtframe_mi
 Info (12128): Elaborating entity "video_scale_int" for hierarchy "emu:emu|jtframe_mister:u_frame|video_freak:u_crop|video_scale_int:scale" File: /workspace/modules/jtframe/target/mister/hdl/sys/video_freak.sv Line: 136
 Info (12128): Elaborating entity "jtframe_mr_ddrmux" for hierarchy "emu:emu|jtframe_mister:u_frame|jtframe_mr_ddrmux:u_ddrmux" File: /workspace/modules/jtframe/target/mister/hdl/jtframe_mister.sv Line: 1110
 Info (12128): Elaborating entity "jtsftm_game_sdram" for hierarchy "emu:emu|jtsftm_game_sdram:u_game" File: /workspace/modules/jtframe/hdl/inc/jtframe_game_instance.v Line: 238
-Info (12128): Elaborating entity "jtframe_rsthold" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rsthold:u_hold" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 99
-Info (12128): Elaborating entity "jtsftm_game" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 262
-Warning (10036): Verilog HDL or VHDL warning at jtsftm_game.v(185): object "unused" assigned a value but never read File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 185
+Info (12128): Elaborating entity "jtframe_rsthold" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rsthold:u_hold" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 102
+Info (12128): Elaborating entity "jtsftm_game" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 270
+Warning (10036): Verilog HDL or VHDL warning at jtsftm_game.v(263): object "unused" assigned a value but never read File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 263
 Warning (10034): Output port "snd" at mem_ports.inc(17) has no driver File: /workspace/cores/sftm/mister/mem_ports.inc Line: 17
 Warning (10034): Output port "dip_flip" at jtframe_common_ports.inc(46) has no driver File: /workspace/modules/jtframe/hdl/inc/jtframe_common_ports.inc Line: 46
-Info (12128): Elaborating entity "sftm_main" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 96
-Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(507): object "unused_dbg" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 507
-Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(508): object "unused_nop" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 508
-Info (12128): Elaborating entity "TG68KdotC_Kernel" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|TG68KdotC_Kernel:u_cpu" File: /workspace/cores/sftm/hdl/sftm_main.v Line: 499
+Info (12128): Elaborating entity "sftm_main" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 134
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(616): object "pc_vec" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 616
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(616): object "pc_stuck" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 616
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(617): object "pc_now" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 617
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(631): object "dbg_fbe" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 631
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(632): object "dbg_406" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 632
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(632): object "dbg_407" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 632
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(632): object "dbg_408" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 632
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(640): object "dbg_400" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 640
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(640): object "dbg_44e" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 640
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(640): object "dbg_1104" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 640
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(647): object "pc_at_ack" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 647
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(655): object "pc_at_1104" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 655
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(667): object "dbg_44a" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 667
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(669): object "task_ever" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 669
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(675): object "a2_ever" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 675
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(675): object "a3_ever" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 675
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(675): object "a4_ever" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 675
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(675): object "a5_ever" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 675
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(676): object "pc_now2" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 676
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(694): object "sf_v60" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 694
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(694): object "sf_v64" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 694
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(694): object "sf_v68" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 694
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(694): object "sf_v6c" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 694
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(695): object "sf_vreg_wr" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 695
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(695): object "sf_cmd_wr" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 695
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(695): object "sf_inten_wr" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 695
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(696): object "sf_int_ack" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 696
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(696): object "sf_plane_wr" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 696
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(696): object "sf_prot_rd" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 696
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(841): object "unused_dbg" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 841
+Warning (10036): Verilog HDL or VHDL warning at sftm_main.v(842): object "unused_nop" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_main.v Line: 842
+Info (12128): Elaborating entity "TG68KdotC_Kernel" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|TG68KdotC_Kernel:u_cpu" File: /workspace/cores/sftm/hdl/sftm_main.v Line: 590
 Info (12128): Elaborating entity "TG68K_ALU" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|TG68KdotC_Kernel:u_cpu|TG68K_ALU:ALU" File: /workspace/cores/sftm/hdl/tg68k/TG68KdotC_Kernel.vhd Line: 372
-Info (12128): Elaborating entity "sftm_video" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_video:u_video" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 151
-Warning (10036): Verilog HDL or VHDL warning at sftm_video.v(367): object "unused" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_video.v Line: 367
-Error (293007): Current module quartus_map ended unexpectedly. Verify that you have sufficient memory available to compile your design. You can view disk space and physical RAM requirements on the System and Software Requirements page of the Intel FPGA website (http://dl.altera.com/requirements/).
-Error: Flow compile (for project /workspace/cores/sftm/mister/sftm) was not successful
-Error: ERROR: Error(s) found while running an executable. See report file(s) for error message(s). Message log indicates which executable was run last.
-
-Error (23031): Evaluation of Tcl script /opt/intelFPGA_lite/21.1/quartus/common/tcl/internal/qsh_flow.tcl unsuccessful
-Error: Quartus Prime Shell was unsuccessful. 4 errors, 38 warnings
-    Error: Peak virtual memory: 784 megabytes
-    Error: Processing ended: Wed Aug 12 23:41:27 2026
-    Error: Elapsed time: 00:02:12
-    Error: Total CPU time (on all processors): 00:02:18
+Info (12128): Elaborating entity "sftm_video" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_video:u_video" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 199
+Warning (10036): Verilog HDL or VHDL warning at sftm_video.v(165): object "b2_d" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_video.v Line: 165
+Warning (10036): Verilog HDL or VHDL warning at sftm_video.v(458): object "unused" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_video.v Line: 458
+Info (12128): Elaborating entity "sftm_blit" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_video:u_video|sftm_blit:u_blit" File: /workspace/cores/sftm/hdl/sftm_video.v Line: 288
+Warning (10036): Verilog HDL or VHDL warning at sftm_blit.v(814): object "unused" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_blit.v Line: 814
+Info (10264): Verilog HDL Case Statement information at sftm_blit.v(240): all case item expressions in this case statement are onehot File: /workspace/cores/sftm/hdl/sftm_blit.v Line: 240
+Info (10264): Verilog HDL Case Statement information at sftm_blit.v(566): all case item expressions in this case statement are onehot File: /workspace/cores/sftm/hdl/sftm_blit.v Line: 566
+Info (12128): Elaborating entity "sftm_vram" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_video:u_video|sftm_vram:u_vram" File: /workspace/cores/sftm/hdl/sftm_video.v Line: 335
+Warning (10036): Verilog HDL or VHDL warning at sftm_vram.v(170): object "pf_base" assigned a value but never read File: /workspace/cores/sftm/hdl/sftm_vram.v Line: 170
+Info (10264): Verilog HDL Case Statement information at sftm_vram.v(116): all case item expressions in this case statement are onehot File: /workspace/cores/sftm/hdl/sftm_vram.v Line: 116
+Warning (10230): Verilog HDL assignment warning at sftm_vram.v(200): truncated value with size 18 to match size of target (17) File: /workspace/cores/sftm/hdl/sftm_vram.v Line: 200
+Info (10264): Verilog HDL Case Statement information at sftm_vram.v(238): all case item expressions in this case statement are onehot File: /workspace/cores/sftm/hdl/sftm_vram.v Line: 238
+Info (12128): Elaborating entity "sftm_snd" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_snd:u_snd" File: /workspace/cores/sftm/hdl/jtsftm_game.v Line: 237
+Warning (10230): Verilog HDL assignment warning at sftm_snd.v(133): truncated value with size 29 to match size of target (21) File: /workspace/cores/sftm/hdl/sftm_snd.v Line: 133
+Info (12128): Elaborating entity "sftm5506" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_snd:u_snd|sftm5506:u_es" File: /workspace/cores/sftm/hdl/sftm_snd.v Line: 238
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(213): truncated value with size 32 to match size of target (21) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 213
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(516): truncated value with size 22 to match size of target (21) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 516
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(529): truncated value with size 22 to match size of target (21) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 529
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(569): truncated value with size 46 to match size of target (32) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 569
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(578): truncated value with size 46 to match size of target (32) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 578
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(591): truncated value with size 46 to match size of target (32) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 591
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(606): truncated value with size 46 to match size of target (32) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 606
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(159): truncated value with size 25 to match size of target (16) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 159
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(168): truncated value with size 48 to match size of target (32) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 168
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(692): truncated value with size 20 to match size of target (16) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 692
+Warning (10230): Verilog HDL assignment warning at sftm5506.v(693): truncated value with size 20 to match size of target (16) File: /workspace/cores/sftm/hdl/sftm5506.v Line: 693
+Warning (10030): Net "ulaw_lut.data_a" at sftm5506.v(136) has no driver or initial value, using a default initial value '0' File: /workspace/cores/sftm/hdl/sftm5506.v Line: 136
+Warning (10030): Net "ulaw_lut.waddr_a" at sftm5506.v(136) has no driver or initial value, using a default initial value '0' File: /workspace/cores/sftm/hdl/sftm5506.v Line: 136
+Warning (10030): Net "ulaw_lut.we_a" at sftm5506.v(136) has no driver or initial value, using a default initial value '0' File: /workspace/cores/sftm/hdl/sftm5506.v Line: 136
+Info (12128): Elaborating entity "mc6809i" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_snd:u_snd|mc6809i:u_cpu" File: /workspace/cores/sftm/hdl/sftm_snd.v Line: 295
+Info (10264): Verilog HDL Case Statement information at mc6809i.v(3906): all case item expressions in this case statement are onehot File: /workspace/modules/jtframe/hdl/cpu/mc6809i.v Line: 3906
+Info (10264): Verilog HDL Case Statement information at mc6809i.v(3952): all case item expressions in this case statement are onehot File: /workspace/modules/jtframe/hdl/cpu/mc6809i.v Line: 3952
+Info (12128): Elaborating entity "jtframe_dwnld" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_dwnld:u_dwnld" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 328
+Warning (10036): Verilog HDL or VHDL warning at jtframe_dwnld.v(131): object "balut_bit_addr" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_dwnld.v Line: 131
+Info (12128): Elaborating entity "jtframe_headerbyte" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_headerbyte:u_pcbid" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 337
+Info (12128): Elaborating entity "jtframe_rom_2slots" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_2slots:u_bank0" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 374
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_2slots:u_bank0|jtframe_romrq:u_slot0" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_2slots.v Line: 102
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_2slots:u_bank0|jtframe_romrq:u_slot0|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_2slots:u_bank0|jtframe_romrq:u_slot1" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_2slots.v Line: 122
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_2slots:u_bank0|jtframe_romrq:u_slot1|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Info (12128): Elaborating entity "jtframe_ramslot_ctrl" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_2slots:u_bank0|jtframe_ramslot_ctrl:u_ctrl" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_2slots.v Line: 149
+Info (12128): Elaborating entity "jtframe_rom_1slot" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank1" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 402
+Info (12128): Elaborating entity "jtframe_rom_2slots" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank1|jtframe_rom_2slots:u_2slots" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_1slot.v Line: 86
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank1|jtframe_rom_2slots:u_2slots|jtframe_romrq:u_slot0" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_2slots.v Line: 102
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank1|jtframe_rom_2slots:u_2slots|jtframe_romrq:u_slot0|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank1|jtframe_rom_2slots:u_2slots|jtframe_romrq:u_slot1" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_2slots.v Line: 122
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank1|jtframe_rom_2slots:u_2slots|jtframe_romrq:u_slot1|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Info (12128): Elaborating entity "jtframe_rom_1slot" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank2" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 430
+Info (12128): Elaborating entity "jtframe_rom_2slots" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank2|jtframe_rom_2slots:u_2slots" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_1slot.v Line: 86
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank2|jtframe_rom_2slots:u_2slots|jtframe_romrq:u_slot0" File: /workspace/modules/jtframe/hdl/sdram/jtframe_rom_2slots.v Line: 102
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_rom_1slot:u_bank2|jtframe_rom_2slots:u_2slots|jtframe_romrq:u_slot0|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Warning (10230): Verilog HDL assignment warning at jtframe_romrq_bcache.v(114): truncated value with size 24 to match size of target (23) File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 114
+Info (12128): Elaborating entity "jtframe_ram1_3slots" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 486
+Info (12128): Elaborating entity "jtframe_ram_rq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3|jtframe_ram_rq:u_slot0" File: /workspace/modules/jtframe/hdl/sdram/jtframe_ram1_3slots.v Line: 121
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3|jtframe_romrq:u_slot1" File: /workspace/modules/jtframe/hdl/sdram/jtframe_ram1_3slots.v Line: 141
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3|jtframe_romrq:u_slot1|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Info (12128): Elaborating entity "jtframe_romrq" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3|jtframe_romrq:u_slot2" File: /workspace/modules/jtframe/hdl/sdram/jtframe_ram1_3slots.v Line: 161
+Info (12128): Elaborating entity "jtframe_romrq_bcache" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3|jtframe_romrq:u_slot2|jtframe_romrq_bcache:u_block_cache" File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq.v Line: 97
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(143): object "we_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 143
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(144): object "dst_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 144
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(145): object "din_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 145
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(146): object "addr_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 146
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(147): object "addr_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 147
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(148): object "hit0_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 148
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(149): object "hit1_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 149
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(150): object "req_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 150
+Warning (10036): Verilog HDL or VHDL warning at jtframe_romrq_bcache.v(151): object "data_ok_probe" assigned a value but never read File: /workspace/modules/jtframe/hdl/sdram/jtframe_romrq_bcache.v Line: 151
+Info (12128): Elaborating entity "jtframe_ramslot_ctrl" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_ram1_3slots:u_bank3|jtframe_ramslot_ctrl:u_ctrl" File: /workspace/modules/jtframe/hdl/sdram/jtframe_ram1_3slots.v Line: 185
+Info (12128): Elaborating entity "jtframe_gated_cen" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen0_clk" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 504
+Info (12128): Elaborating entity "jtframe_freqinfo" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen0_clk|jtframe_freqinfo:u_info" File: /workspace/modules/jtframe/hdl/clocking/jtframe_gated_cen.v Line: 111
+Info (12128): Elaborating entity "jtframe_bcd_cnt" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen0_clk|jtframe_freqinfo:u_info|jtframe_bcd_cnt:u_bcd" File: /workspace/modules/jtframe/hdl/clocking/jtframe_freqinfo.v Line: 84
+Info (12128): Elaborating entity "jtframe_gated_cen" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen1_clk" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 515
+Info (12128): Elaborating entity "jtframe_gated_cen" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen2_clk" File: /workspace/cores/sftm/mister/jtsftm_game_sdram.v Line: 526
+Info (12128): Elaborating entity "jtframe_freqinfo" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen2_clk|jtframe_freqinfo:u_info" File: /workspace/modules/jtframe/hdl/clocking/jtframe_gated_cen.v Line: 111
+Info (12128): Elaborating entity "jtframe_bcd_cnt" for hierarchy "emu:emu|jtsftm_game_sdram:u_game|jtframe_gated_cen:u_cen2_clk|jtframe_freqinfo:u_info|jtframe_bcd_cnt:u_bcd" File: /workspace/modules/jtframe/hdl/clocking/jtframe_freqinfo.v Line: 84
+Warning (12030): Port "extclk" on the entity instantiation of "cyclonev_pll" is connected to a signal of width 1. The formal width of the signal in the module is 2.  The extra bits will be left dangling without any fan-out logic. File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 2224
+Warning (14284): Synthesized away the following node(s):
+    Warning (14285): Synthesized away the following LCELL buffer node(s):
+        Warning (14320): Synthesized away node "pll_hdmi:pll_hdmi|pll_hdmi_0002:pll_hdmi_inst|altera_pll:altera_pll_i|cntsel_temp[4]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 425
+        Warning (14320): Synthesized away node "pll_hdmi:pll_hdmi|pll_hdmi_0002:pll_hdmi_inst|altera_pll:altera_pll_i|cntsel_temp[3]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 425
+        Warning (14320): Synthesized away node "pll_hdmi:pll_hdmi|pll_hdmi_0002:pll_hdmi_inst|altera_pll:altera_pll_i|cntsel_temp[2]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 425
+        Warning (14320): Synthesized away node "pll_hdmi:pll_hdmi|pll_hdmi_0002:pll_hdmi_inst|altera_pll:altera_pll_i|cntsel_temp[1]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 425
+        Warning (14320): Synthesized away node "pll_hdmi:pll_hdmi|pll_hdmi_0002:pll_hdmi_inst|altera_pll:altera_pll_i|cntsel_temp[0]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 425
+        Warning (14320): Synthesized away node "pll_hdmi:pll_hdmi|pll_hdmi_0002:pll_hdmi_inst|altera_pll:altera_pll_i|gnd" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 427
+    Warning (14285): Synthesized away the following PLL node(s):
+        Warning (14320): Synthesized away node "emu:emu|pll:pll|pll_0002:pll_inst|altera_pll:altera_pll_i|outclk_wire[2]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 749
+        Warning (14320): Synthesized away node "emu:emu|pll:pll|pll_0002:pll_inst|altera_pll:altera_pll_i|outclk_wire[3]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 749
+        Warning (14320): Synthesized away node "emu:emu|pll:pll|pll_0002:pll_inst|altera_pll:altera_pll_i|outclk_wire[4]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 749
+        Warning (14320): Synthesized away node "emu:emu|pll:pll|pll_0002:pll_inst|altera_pll:altera_pll_i|outclk_wire[5]" File: /opt/intelFPGA_lite/21.1/quartus/libraries/megafunctions/altera_pll.v Line: 749
+Info (19018): Gated clocks are found and converted to use clock enables
+    Info (19019): Convert gated clock comb~synth
+Info (286030): Timing-Driven Synthesis is running
+Warning (276020): Inferred RAM node "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_video:u_video|sftm_vram:u_vram|wfifo_rtl_0" from synchronous design logic.  Pass-through logic has been added to match the read-during-write behavior of the original design.
+Warning (276020): Inferred RAM node "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|TG68KdotC_Kernel:u_cpu|regfile_rtl_0" from synchronous design logic.  Pass-through logic has been added to match the read-during-write behavior of the original design.
+Warning (276027): Inferred dual-clock RAM node "shadowmask:HDMI_shadowmask|mask_lut_rtl_0" from synchronous design logic.  The read-during-write behavior of a dual-clock RAM is undefined and may not match the behavior of the original design.
+Warning (276027): Inferred dual-clock RAM node "ascal:ascal|o_dpram_rtl_0" from synchronous design logic.  The read-during-write behavior of a dual-clock RAM is undefined and may not match the behavior of the original design.
+Warning (276027): Inferred dual-clock RAM node "ascal:ascal|o_h_poly_mem_rtl_0" from synchronous design logic.  The read-during-write behavior of a dual-clock RAM is undefined and may not match the behavior of the original design.
+Warning (276027): Inferred dual-clock RAM node "ascal:ascal|o_v_poly_mem_rtl_0" from synchronous design logic.  The read-during-write behavior of a dual-clock RAM is undefined and may not match the behavior of the original design.
+Warning (276027): Inferred dual-clock RAM node "ascal:ascal|o_a_poly_mem_rtl_0" from synchronous design logic.  The read-during-write behavior of a dual-clock RAM is undefined and may not match the behavior of the original design.
+Info (276014): Found 9 instances of uninferred RAM logic
+    Info (276007): RAM logic "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_snd:u_snd|sftm5506:u_es|ulaw_lut" is uninferred due to asynchronous read logic File: /workspace/cores/sftm/hdl/sftm5506.v Line: 136
+    Info (276007): RAM logic "emu:emu|jtsftm_game_sdram:u_game|jtsftm_game:u_game|sftm_main:u_main|TG68KdotC_Kernel:u_cpu|regfile" is uninferred due to asynchronous read logic File: /workspace/cores/sftm/hdl/tg68k/TG68KdotC_Kernel.vhd Line: 186
+    Info (276006): RAM logic "emu:emu|jtframe_mister:u_frame|hps_io:u_hps_io|ps2_device:keyboard|fifo" is uninferred due to "logic" being set as ramstyle synthesis attribute File: /workspace/modules/jtframe/target/mister/hdl/sys/hps_io.sv Line: 736
+    Info (276004): RAM logic "emu:emu|jtframe_mister:u_frame|jtframe_resync:u_resync|hs_pos" is uninferred due to inappropriate RAM size File: /workspace/modules/jtframe/hdl/video/jtframe_resync.v Line: 35
+    Info (276004): RAM logic "emu:emu|jtframe_mister:u_frame|jtframe_resync:u_resync|vs_hpos" is uninferred due to inappropriate RAM size File: /workspace/modules/jtframe/hdl/video/jtframe_resync.v Line: 35
+    Info (276004): RAM logic "emu:emu|jtframe_mister:u_frame|jtframe_resync:u_resync|vs_vpos" is uninferred due to inappropriate RAM size File: /workspace/modules/jtframe/hdl/video/jtframe_resync.v Line: 35
+    Info (276004): RAM logic "emu:emu|jtframe_mister:u_frame|jtframe_resync:u_resync|hs_len" is uninferred due to inappropriate RAM size File: /workspace/modules/jtframe/hdl/video/jtframe_resync.v Line: 36
+    Info (276004): RAM logic "emu:emu|jtframe_mister:u_frame|jtframe_resync:u_resync|vs_len" is uninferred due to inappropriate RAM size File: /workspace/modules/jtframe/hdl/video/jtframe_resync.v Line: 36
+    I

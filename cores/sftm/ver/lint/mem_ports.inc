@@ -57,7 +57,7 @@
 
     input    [ 7:0] snd_data,
     output          snd_cs,
-    output   [17:0] snd_addr,
+    output   [20:0] snd_addr,
     input           snd_ok,
 
     input    [15:0] srom_data,
@@ -70,15 +70,20 @@
     output   [24:1] grom_addr,
     input           grom_ok,
 
-    input    [15:0] grm3_data,
-    output          grm3_cs,
-    output   [18:1] grm3_addr,
-    input           grm3_ok,
-
     input    [15:0] vram_data,
     output          vram_cs,
-    output   [20:1] vram_addr,
+    output   [21:1] vram_addr,
     output          vram_we,
     output   [15:0] vram_din,
     output   [ 1:0] vram_dsn,
-    input           vram_ok
+    input           vram_ok,
+
+    input    [31:0] vramrd_data,
+    output          vramrd_cs,
+    output   [21:2] vramrd_addr,
+    input           vramrd_ok,
+
+    input    [15:0] grm3_data,
+    output          grm3_cs,
+    output   [18:1] grm3_addr,
+    input           grm3_ok
