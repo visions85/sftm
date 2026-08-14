@@ -259,6 +259,23 @@ end
 // ---------------------------------------------------------------------------
 reg [7:0] nvram_hi[0:65535], nvram_lo[0:65535];
 reg [7:0] nvram_hi_q, nvram_lo_q;
+
+// Power-on contents: the low 32 KB of a known-good MAME dump. The game keeps
+// its operator settings here, and the volume (byte 0x14) starts at zero on a
+// blank NVRAM -- which is why the game is silent. The firmware's ioctl restore
+// is not being invoked (measured: the restored-byte latch reads 0x00 with the
+// save file present in every conventional location), and the in-game service
+// menu does not render readably yet, so neither route can set the volume. This
+// gives the core a sane factory state until one of those is fixed.
+// The path is relative to the Quartus project directory (cores/sftm/mister).
+// Simulation defines SIMULATION and skips it: the benches drive NVRAM
+// themselves and a missing file would leave the array X.
+`ifndef SIMULATION
+initial begin
+    $readmemh("../hdl/nvram_hi.hex", nvram_hi);
+    $readmemh("../hdl/nvram_lo.hex", nvram_lo);
+end
+`endif
 wire [15:0] nvram_addr = A[16:1];
 
 // ---------------------------------------------------------------------------
