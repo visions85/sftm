@@ -24,6 +24,23 @@ JTFRAME_COLORW=5
 # 6 action buttons (LP MP HP LK MK HK)
 JTFRAME_BUTTONS=6
 
+# Stereo audio. THIS IS REQUIRED, not an enhancement: jtframe_mem_ports.inc
+# gates the game's audio port on it --
+#     `ifndef JTFRAME_STEREO  output signed [15:0] snd;
+#     `else                   output signed [15:0] snd_left, snd_right;
+# Without it the game module's only audio port is the mono `snd`, which
+# jtsftm_game.v never drives, while its connections to sftm_snd's snd_left /
+# snd_right silently become implicit nets that go nowhere. The core then
+# produces full-scale audio internally and emits absolute silence. Quartus
+# says so plainly and the warning sat in log/mister/sftm.log for many builds:
+#     Warning (10236): created implicit net for "snd_left"  jtsftm_game.v(224)
+#     Warning (10236): created implicit net for "snd_right" jtsftm_game.v(225)
+#     Warning (10034): Output port "snd" at mem_ports.inc(17) has no driver
+# itech32 is genuinely stereo, with the channels swapped (itech32.cpp:1798);
+# sftm5506.v already applies that swap, so snd_left/snd_right are correct as
+# they stand. Grep the build log for "has no driver" after adding any output.
+JTFRAME_STEREO
+
 # Pixel clock: without this macro pxl_cen is declared OUTPUT from the game
 # and must be driven by the game itself.  With JTFRAME_PXLCLK=8 the JTFRAME
 # board generates it at 48 MHz / 6 = 8 MHz (≈ itech32's 7.96 MHz pixel clock)
