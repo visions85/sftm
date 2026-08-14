@@ -125,9 +125,8 @@ module sftm_main #(
     input      [ 7:0] dbg_b2rise,
     input      [ 7:0] dbg_vtest,
     input      [ 7:0] dbg_rletp,
-    input      [ 3:0] dbg_g3ok0,
-    input      [ 3:0] dbg_g3ok1,
-    input      [ 3:0] dbg_g3ok2,
+    input      [11:0] dbg_g3addr,
+    input             dbg_g3vld,
     input      [ 7:0] dbg_g3b0,
        // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
@@ -742,6 +741,7 @@ end
 //   2-7 : pc_now (live PC, re-latched once per view cycle)
 //   8   : VRAM self-test mismatch count (0 = every word read back correctly)
 //   9   : VRAM self-test status, bit3 = test finished
+//   A   : captured source byte, low nibble;  F : same byte, high nibble
 //   A   : pc_max upper 4 bits
 //   B-C : tick write count      D-E : wrap-branch count
 //   F   : scanline_hit high nibble
@@ -757,12 +757,12 @@ assign st_dout =
     view == 4'h7 ? { 4'h7, pc_now2[23:20] } :
     view == 4'h8 ? { 4'h8, dbg_vtest[3:0] } :
     view == 4'h9 ? { 4'h9, dbg_vtest[7:4] } :
-    view == 4'hA ? { 4'hA, pc_max_hi[11: 8] } :
-    view == 4'hB ? { 4'hB, tick_cnt[3:0] } :
-    view == 4'hC ? { 4'hC, dbg_g3ok0 } :
-    view == 4'hD ? { 4'hD, dbg_g3ok1 } :
-    view == 4'hE ? { 4'hE, dbg_g3ok2 } :
-                   { 4'hF, dbg_g3b0[7:4] };  // grm3 base byte0, high nibble
+    view == 4'hA ? { 4'hA, dbg_g3b0[3:0] } :
+    view == 4'hB ? { 4'hB, 3'd0, dbg_g3vld } :
+    view == 4'hC ? { 4'hC, dbg_g3addr[3:0] } :
+    view == 4'hD ? { 4'hD, dbg_g3addr[7:4] } :
+    view == 4'hE ? { 4'hE, dbg_g3addr[11:8] } :
+                   { 4'hF, dbg_g3b0[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

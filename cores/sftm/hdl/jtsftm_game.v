@@ -57,7 +57,8 @@ wire [ 7:0] dbg_scanhits;
 wire [ 8:0] dbg_vcntmax;
 wire [15:0] dbg_lastack;
 wire [ 7:0] dbg_ackcnt, dbg_b2rise, dbg_vtest, dbg_rletp, dbg_g3b0;
-wire [ 3:0] dbg_g3ok0, dbg_g3ok1, dbg_g3ok2;
+wire [11:0] dbg_g3addr;
+wire        dbg_g3vld;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -120,9 +121,8 @@ sftm_main u_main(
     .dbg_b2rise   ( dbg_b2rise    ),
     .dbg_vtest    ( dbg_vtest     ),
     .dbg_rletp    ( dbg_rletp     ),
-    .dbg_g3ok0    ( dbg_g3ok0     ),
-    .dbg_g3ok1    ( dbg_g3ok1     ),
-    .dbg_g3ok2    ( dbg_g3ok2     ),
+    .dbg_g3addr   ( dbg_g3addr    ),
+    .dbg_g3vld    ( dbg_g3vld     ),
     .dbg_g3b0     ( dbg_g3b0      ),
 
     .st_dout      ( st_main       )
@@ -198,9 +198,8 @@ sftm_video u_video(
     .st_b2rise    ( dbg_b2rise    ),
     .st_vtest     ( dbg_vtest     ),
     .st_rletp     ( dbg_rletp     ),
-    .st_g3ok0     ( dbg_g3ok0     ),
-    .st_g3ok1     ( dbg_g3ok1     ),
-    .st_g3ok2     ( dbg_g3ok2     ),
+    .st_g3addr    ( dbg_g3addr    ),
+    .st_g3vld     ( dbg_g3vld     ),
     .st_g3b0      ( dbg_g3b0      ),
 
 );
