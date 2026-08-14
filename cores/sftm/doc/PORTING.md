@@ -698,3 +698,94 @@ Two things fixed the method:
    the real RLE path. Proving it in simulation before building -- capturing
    a known `0xE4` header from a modelled grm3 -- is what the previous four
    lacked, and it gave a trustworthy answer on the first hardware run.
+
+---
+
+# SDRAM rule: no bus may be wider than its bank (2026-08-14)
+
+The service-menu font at grom `0x00011A` rendered as garbage while the very
+same ROM bytes, fed through the very same decoder, produced a perfect glyph
+in simulation (`ver/game/tb_svcfont.v`, 25/25). That mismatch is the whole
+diagnosis in miniature: the decoding was right, so the *data* arriving from
+SDRAM had to be wrong.
+
+## The defect
+
+`cfg/mem.yaml` declared `grom` as a single 32 MB bus, giving
+`grom_addr[24:1]` -- 24 bits of word address. `JTFRAME_SDRAM_LARGE` provides
+four **16 MB** banks (`jtframe_emu.sv` sets `SDRAMW=23`, and
+`jtframe_mem_ports.inc` sizes `ba*_addr` to `[22:0]` to match), so the bank
+carried only 23 of those bits. `jtframe_romrq_bcache.v:114` builds the
+address as
+
+```verilog
+assign sdram_addr = offset + { {SDRAMW-AW{1'b0}}, addr_req>>(DW==8) };
+```
+
+With `AW=24` and `SDRAMW=23` that replication width is **negative**. The
+concatenation is then truncated to 23 bits and `grom_addr[24]` is silently
+discarded -- no Quartus warning, no lint error, nothing in the build log.
+
+Consequences: every grom address at `0x1000000+` (the `rm1` mask ROMs)
+aliased onto `0x0000000+`, and because the downloader walks the stream in
+order, `rm1` was written over `rm0`. Every blit that asked for `rm0` got
+`rm1`'s bytes.
+
+`macros.def` had also claimed `JTFRAME_SDRAM_LARGE` meant "4 x 32 MB banks".
+It means 4 x 16 MB. `JTFRAME_SDRAM_XL` is the 32 MB-bank macro.
+
+## How it was confirmed before anything was changed
+
+A passive probe in `sftm_blit.v` latches the first two source bytes of the
+first blit whose `grom_base < 0x10000`, plus that base. It issues no fetch of
+its own -- it only observes bytes already flowing through the RLE path -- and
+it was proven in simulation first (`tb_svcfont` reads `06 FD @ 0x200`,
+matching the ROM) before being trusted on hardware.
+
+Hardware returned `byte0=0x40, byte1=0x40` at a `grom_base` ending `0xCA`.
+Checking both candidates against the real ROM: **no** address ending in
+`0xCA` anywhere in the low 64 KB of `rm0` holds `40 40`, while `rm1` at
+`0x0000CA` holds exactly that, uniquely. That is a positive identification of
+the wrong ROM, not merely "the data looks wrong".
+
+## Why JTFRAME_SDRAM_XL is not the fix
+
+XL would give 32 MB banks, but it rejects `JTFRAME_BA*_START` and requires
+`header.offset` bank boundaries instead -- and those must land on **MAME
+region starts**, because `mra/corerom.go`'s `collect_rom_regions` iterates
+MAME's own regions. (That is also why a repeated `grom` entry in
+`mame2mra.toml` emits nothing: the loop runs once per MAME region, not once
+per toml entry.) Bank 3 has to begin `0x2000000` bytes *inside* the `grom`
+region, which no region start can express, so bank 2 would have to swallow
+all 32.5 MB of grom -- 512 KB over even an XL bank.
+
+## The fix
+
+`grom_base` is `{grom_bank[1:0], addrhi[7:0], addrlo[15:0]}`, so the VIDEO
+transfer bank select *is* address bits `[25:24]`. Split on bit 24 exactly as
+`grm3` was already split on bit 25:
+
+| bank | stream offset | contents | size |
+|------|---------------|----------|------|
+| BA0 | `0x0000000` | `main` + `snd` + `srom` | 3.8 MB |
+| BA1 | `0x03D0000` | `grom0` = rm0 | 16 MB, fills the bank |
+| BA2 | `0x13D0000` | `grom1` = rm1 | 16 MB, fills the bank |
+| BA3 | `0x23D0000` | `grm3` + `vram` + `vramrd` | 1.5 MB |
+
+`srom` moves in beside the CPUs, biased by `SROM_ORG = 0x150000` in
+`sftm5506.v`; the offset is even, so the `cur_baddr[0]` byte select is
+unaffected. Every bank is now at most 16 MB, which means the core runs on a
+64 MB module as well as a 128 MB one.
+
+`ver/game/tb_gromsplit.v` gives each of the three buses its own pen and
+asserts that each grom bank reaches its own bus with its own data. It fails
+on the old single-bus code.
+
+## The rule
+
+**Check `addr_width` against the bank size for every bus.** A bus that
+overflows its bank loses its top address bits in silence. The symptom is
+plausible-looking wrong data -- not a crash, not a warning -- and it will be
+mistaken for a decoder bug. This is the third bug in this core from SDRAM
+address arithmetic, after the missing `SLOTn_OFFSET` overlaps and
+`SLOT0_ERASE` wiping `grm3`.
