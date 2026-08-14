@@ -128,8 +128,7 @@ sftm_video u_video(
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
-    .gfx_en(4'hF), .debug_bus(8'h00),
-    .st_gb0(), .st_gb1(), .st_gaddr(), .st_gvld(), .st_gph()
+    .gfx_en(4'hF), .debug_bus(8'h00)
 );
 
 task wreg(input [5:0] idx, input [15:0] val); begin

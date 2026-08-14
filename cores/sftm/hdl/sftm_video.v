@@ -97,12 +97,7 @@ module sftm_video(
     output reg [ 4:0] green,
     output reg [ 4:0] blue,
     input      [ 3:0] gfx_en,
-    input      [ 7:0] debug_bus,
-    output     [ 7:0] st_gb0,
-    output     [ 7:0] st_gb1,
-    output     [11:0] st_gaddr,
-    output            st_gvld,
-    output     [ 1:0] st_gph
+    input      [ 7:0] debug_bus
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -236,11 +231,6 @@ sftm_blit u_blit(
     .done_pulse ( blit_done     ),
     .st_state   ( blit_state    ),
     .st_waiting ( blit_waiting  ),
-    .st_gb0     ( st_gb0        ),
-    .st_gb1     ( st_gb1        ),
-    .st_gaddr   ( st_gaddr      ),
-    .st_gvld    ( st_gvld       ),
-    .st_gph     ( st_gph        ),
 
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06

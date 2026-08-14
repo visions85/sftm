@@ -45,18 +45,6 @@ module sftm_blit(
     output     [4:0]  st_state,     // bring-up: live FSM state
     output            st_waiting,   // bring-up: stalled on a GROM fetch
 
-    // PASSIVE capture of a low-address grom fetch. The service menu's 5x5
-    // font lives at grom 0x00011A-0x000259 and renders as solid blocks, while
-    // the same decoder handles those exact ROM bytes correctly in simulation
-    // (ver/game/tb_svcfont.v) and the background from grom 0x7FFF00 is fine.
-    // So capture what the blitter actually receives for such a blit: the
-    // first two source bytes and the address they came from. Ground truth at
-    // 0x00011A is 06 FD; at 0x000237 it is 81 FF.
-    output reg [ 7:0] st_gb0,      // first source byte
-    output reg [ 7:0] st_gb1,      // second source byte
-    output reg [11:0] st_gaddr,    // grom_base[11:0]
-    output reg        st_gvld,
-    output     [ 1:0] st_gph,
     // grm3 read-back self-test. The real text glyphs live in grm3 (blits
     // carry bank=2 -> GROM address 0x207xxxx), and a Python decode of the
     // ROM confirms 0x207DE86 begins 81 FF 07 2C. Fetch those four bytes
@@ -784,43 +772,6 @@ always @(posedge clk) begin
 end
 
 assign c3_active_o = c3_active;
-
-// Passive low-address grom capture. fetch_ok means the cache holds the word
-// covering fetch_addr, which in the RLE states is mod_len(src_addr), so `pix`
-// is exactly the byte the decoder is about to consume. The probe issues no
-// fetch of its own -- the four earlier diagnostics that hijacked the shared
-// fetcher all produced garbage, so this one only observes.
-//
-// It latches the first two source bytes of the first blit whose grom_base is
-// below 0x10000 (the service-menu font lives at 0x00011A-0x000259) together
-// with that base, so the capture can be checked against the ROM. Ground truth
-// at 0x00011A is 06 FD; the whole run there is 06 FD 04 FF 04 FD 82 FF.
-//
-// st_gph: 0 = never armed (no low-grom blit ran at all)
-//         2 = byte0 captured, byte1 never seen
-//         3 = both captured, st_gb0/st_gb1/st_gaddr are coherent
-wire        lowgrom = grom_base < 26'h10000;
-wire        in_rle2 = state == S_RLE_RUN || state == S_RLE_VAL || state == S_RLE_PIX;
-reg  [25:0] cap_base;
-reg         cap_got0;
-assign      st_gph  = { cap_got0, st_gvld };
-
-always @(posedge clk) begin
-    if( rst ) begin
-        st_gb0 <= 8'd0; st_gb1 <= 8'd0; st_gaddr <= 12'd0;
-        st_gvld <= 1'b0; cap_got0 <= 1'b0; cap_base <= 26'd0;
-    end else if( in_rle2 && fetch_ok ) begin
-        if( !cap_got0 && lowgrom && src_addr == grom_base ) begin
-            st_gb0   <= pix;
-            st_gaddr <= grom_base[11:0];
-            cap_base <= grom_base;
-            cap_got0 <= 1'b1;
-        end else if( cap_got0 && !st_gvld && src_addr == cap_base + 26'd1 ) begin
-            st_gb1  <= pix;
-            st_gvld <= 1'b1;
-        end
-    end
-end
 
 // shiftreg row RAM: single write port, single registered read port
 wire        shrow_we = (state == S_SH_READ)  && vr_ack;

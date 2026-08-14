@@ -161,11 +161,6 @@ wire [ 4:0] red, green, blue;
 wire [18:1] grm3_addr;
 wire        grm3_cs;
 
-wire [ 7:0] st_gb0, st_gb1;
-wire [11:0] st_gaddr;
-wire        st_gvld;
-wire [ 1:0] st_gph;
-
 sftm_video u_video(
     .rst(rst), .clk(clk), .pxl_cen(pxl_cen),
     .cpu_addr(cpu_addr), .cpu_dout(cpu_dout),
@@ -184,9 +179,7 @@ sftm_video u_video(
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
-    .gfx_en(4'hF), .debug_bus(8'h00),
-    .st_gb0(st_gb0), .st_gb1(st_gb1), .st_gaddr(st_gaddr),
-    .st_gvld(st_gvld), .st_gph(st_gph)
+    .gfx_en(4'hF), .debug_bus(8'h00)
 );
 
 
@@ -298,15 +291,6 @@ initial begin
         $write("\n");
       end
     end
-    // The hardware probe must observe exactly the bytes the ROM holds.
-    $display("");
-    $display("grom probe: phase=%0d addr=%03X b0=%02X b1=%02X (want phase=3 addr=200 b0=06 b1=FD)",
-             st_gph, st_gaddr, st_gb0, st_gb1);
-    if( st_gph !== 2'd3 || st_gaddr !== 12'h200 || st_gb0 !== 8'h06 || st_gb1 !== 8'hFD )
-        $display("PROBE-FAIL: the capture itself is wrong, hardware readings would be meaningless");
-    else
-        $display("PROBE-OK: capture matches the ROM in simulation");
-
     if( missing == 0 ) $display("PASS: real service-menu font decodes correctly");
     else               $display("FAIL: %0d of 25 pixels wrong", missing);
     $finish;
