@@ -224,6 +224,10 @@ assign st_state = state;
 localparam [25:0] G3_BASE = 26'h207DE86;
 reg [1:0] g3i;
 reg       g3done;
+// The first attempt read 0x00 for every byte because it ran straight out of
+// reset, before the ROM download had written grm3. Wait ~0.35 s first.
+reg [23:0] g3wait;
+wire       g3armed = &g3wait;
 
 // ---------------------------------------------------------------------------
 // Derived per-cycle values
@@ -242,7 +246,7 @@ reg  [25:0] fetch_addr;
 always @(*) begin
     fetch_req  = 0;
     fetch_addr = mod_len({6'd0, src_addr});
-    if( !g3done ) begin
+    if( g3armed && !g3done ) begin
         fetch_req  = 1'b1;
         fetch_addr = G3_BASE + {24'd0, g3i};
     end else
@@ -350,7 +354,9 @@ wire [7:0] g3_expect = g3i==2'd0 ? 8'h81 :
 
 always @(posedge clk) begin
     if( rst ) begin
-        g3i <= 0; g3done <= 0; st_g3ok <= 0; st_g3b0 <= 0;
+        g3i <= 0; g3done <= 0; st_g3ok <= 0; st_g3b0 <= 0; g3wait <= 0;
+    end else if( !g3armed ) begin
+        g3wait <= g3wait + 24'd1;
     end else if( !g3done && fetch_ok ) begin
         if( pix == g3_expect ) st_g3ok[g3i] <= 1'b1;
         if( g3i == 2'd0 ) st_g3b0 <= pix;
