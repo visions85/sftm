@@ -299,6 +299,16 @@ end
 // dump: serve the byte the firmware is asking for
 always @(posedge clk) ioctl_din <= io_hi ? nvram_hi_q : nvram_lo_q;
 
+// Did a restore actually happen? Latch the volume byte as the firmware
+// writes it, which needs no extra RAM port. NVRAM byte 0x14 is the volume
+// (a MAME dump diff shows it going 0x05 -> 0x1E when the operator menu
+// raises it), and it lives in the high lane of word 0x0A.
+reg [7:0] st_nv14;
+always @(posedge clk) begin
+    if( rst ) st_nv14 <= 8'd0;
+    else if( nv_restore && io_a == 15'h0014 ) st_nv14 <= ioctl_dout;
+end
+
 // ---------------------------------------------------------------------------
 // Input ports (INPUT_PORTS_START(sftm) + itech32_base_32bit, itech32.cpp:1396
 // and 1514). All live in D23:16 of the 32-bit port value = D7:0 of the 16-bit
@@ -772,7 +782,8 @@ end
 //   5-6 : voice 0 CR low byte (bits 1:0 = STOP1/STOP0; 3 = still stopped)
 //   7-8 : CR (register 0) writes by the driver -- 0 means it never even
 //         attempts to start a voice
-//   9-A : last CR value written, low byte (bits 1:0 = STOP1/STOP0)
+//   9-A : NVRAM volume byte (0x14) as restored from SD -- 0 means no restore
+//         ever happened, 0x1E means the firmware pushed the saved value in
 //   B-C : page that CR write targeted (the voice number)
 //   D-E : sound commands read by the 6809
 //   F   : peak |snd_left| high nibble (0 = no audio produced)
@@ -787,8 +798,8 @@ assign st_dout =
     view == 4'h6 ? { 4'h6, dbg_cr0[7:4] } :
     view == 4'h7 ? { 4'h7, dbg_crn[3:0] } :
     view == 4'h8 ? { 4'h8, dbg_crn[7:4] } :
-    view == 4'h9 ? { 4'h9, dbg_crv[3:0] } :
-    view == 4'hA ? { 4'hA, dbg_crv[7:4] } :
+    view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
+    view == 4'hA ? { 4'hA, st_nv14[7:4] } :
     view == 4'hB ? { 4'hB, dbg_crp[3:0] } :
     view == 4'hC ? { 4'hC, 1'b0, dbg_crp[6:4] } :
     view == 4'hD ? { 4'hD, dbg_cmdr[3:0] } :
