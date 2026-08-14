@@ -242,6 +242,9 @@ initial begin
     $display("es5506 state: ACTV=%0d anyrun=%0d cr0=0x%02X",
              u_snd.st_actv, u_snd.st_anyrun, u_snd.st_cr0);
     check( u_snd.st_anyrun, "probe sees a voice with STOP cleared" );
+    $display("CR writes: n=%0d last=0x%02X page=%0d",
+             u_snd.st_crn, u_snd.st_crv, u_snd.st_crp);
+    check( u_snd.st_crn != 8'd0, "probe counts CR register writes" );
 
     check( errors == 0, "ALL PHASE 3 CHECKS" );
     $finish;

@@ -76,7 +76,10 @@ module sftm_snd(
     output     [ 7:0] st_sromd,   // last sample byte
     output     [ 4:0] st_actv,
     output            st_anyrun,
-    output     [ 7:0] st_cr0
+    output     [ 7:0] st_cr0,
+    output     [ 7:0] st_crn,     // CR (register 0) write count
+    output     [ 7:0] st_crv,     // last CR value written, low byte
+    output     [ 6:0] st_crp      // page that write targeted
 );
 
 // ---------------------------------------------------------------------------
@@ -214,6 +217,9 @@ sftm5506 u_es(
     .st_actv   ( st_actv    ),
     .st_anyrun ( st_anyrun  ),
     .st_cr0    ( st_cr0     ),
+    .st_crn    ( st_crn     ),
+    .st_crv    ( st_crv     ),
+    .st_crp    ( st_crp     ),
     .rst       ( rst        ),
     .clk       ( clk        ),
     .es_cen    ( es_cen     ),

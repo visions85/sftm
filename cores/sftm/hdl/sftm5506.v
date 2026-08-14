@@ -74,6 +74,15 @@ module sftm5506(
     output     [ 4:0] st_actv,
     output reg        st_anyrun,    // any voice has ever had STOP clear
     output     [ 7:0] st_cr0,
+    // The driver receives commands and programs ACTV but never clears a
+    // voice's STOP bits. These say whether it even attempts to: count writes
+    // to CR (register 0) and keep the last value and the page it targeted.
+    //   crn = 0            the driver never writes CR -- its own dispatch
+    //   crn > 0, STOP set  it writes CR but deliberately keeps voices stopped
+    //   crn > 0, STOP clr  the write is being dropped on our side
+    output reg [ 7:0] st_crn,
+    output reg [ 7:0] st_crv,      // last CR value written, low byte
+    output reg [ 6:0] st_crp,      // page that write targeted
 
     // stereo output, refreshed once per sample period
     output reg signed [15:0] snd_left,
@@ -379,6 +388,7 @@ always @(posedge clk) begin
         st_sromn <= 8'd0;
         st_sromd <= 8'd0;
         st_anyrun <= 1'b0;
+        st_crn <= 8'd0; st_crv <= 8'd0; st_crp <= 7'd0;
         hw_pend <= 0;
         irqv_ack<= 0;
         page    <= 0;
@@ -421,7 +431,12 @@ always @(posedge clk) begin
             if( hw_reg == 4'hF )
                 page <= hw_data[6:0];             // PAGE, any bank (:1177)
             else if( hw_page < 7'h20 ) case( hw_reg )   // reg_write_low (:1094)
-                4'h0: v_control[hw_page[4:0]] <= hw_data[15:0];
+                4'h0: begin
+                    v_control[hw_page[4:0]] <= hw_data[15:0];
+                    if( st_crn != 8'hFF ) st_crn <= st_crn + 8'd1;
+                    st_crv <= hw_data[7:0];
+                    st_crp <= hw_page;
+                end
                 4'h1: v_freq   [hw_page[4:0]] <= hw_data[16:0];
                 4'h2: v_lvol   [hw_page[4:0]] <= hw_data[15:0];
                 4'h3: v_lvramp [hw_page[4:0]] <= hw_data[15:8];
@@ -440,7 +455,12 @@ always @(posedge clk) begin
                 default: ;
             endcase
             else if( hw_page < 7'h40 ) case( hw_reg )   // reg_write_high (:1183)
-                4'h0: v_control[hw_page[4:0]] <= hw_data[15:0];
+                4'h0: begin
+                    v_control[hw_page[4:0]] <= hw_data[15:0];
+                    if( st_crn != 8'hFF ) st_crn <= st_crn + 8'd1;
+                    st_crv <= hw_data[7:0];
+                    st_crp <= hw_page;
+                end
                 4'h1: v_start  [hw_page[4:0]] <= hw_data & 32'hfffff800;
                 4'h2: v_end    [hw_page[4:0]] <= hw_data & 32'hffffff80;
                 4'h3: v_accum  [hw_page[4:0]] <= hw_data;

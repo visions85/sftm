@@ -50,7 +50,8 @@ wire        snd_pending1, snd_pending2;
 wire        snd_latch1_rd, snd_latch2_rd;
 
 wire [ 7:0] st_main;
-wire [ 7:0] dbg_eswr, dbg_sromn, dbg_sromd, dbg_cr0;
+wire [ 7:0] dbg_eswr, dbg_sromn, dbg_sromd, dbg_cr0, dbg_crn, dbg_crv;
+wire [ 6:0] dbg_crp;
 wire [ 4:0] dbg_actv;
 wire        dbg_anyrun;
 wire [15:0] dbg_peak;
@@ -112,6 +113,9 @@ sftm_main u_main(
     .dbg_cmdr     ( cmd_rcnt      ),
     .dbg_anyrun   ( dbg_anyrun    ),
     .dbg_cr0      ( dbg_cr0       ),
+    .dbg_crn      ( dbg_crn       ),
+    .dbg_crv      ( dbg_crv       ),
+    .dbg_crp      ( dbg_crp       ),
 
     .st_dout      ( st_main       )
 );
@@ -208,7 +212,10 @@ sftm_snd u_snd(
     .st_sromd     ( dbg_sromd     ),
     .st_actv      ( dbg_actv      ),
     .st_anyrun    ( dbg_anyrun    ),
-    .st_cr0       ( dbg_cr0       )
+    .st_cr0       ( dbg_cr0       ),
+    .st_crn       ( dbg_crn       ),
+    .st_crv       ( dbg_crv       ),
+    .st_crp       ( dbg_crp       )
 );
 
 // ---------------------------------------------------------------------------

@@ -121,6 +121,9 @@ module sftm_main #(
     input      [ 7:0] dbg_cmdr,
     input             dbg_anyrun,
     input      [ 7:0] dbg_cr0,
+    input      [ 7:0] dbg_crn,
+    input      [ 7:0] dbg_crv,
+    input      [ 6:0] dbg_crp,
        // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
 );
@@ -730,9 +733,10 @@ end
 //   3   : ACTV, the voice count the driver programmed
 //   4   : {3'd0, any voice ever had STOP clear}
 //   5-6 : voice 0 CR low byte (bits 1:0 = STOP1/STOP0; 3 = still stopped)
-//   7-8 : ES5506 sample-ROM fetches
-//   9-A : last nonzero sample byte fetched
-//   B-C : sound commands written by the 68020
+//   7-8 : CR (register 0) writes by the driver -- 0 means it never even
+//         attempts to start a voice
+//   9-A : last CR value written, low byte (bits 1:0 = STOP1/STOP0)
+//   B-C : page that CR write targeted (the voice number)
 //   D-E : sound commands read by the 6809
 //   F   : peak |snd_left| high nibble (0 = no audio produced)
 // ---------------------------------------------------------------------------
@@ -744,12 +748,12 @@ assign st_dout =
     view == 4'h4 ? { 4'h4, 3'd0, dbg_anyrun } :
     view == 4'h5 ? { 4'h5, dbg_cr0[3:0] } :
     view == 4'h6 ? { 4'h6, dbg_cr0[7:4] } :
-    view == 4'h7 ? { 4'h7, dbg_sromn[3:0] } :
-    view == 4'h8 ? { 4'h8, dbg_sromn[7:4] } :
-    view == 4'h9 ? { 4'h9, dbg_sromd[3:0] } :
-    view == 4'hA ? { 4'hA, dbg_sromd[7:4] } :
-    view == 4'hB ? { 4'hB, dbg_cmdw[3:0] } :
-    view == 4'hC ? { 4'hC, dbg_cmdw[7:4] } :
+    view == 4'h7 ? { 4'h7, dbg_crn[3:0] } :
+    view == 4'h8 ? { 4'h8, dbg_crn[7:4] } :
+    view == 4'h9 ? { 4'h9, dbg_crv[3:0] } :
+    view == 4'hA ? { 4'hA, dbg_crv[7:4] } :
+    view == 4'hB ? { 4'hB, dbg_crp[3:0] } :
+    view == 4'hC ? { 4'hC, 1'b0, dbg_crp[6:4] } :
     view == 4'hD ? { 4'hD, dbg_cmdr[3:0] } :
     view == 4'hE ? { 4'hE, dbg_cmdr[7:4] } :
                    { 4'hF, dbg_peak[15:12] };
