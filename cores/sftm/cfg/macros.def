@@ -116,4 +116,14 @@ JTFRAME_OSD_VOL
 # Note the macro only saved hq2x HARDWARE. arcade_video.v already forces
 # hq2x_en = 1'b0 under it, so the interpolation was never runtime-active; the
 # only thing it actually removed was the line buffer the scandoubler needs.
+#
+# The "~9.9k ALMs" in the old comment was also wrong. Measured: 30,618 ALMs
+# with the macro, 31,275 without -- restoring the real hq2x costs 657 ALMs
+# (75% of the device), not a quarter of it. Verified on .98 with
+# forced_scandoubler=1: line tails no longer wrap to the left edge, ink is
+# confined to cols 91-270 instead of spanning 0-383, and doubled row pairs
+# are exact copies again (0/50 before, 31/69 after -- the correct signature,
+# since only the first row of each pair matches its successor).
+#
+# Do not re-enable.
 # JTFRAME_NOHQ2X
