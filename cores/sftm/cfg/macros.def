@@ -35,21 +35,34 @@ JTFRAME_PXLCLK=8
 # ~36 MB of ROM (see cfg/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
 # module, because 4 x 8 MB = 32 MB on the standard module is not enough.
 JTFRAME_SDRAM_BANKS
-# 128 MB SDRAM module -> 4 x 32 MB banks, i.e. a 24-bit per-bank word address.
+# 64 MB access: 4 x 16 MB banks (jtframe_emu.sv sets SDRAMW=23 for LARGE, 24
+# for XL; jtframe_mem_ports.inc sizes ba*_addr to match, [22:0] vs [23:0]).
 #
-# This MUST be XL, not LARGE. jtframe_emu.sv sets SDRAMW=24 (128 MB) for XL but
-# only 23 (64 MB) for LARGE, and jtframe_mem_ports.inc sizes ba*_addr to match
-# ([23:0] vs [22:0]). The grom bus is 32 MB, so grom_addr is [24:1] -- a full
-# 24-bit word address. Under LARGE the bank only carries 23 of those bits and
-# jtframe_romrq_bcache.v:114 pads with {SDRAMW-AW{1'b0}}, a NEGATIVE width,
-# silently dropping grom_addr[24]. Everything at grom 0x1000000+ (the rm1 mask
-# ROMs) then aliases onto 0x0000000+ and, being downloaded second, overwrites
-# the rm0 mask ROMs. Blits therefore read rm1 data at rm0 addresses.
+# THE GROM BUS MUST NOT EXCEED ONE BANK. A bus wider than its bank silently
+# loses its top address bit: jtframe_romrq_bcache.v:114 forms the SDRAM address
+# as offset + {{SDRAMW-AW{1'b0}}, addr_req}, and when AW > SDRAMW that
+# replication width goes NEGATIVE and the high bits are simply dropped -- with
+# no Quartus warning. That is what broke the graphics: grom was declared as one
+# 32 MB bus (grom_addr[24:1], 24 bits) inside a 16 MB bank, so grom_addr[24]
+# was discarded, everything at grom 0x1000000+ (the rm1 mask ROMs) aliased onto
+# 0x0000000+, and rm1 -- downloading second -- overwrote rm0. Blits then read
+# rm1 data at rm0 addresses.
 #
-# Confirmed on hardware: the passive probe in sftm_blit.v captured bytes
-# 40 40 at a grom_base ending in 0xCA. No address ending in 0xCA in the low
-# 64 KB of rm0 holds 40 40; rm1 at 0x0000CA holds exactly that, uniquely.
-JTFRAME_SDRAM_XL
+# Confirmed on hardware: the passive probe in sftm_blit.v captured bytes 40 40
+# at a grom_base ending in 0xCA. No address ending in 0xCA in the low 64 KB of
+# rm0 holds 40 40; rm1 at 0x0000CA holds exactly that, and uniquely so.
+#
+# JTFRAME_SDRAM_XL is NOT the fix. It would give 32 MB banks, but it forbids
+# JTFRAME_BA*_START and requires header.offset bank boundaries, and those must
+# land on MAME region starts (mra/corerom.go iterates MAME's own regions, so
+# mame2mra cannot split one). Bank 3 has to begin 0x2000000 bytes INTO the
+# grom region, which no region start expresses -- bank 2 would have to hold all
+# 32.5 MB of grom, 512 KB over even an XL bank.
+#
+# The fix is to split grom into two 16 MB buses, one per bank, selected on
+# grom_addr[24] exactly as grm3 already is on bit 25. That fits 4 x 16 MB and
+# therefore runs on 64 MB and 128 MB modules alike. See doc/PORTING.md.
+JTFRAME_SDRAM_LARGE
 #
 # SDRAM bank byte-offset boundaries in the ROM download stream.
 # Download order: BA0 (prog+snd), BA1 (srom), BA2 (grom), BA3 (grm3).
