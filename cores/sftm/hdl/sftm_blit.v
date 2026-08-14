@@ -223,11 +223,13 @@ assign st_state = state;
 // ---------------------------------------------------------------------------
 localparam [25:0] G3_BASE = 26'h207DE86;
 reg [1:0] g3i;
-reg       g3done;
-// The first attempt read 0x00 for every byte because it ran straight out of
-// reset, before the ROM download had written grm3. Wait ~0.35 s first.
-reg [23:0] g3wait;
-wire       g3armed = &g3wait;
+// One-shot probes keep sampling too early: grm3 is the LAST region of a
+// 37 MB download, so it is written many seconds in, and a fixed delay after
+// reset is guesswork. Re-run the test about once a second instead, and only
+// while the blitter is idle so it never steals a fetch from a real blit.
+// The views then show live grm3 contents rather than one early sample.
+reg [25:0] g3wait;
+reg        g3run;
 
 // ---------------------------------------------------------------------------
 // Derived per-cycle values
@@ -246,7 +248,7 @@ reg  [25:0] fetch_addr;
 always @(*) begin
     fetch_req  = 0;
     fetch_addr = mod_len({6'd0, src_addr});
-    if( g3armed && !g3done ) begin
+    if( g3run && state == S_IDLE ) begin
         fetch_req  = 1'b1;
         fetch_addr = G3_BASE + {24'd0, g3i};
     end else
@@ -354,14 +356,19 @@ wire [7:0] g3_expect = g3i==2'd0 ? 8'h81 :
 
 always @(posedge clk) begin
     if( rst ) begin
-        g3i <= 0; g3done <= 0; st_g3ok <= 0; st_g3b0 <= 0; g3wait <= 0;
-    end else if( !g3armed ) begin
-        g3wait <= g3wait + 24'd1;
-    end else if( !g3done && fetch_ok ) begin
-        if( pix == g3_expect ) st_g3ok[g3i] <= 1'b1;
-        if( g3i == 2'd0 ) st_g3b0 <= pix;
-        if( g3i == 2'd3 ) g3done <= 1'b1;
-        g3i <= g3i + 2'd1;
+        g3i <= 0; g3run <= 0; st_g3ok <= 0; st_g3b0 <= 0; g3wait <= 0;
+    end else begin
+        g3wait <= g3wait + 26'd1;
+        if( &g3wait ) begin              // ~1.4 s: start a fresh pass
+            g3run   <= 1'b1;
+            g3i     <= 2'd0;
+            st_g3ok <= 4'd0;
+        end else if( g3run && state == S_IDLE && fetch_ok ) begin
+            if( pix == g3_expect ) st_g3ok[g3i] <= 1'b1;
+            if( g3i == 2'd0 ) st_g3b0 <= pix;
+            if( g3i == 2'd3 ) g3run <= 1'b0;
+            g3i <= g3i + 2'd1;
+        end
     end
 end
 
