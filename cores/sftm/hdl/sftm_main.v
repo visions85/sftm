@@ -124,6 +124,11 @@ module sftm_main #(
     input      [ 7:0] dbg_crn,
     input      [ 7:0] dbg_crv,
     input      [ 6:0] dbg_crp,
+    // grom low-address probe (see sftm_blit.v)
+    input      [ 7:0] dbg_gb0,
+    input      [ 7:0] dbg_gb1,
+    input      [11:0] dbg_gaddr,
+    input      [ 1:0] dbg_gph,
 
     // NVRAM persistence (JTFRAME_IOCTL_RD). ioctl_ram marks NVRAM traffic; it
     // is also high while the firmware restores during download.
@@ -260,13 +265,20 @@ end
 reg [7:0] nvram_hi[0:65535], nvram_lo[0:65535];
 reg [7:0] nvram_hi_q, nvram_lo_q;
 
-// Power-on contents: the low 32 KB of a known-good MAME dump. The game keeps
+// Power-on contents: a complete known-good MAME dump (all 128 KB). The game keeps
 // its operator settings here, and the volume (byte 0x14) starts at zero on a
 // blank NVRAM -- which is why the game is silent. The firmware's ioctl restore
 // is not being invoked (measured: the restored-byte latch reads 0x00 with the
 // save file present in every conventional location), and the in-game service
 // menu does not render readably yet, so neither route can set the volume. This
 // gives the core a sane factory state until one of those is fixed.
+//
+// The WHOLE region is initialised, not just the persisted low 32 KB. Loading
+// only the low part left the upper 96 KB zeroed, the game rejected the result
+// and dropped into its setup screen -- visibly a different boot path, which is
+// how the partial image was caught. A partial NVRAM image is inconsistent by
+// construction; persistence still covers only the low 32 KB because the
+// firmware cannot dump 64 kB or more.
 // The path is relative to the Quartus project directory (cores/sftm/mister).
 // Simulation defines SIMULATION and skips it: the benches drive NVRAM
 // themselves and a missing file would leave the array X.
@@ -807,14 +819,14 @@ end
 // ---------------------------------------------------------------------------
 assign st_dout =
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_eswr[3:0] } :
-    view == 4'h2 ? { 4'h2, dbg_eswr[7:4] } :
-    view == 4'h3 ? { 4'h3, dbg_actv[3:0] } :
-    view == 4'h4 ? { 4'h4, 3'd0, dbg_anyrun } :
-    view == 4'h5 ? { 4'h5, dbg_cr0[3:0] } :
-    view == 4'h6 ? { 4'h6, dbg_cr0[7:4] } :
-    view == 4'h7 ? { 4'h7, dbg_crn[3:0] } :
-    view == 4'h8 ? { 4'h8, dbg_crn[7:4] } :
+    view == 4'h1 ? { 4'h1, dbg_gb0[3:0]   } :   // first source byte  lo
+    view == 4'h2 ? { 4'h2, dbg_gb0[7:4]   } :   // first source byte  hi
+    view == 4'h3 ? { 4'h3, dbg_gb1[3:0]   } :   // second source byte lo
+    view == 4'h4 ? { 4'h4, dbg_gb1[7:4]   } :   // second source byte hi
+    view == 4'h5 ? { 4'h5, dbg_gaddr[3:0] } :   // grom_base[3:0]
+    view == 4'h6 ? { 4'h6, dbg_gaddr[7:4] } :   // grom_base[7:4]
+    view == 4'h7 ? { 4'h7, dbg_gaddr[11:8]} :   // grom_base[11:8]
+    view == 4'h8 ? { 4'h8, 2'd0, dbg_gph  } :   // 0 none, 2 byte0 only, 3 both
     view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
     view == 4'hA ? { 4'hA, st_nv14[7:4] } :
     view == 4'hB ? { 4'hB, dbg_crp[3:0] } :
