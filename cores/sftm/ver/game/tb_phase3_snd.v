@@ -67,11 +67,11 @@ end
 // ---------------------------------------------------------------------------
 wire [20:0] rom_addr;   // biased by SND_ORG (see cfg/mem.yaml)
 wire        rom_cs;
-reg  [ 7:0] rom[0:262143];
+reg  [ 7:0] rom[0:327679];   // 0x50000: FF pad + the 0x40000 file, as the MRA lays it out
 reg         rom_ok = 0;
 reg  [20:0] ok_addr = 0;
 reg  [ 2:0] ok_cnt = 0;
-wire [ 7:0] rom_data = rom[ok_addr[17:0]];
+wire [ 7:0] rom_data = rom[ok_addr[20:0] - 21'h100000];  // strip SND_ORG
 
 always @(posedge clk) begin
     if( !rom_cs ) begin
@@ -86,7 +86,8 @@ end
 
 // program assembler
 integer pc;
-task e(input [7:0] b); begin rom[pc] = b; pc = pc + 1; end endtask
+localparam FIX_ORG = 'h48000;   // region base of the file's last 32 KB
+task e(input [7:0] b); begin rom[FIX_ORG + pc - 'h8000] = b; pc = pc + 1; end endtask
 task ldab_ext(input [15:0] a); begin e(8'hB6); e(a[15:8]); e(a[7:0]); end endtask // LDA ext
 task stab_ext(input [15:0] a); begin e(8'hB7); e(a[15:8]); e(a[7:0]); end endtask // STA ext
 task ldai(input [7:0] v);      begin e(8'h86); e(v); end endtask                  // LDA #
@@ -100,7 +101,8 @@ end endtask
 
 integer k;
 initial begin
-    for( k=0; k<262144; k=k+1 ) rom[k] = 8'h00;
+    for( k=0; k<327680; k=k+1 ) rom[k] = 8'hFF;   // MRA pads with FF
+    for( k='h10000; k<'h50000; k=k+1 ) rom[k] = 8'h00;
     // banked page 1 marker: region 0x10000 + 1*0x4000 + 0 = 0x14000
     rom['h14000] = 8'hB1;
 
@@ -145,9 +147,9 @@ initial begin
     e(8'h3B);                              // RTI
 
     // ---- vectors ----
-    rom['hFFF6] = 8'h90; rom['hFFF7] = 8'h00;   // FIRQ -> 0x9000
-    rom['hFFF8] = 8'h80; rom['hFFF9] = 8'h00;   // IRQ  -> 0x8000 (unused; masked)
-    rom['hFFFE] = 8'h80; rom['hFFFF] = 8'h00;   // RESET -> 0x8000
+    rom[FIX_ORG+'h7FF6] = 8'h90; rom[FIX_ORG+'h7FF7] = 8'h00;   // FIRQ -> 0x9000
+    rom[FIX_ORG+'h7FF8] = 8'h80; rom[FIX_ORG+'h7FF9] = 8'h00;   // IRQ  -> 0x8000 (unused; masked)
+    rom[FIX_ORG+'h7FFE] = 8'h80; rom[FIX_ORG+'h7FFF] = 8'h00;   // RESET -> 0x8000
 end
 
 // ---------------------------------------------------------------------------

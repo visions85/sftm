@@ -105,9 +105,26 @@ reg [7:0] bank;      // sound_bank_w (:663)
 // cannot express a non-zero one, so the bias is applied here -- without it
 // the 6809 fetched the 68020's program ROM. See cfg/mem.yaml.
 localparam [20:0] SND_ORG = 21'h100000;
+// MAME builds this region with a ROM_CONTINUE:
+//     ROM_LOAD( "sfm_snd_v1.u23", 0x10000, 0x38000 )
+//     ROM_CONTINUE(               0x08000, 0x08000 )
+// so region 0x10000.. holds the file's first 0x38000 bytes and region
+// 0x08000-0x0FFFF -- the 6809's FIXED window, which carries the reset vector
+// -- holds the file's LAST 32 KB.
+//
+// The MRA cannot express ROM_CONTINUE: it emits 0x10000 of FF padding and
+// then the whole 0x40000 file linearly, so region 0x8000-0xFFFF was reading
+// FF and the 6809 never booted (ES5506 register writes measured 0 on
+// hardware). The banked window was already correct.
+//
+// Region offset R therefore holds file[R - 0x10000], and the two windows map
+// to file offsets directly:
+//     banked 0x4000-0x7FFF -> file bank*0x4000 + A[13:0]
+//     fixed  0x8000-0xFFFF -> file 0x38000 + (A - 0x8000)
+localparam [20:0] FIX_ORG = 21'h48000;   // region base of the file's last 32 KB
 assign rom_addr = SND_ORG +
-                  ( brom_cs ? 21'h10000 + {7'd0, bank, A[13:0]}  // region 0x10000+
-                            : {7'd0, 2'd0, A} );                 // region == address
+                  ( brom_cs ? 21'h10000 + {7'd0, bank, A[13:0]}
+                            : FIX_ORG   + {6'd0, A[14:0]} );
 assign rom_cs   = rom_sel;
 
 always @(posedge clk) begin
