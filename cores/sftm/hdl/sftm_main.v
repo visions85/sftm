@@ -131,6 +131,9 @@ module sftm_main #(
     input      [15:0] dbg_peak,
     input      [ 7:0] dbg_sromn,
     input      [ 7:0] dbg_sromd,
+    input      [ 4:0] dbg_actv,
+    input             dbg_anyrun,
+    input      [ 7:0] dbg_cr0,
     input      [ 7:0] dbg_g3b0,
        // count of INTSTATE bit2 rising edges
     output     [ 7:0] st_dout
@@ -746,8 +749,9 @@ end
 //   8   : VRAM self-test mismatch count (0 = every word read back correctly)
 //   9   : VRAM self-test status, bit3 = test finished
 //   A-B : ES5506 register writes by the 6809 (saturating; 0 = CPU not running)
-//   C-D : ES5506 sample-ROM fetches (0 = no voice ever started)
-//   E-F : last nonzero sample byte fetched (0 = srom reads return nothing)
+//   C   : ACTV, the voice count the driver programmed (0 = never set)
+//   D   : {3'd0, any voice ever had STOP clear}
+//   E-F : voice 0 CR low byte (bits 1:0 are STOP1/STOP0; 3 = still stopped)
 //   A   : pc_max upper 4 bits
 //   B-C : tick write count      D-E : wrap-branch count
 //   F   : scanline_hit high nibble
@@ -765,10 +769,10 @@ assign st_dout =
     view == 4'h9 ? { 4'h9, dbg_vtest[7:4] } :
     view == 4'hA ? { 4'hA, dbg_eswr[3:0] } :
     view == 4'hB ? { 4'hB, dbg_eswr[7:4] } :
-    view == 4'hC ? { 4'hC, dbg_sromn[3:0] } :
-    view == 4'hD ? { 4'hD, dbg_sromn[7:4] } :
-    view == 4'hE ? { 4'hE, dbg_sromd[3:0] } :
-                   { 4'hF, dbg_sromd[7:4] };
+    view == 4'hC ? { 4'hC, dbg_actv[3:0] } :
+    view == 4'hD ? { 4'hD, 3'd0, dbg_anyrun } :
+    view == 4'hE ? { 4'hE, dbg_cr0[3:0] } :
+                   { 4'hF, dbg_cr0[7:4] };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both

@@ -67,6 +67,13 @@ module sftm5506(
     // downstream in the voice/mix pipeline.
     output reg [ 7:0] st_sromn,     // saturating count of completed fetches
     output reg [ 7:0] st_sromd,     // last sample byte fetched
+    // Hardware says the driver writes registers constantly yet never fetches a
+    // sample, so a voice never runs. These say why: ACTV is the voice count
+    // the driver programmed, and a voice only fetches once its CR STOP bits
+    // are cleared (all voices reset to STOPMASK).
+    output     [ 4:0] st_actv,
+    output reg        st_anyrun,    // any voice has ever had STOP clear
+    output     [ 7:0] st_cr0,
 
     // stereo output, refreshed once per sample period
     output reg signed [15:0] snd_left,
@@ -344,6 +351,9 @@ reg [ 1:0] srom_settle;
 reg [21:0] cur_baddr;
 
 wire [ 1:0] bank      = ctrl[15:14];
+
+assign st_actv = active_voices;
+assign st_cr0  = v_control[0][7:0];
 wire [20:0] addr_int1 = int_addr(accum, 1'b0);
 wire [20:0] addr_int2 = int_addr(accum, 1'b1);
 wire        bank_ok1  = bank == 2'd0 ? addr_int1 < 21'h100000 :
@@ -368,6 +378,7 @@ always @(posedge clk) begin
         srom_cs <= 0;
         st_sromn <= 8'd0;
         st_sromd <= 8'd0;
+        st_anyrun <= 1'b0;
         hw_pend <= 0;
         irqv_ack<= 0;
         page    <= 0;
@@ -474,6 +485,7 @@ always @(posedge clk) begin
         end
         E_ADDR1: begin
             running <= !(ctrl[CR_STOP1] || ctrl[CR_STOP0]);
+            if( !(ctrl[CR_STOP1] || ctrl[CR_STOP0]) ) st_anyrun <= 1'b1;
             if( ctrl[CR_STOP1] || ctrl[CR_STOP0] )
                 estate <= E_ENV;         // stopped: envelopes only (:968)
             else if( !bank_ok1 ) begin

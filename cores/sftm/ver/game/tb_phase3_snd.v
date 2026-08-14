@@ -239,6 +239,9 @@ initial begin
     $display("srom probe: fetches=%0d  last sample byte=0x%02X",
              u_snd.st_sromn, u_snd.st_sromd);
     check( u_snd.st_sromn != 8'd0, "probe counts ES5506 sample fetches" );
+    $display("es5506 state: ACTV=%0d anyrun=%0d cr0=0x%02X",
+             u_snd.st_actv, u_snd.st_anyrun, u_snd.st_cr0);
+    check( u_snd.st_anyrun, "probe sees a voice with STOP cleared" );
 
     check( errors == 0, "ALL PHASE 3 CHECKS" );
     $finish;

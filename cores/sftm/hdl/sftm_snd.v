@@ -73,7 +73,10 @@ module sftm_snd(
     output reg [ 7:0] st_eswr,
     output reg [15:0] st_peak,
     output     [ 7:0] st_sromn,   // ES5506 sample fetches
-    output     [ 7:0] st_sromd    // last sample byte
+    output     [ 7:0] st_sromd,   // last sample byte
+    output     [ 4:0] st_actv,
+    output            st_anyrun,
+    output     [ 7:0] st_cr0
 );
 
 // ---------------------------------------------------------------------------
@@ -208,6 +211,9 @@ wire       es_rd = cen_E && es_cs &&  RnW;
 sftm5506 u_es(
     .st_sromn  ( st_sromn   ),
     .st_sromd  ( st_sromd   ),
+    .st_actv   ( st_actv    ),
+    .st_anyrun ( st_anyrun  ),
+    .st_cr0    ( st_cr0     ),
     .rst       ( rst        ),
     .clk       ( clk        ),
     .es_cen    ( es_cen     ),
