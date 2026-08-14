@@ -95,7 +95,25 @@ JTFRAME_IOCTL_RD=32768
 [mister]
 # OSD extras for MiSTer
 JTFRAME_OSD_VOL
-# Disable HQ2x scandoubler (saves ~9.9k ALMs; hq2x_buf line buffers use FFs
-# not block RAM, making it disproportionately expensive on Cyclone V).
-# Replaced by simple 2x line doubler via jtframe_scan2x.v.
-JTFRAME_NOHQ2X
+# JTFRAME_NOHQ2X IS NOT SAFE ON MISTER -- left here, disabled, as a warning.
+#
+# The old comment claimed it was "replaced by a simple 2x line doubler via
+# jtframe_scan2x.v". It is not: jtframe_scan2x.v is only compiled for the MiST
+# target (target/mist/cfg/common.yaml). On MiSTer the scandoubler is
+# target/mister/hdl/sys/scandoubler.v, which delegates ALL line storage to the
+# Hq2x module -- write a line, then read it back twice with read_y selecting
+# the row. JTFRAME_NOHQ2X replaces that whole module with two registers:
+#
+#     if(ce_in ) pxlin_l <= inputpixel;
+#     if(ce_out) pre_out <= pxlin_l;
+#
+# No memory, and read_y/reset_line/hblank all ignored. So the "doubled" line is
+# not a stored copy -- the output consumes at 4x while the input advances at
+# 1x, and each line runs off the end and wraps. Measured on the .98 board with
+# forced_scandoubler=1: doubled row pairs are NOT identical and line tails
+# reappear at the left edge.
+#
+# Note the macro only saved hq2x HARDWARE. arcade_video.v already forces
+# hq2x_en = 1'b0 under it, so the interpolation was never runtime-active; the
+# only thing it actually removed was the line buffer the scandoubler needs.
+# JTFRAME_NOHQ2X
