@@ -630,3 +630,71 @@ Two independent things hid this for many cycles:
 Widening `rom_addr` also required widening `last_addr` in `sftm_snd`;
 leaving it at 18 bits truncated the address-stable comparison and broke
 voice playback, which the phase 3 bench caught immediately.
+
+## Bug B FIXED (2026-08-14): two compounding causes
+
+The glyph checkerboard had **two** causes in the SDRAM map, and fixing either
+alone was never going to be enough.
+
+### Cause 1: overlapping buses
+
+`jtframe_rom_2slots` and `jtframe_ram1_3slots` default `SLOTn_OFFSET` to
+zero and `cfg/mem.yaml` declared no offsets, so buses sharing a bank all
+started at word 0:
+
+| bank | buses | effect |
+|------|-------|--------|
+| 0 | `main` @0, `snd` @0 | the 6809 fetched the 68020's program ROM |
+| 3 | `vram` @0, `grm3` @0 | the blitter overwrote the glyph ROM in place |
+
+Fixed by biasing VRAM above grm3 (`VRAM_ORG` = `0x40000` words) and the sound
+ROM above maindata (`SND_ORG` = `0x100000` bytes), widening both buses to make
+room. This moved the hardware metric from 97% isolated pixels to 51-68% --
+real progress, but the glyphs still did not render.
+
+### Cause 2: the rw slot erased the glyph ROM
+
+`jtframe_ram_rq`'s `ERASE` walks `erase_cnt` across the slot's **entire**
+address window after reset, writing zeros at `sdram_addr = erase_cnt +
+offset`. `SLOT0_ERASE` defaults to 1 and the generated instantiation never
+overrides it, so bank 3's `vram` slot (offset 0) zeroed the whole window --
+including grm3 at words `0..0x3FFFF` -- immediately after the ROM download
+wrote it. A real glyph blit read `0x00` as its first source byte.
+
+This was equally true before the offset fix, when vram's window was 1M words
+and still covered grm3. `entrypoint.sh` now patches `SLOT0_ERASE` to 0
+alongside the existing GAMMA patch. VRAM needs no erase: the game draws a
+full background every frame and never reads VRAM before writing it.
+
+### Result
+
+| build | isolated-pixel fraction |
+|-------|------------------------|
+| before | 97% |
+| overlap fix only | 51-68% |
+| **+ erase fix** | **0.0-0.4%** |
+| MAME reference | 0.6% |
+
+The high-score table now renders correctly on hardware -- "STREET FIGHTERS"
+with its 3D bevel, ranked entries, clean glyphs.
+
+### What actually broke the deadlock
+
+Five probes were built. The first four were hijacking probes that stole the
+blitter's shared fetcher and advanced on `fetch_ok`, a cache-hit signal on a
+fetcher entangled with the blitter FSM. They failed for four different
+reasons -- fired before the ROM download existed, used a guessed delay,
+reported a pass id and a result in different views that could never be
+paired, and finally read `0xFF` from a bank the blitter demonstrably reads
+correctly.
+
+Two things fixed the method:
+
+1. **A control.** Adding a `grom` read on the known-good path immediately
+   proved the whole measurement was junk. Without it, the `0x00` readings
+   would have been believed.
+2. **Passive measurement, verified in simulation first.** The probe that
+   worked takes no fetch of its own: it latches the byte as it flows through
+   the real RLE path. Proving it in simulation before building -- capturing
+   a known `0xE4` header from a modelled grm3 -- is what the previous four
+   lacked, and it gave a trustworthy answer on the first hardware run.
