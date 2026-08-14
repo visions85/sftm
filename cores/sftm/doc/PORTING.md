@@ -789,3 +789,43 @@ plausible-looking wrong data -- not a crash, not a warning -- and it will be
 mistaken for a decoder bug. This is the third bug in this core from SDRAM
 address arithmetic, after the missing `SLOTn_OFFSET` overlaps and
 `SLOT0_ERASE` wiping `grm3`.
+
+---
+
+# Sound came back with the grom fix (2026-08-14)
+
+Sound was being chased as a separate defect: the 6809 booted and wrote ES5506
+registers, the command handshake was healthy, `ACTV` reached 15, but every CR
+write carried the STOP bits and no voice ever started. The suspected culprits
+were the ES5506 register read path and the interrupt wiring.
+
+Both were wrong, and a MAME comparison is what ruled them out. A Lua tap on
+the 6809's ES5506 window (`0x0800-0x083f`) showed the driver does a byte-by-byte
+read-modify-write on CR -- read byte i, write byte i, commit on byte 3 -- so
+what it writes is a direct function of what the read returns. But the counts
+matched ours exactly: 33 CR commits in the first 20 frames, the same per-voice
+init loop writing `CR=0x0303`, and the only STOP-clear being the very first
+access after reset. The interrupt sources also check out against the driver
+config -- IRQ is the input merger `soundlatch1.pending | soundlatch2.pending`
+(itech32.cpp:1896-1900) and FIRQ is `irq1_line_assert` at 240 Hz cleared by
+`firq_clear_w` (itech32.cpp:1894, 761), both of which sftm_snd.v implements.
+
+The real answer: the driver was doing exactly the right thing and simply never
+got past init, because the *game* never got far enough to ask for a sound.
+Once the grom bank split let the 68020 reach real gameplay, the sound driver
+followed on its own. Measured on the .98 board at the versus screen:
+
+| view | before | after |
+|------|--------|-------|
+| `anyrun` (a voice ever ran) | 0 | 1 |
+| `crn` (CR commits) | 32-33 (init only) | 255, saturated |
+| `crp` (page each CR targets) | fixed | cycling 3,4,5,8,9,11,13 |
+| `peak` \|snd_left\| top nibble | 0 | 7 |
+| `cmdr` (commands read by 6809) | - | 87 and climbing |
+
+`peak = 7` means the mixer is producing near-full-scale output, and `crp`
+cycling means the driver is programming many different voices.
+
+The lesson matches the grom bug's: a downstream subsystem that looks broken may
+just be starved by an upstream one. Before instrumenting the ES5506 further it
+was worth asking whether the game had any reason to make a sound yet.
