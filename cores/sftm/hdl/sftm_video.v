@@ -114,9 +114,12 @@ module sftm_video(
     output reg [ 3:0] st_bgf,     // GROM words fetched
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
-    output reg [14:0] st_gpen,
-    output reg        st_gseen,
-    output reg [ 3:0] st_gcnt
+    output reg [14:0] st_gpen,     // pen from the frame with the most green
+    output reg        st_gseen,    // green seen at all (control)
+    output reg [ 3:0] st_gcnt,     // green pixels that frame / 256
+    output reg        st_gmulti,   // >1 distinct pen produced green that frame
+    output reg        st_palhit,   // CPU has written palette[st_gpen]
+    output reg [ 7:0] st_palcnt
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -463,51 +466,75 @@ assign pal_dout = !cpu_addr[1] ? {pal_b3_qa, pal_b2_qa} : {pal_b1_qa, pal_b0_qa}
 // ---------------------------------------------------------------------------
 // Background-streak probe
 //
-// The streak pixels are EXACTLY (0,255,0). Measured on two different stages:
-// 2496 of them in a VEGA/BALROG capture, 2051 in another, against 566 distinct
-// colours in the same band. Pure green is not in these digitised backgrounds,
-// so those pixels carry a wrong pen INDEX landing on one palette slot; the
-// image data itself is not being mangled. Run starts split evenly between even
-// and odd x with mixed lengths, so it is not a 32-bit pairing or byte-enable
-// fault, and tb_svcfont decodes real ROM bytes perfectly, so it is not the RLE
-// decoder.
+// The streak pixels are EXACTLY (0,255,0): 2496 of them in one fight capture,
+// 2051 in another on a different stage, against 566 distinct colours in the
+// same band. Pure green is not in these digitised backgrounds, so those pixels
+// carry a wrong pen INDEX landing on one palette slot; the image data is not
+// being mangled. Run starts split evenly between even and odd x with mixed
+// lengths, so not a 32-bit pairing or byte-enable fault, and tb_svcfont
+// decodes real ROM bytes perfectly, so not the RLE decoder.
 //
-// (A photograph of a third stage showed orange streaks and briefly cast doubt
-// on all of this. A digital capture of that stage still contained 2051 pure
-// green pixels -- the camera and the stage palette hid them. Trust the
-// captures, not the photographs.)
+// The first build held the FIRST green pen since reset, which was useless: the
+// captured value (0x71, latch 0x03) came from a two-minute window that was
+// mostly boot and attract, and every frame captured alongside it had zero
+// green pixels. It could have been a boot artifact rather than the fight
+// corruption. So report from the frame with the MOST green pixels instead --
+// the same worst-frame latching used for the blitter counters -- with the pen
+// and the count latched together so they always describe one frame.
 //
-// The output colour is known but the pen index is not, so read it off where
-// the palette resolves: latch `pen` whenever the lookup produces pure green.
-// That yields the pen byte the blitter wrote AND the colour latch in force,
-// which together say where it came from.
+// Three bits answer the open questions:
+//   st_gmulti  more than one distinct pen produced green in that frame.
+//              Clear = a single bad index; set = the pen is varying and the
+//              "one wrong palette slot" reading is wrong.
+//   st_palhit  the CPU has written the palette entry st_gpen points at. If it
+//              never does, the pen may be legitimate and the PALETTE UPLOAD is
+//              what is incomplete -- which would make this the same root cause
+//              as the throughput problem, since cpu_wait starves the 68020.
+//   st_gseen   green was seen at all (control).
 //
-// Deliberately NOT gated on LVBL/LHBL and in its own block rather than hanging
-// off the CRT timing: the palette read is ungated so pal_*_qb tracks `pen`
-// continuously, and a green pixel in the line buffer is a real VRAM pixel
-// whether or not it is on screen at that instant. That also makes the probe
-// testable without simulating a whole 16.7 ms frame.
-//
-// st_gcnt is the control: the captures show ~2000-2500 green pixels per frame,
-// so a reading of zero means the probe is broken, not that the streaks stopped.
+// st_palcnt counts palette writes overall: it must be non-zero, otherwise a
+// clear st_palhit means nothing.
 // ---------------------------------------------------------------------------
 wire pal_is_green = pal_b2_qb[7:3]==5'd0 && pal_b1_qb[7:3]==5'd31 && pal_b0_qb[7:3]==5'd0;
-reg [11:0] gcnt_acc;
+
+reg [11:0] gcnt_acc, gcnt_best;
+reg [14:0] gpen_first, gpen_last;
+reg        gmulti_acc;
+reg [15:0] palcnt;
 
 always @(posedge clk) begin
     if( rst ) begin
-        st_gpen <= 0; st_gseen <= 0; st_gcnt <= 0; gcnt_acc <= 0;
+        st_gpen  <= 0; st_gseen <= 0; st_gcnt <= 0; st_gmulti <= 0;
+        st_palhit<= 0; st_palcnt<= 0;
+        gcnt_acc <= 0; gcnt_best<= 0; gmulti_acc <= 0;
+        gpen_first<= 0; gpen_last <= 0; palcnt <= 0;
     end else begin
+        // ---- palette write watch ----
+        if( pal_wr ) begin
+            if( ~&palcnt ) palcnt <= palcnt + 16'd1;
+            if( pal_addr == st_gpen ) st_palhit <= 1'b1;
+        end
+        st_palcnt <= palcnt[15:8];
+
+        // ---- green accumulation for this frame ----
         if( pal_is_green ) begin
-            if( !st_gseen ) begin           // hold the FIRST one seen
-                st_gpen  <= pen;
-                st_gseen <= 1'b1;
-            end
+            st_gseen <= 1'b1;
+            if( gcnt_acc == 0 ) gpen_first <= pen;
+            else if( pen != gpen_first ) gmulti_acc <= 1'b1;
+            gpen_last <= pen;
             if( ~&gcnt_acc ) gcnt_acc <= gcnt_acc + 12'd1;
         end
+
+        // ---- publish from the frame with the most green ----
         if( frame_end ) begin
-            st_gcnt  <= gcnt_acc[11:8];     // green pixels per frame / 256
-            gcnt_acc <= 0;
+            if( gcnt_acc > gcnt_best ) begin
+                gcnt_best <= gcnt_acc;
+                st_gpen   <= gpen_last;
+                st_gcnt   <= gcnt_acc[11:8];
+                st_gmulti <= gmulti_acc;
+                st_palhit <= 1'b0;   // re-arm: it refers to the NEW st_gpen
+            end
+            gcnt_acc <= 0; gmulti_acc <= 0;
         end
     end
 end

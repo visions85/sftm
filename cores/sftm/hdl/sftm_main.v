@@ -133,6 +133,9 @@ module sftm_main #(
     input      [14:0] dbg_gpen,
     input             dbg_gseen,
     input      [ 3:0] dbg_gcnt,
+    input             dbg_gmulti,
+    input             dbg_palhit,
+    input      [ 7:0] dbg_palcnt,
 
     // NVRAM persistence (JTFRAME_IOCTL_RD). ioctl_ram marks NVRAM traffic; it
     // is also high while the firmware restores during download.
@@ -827,10 +830,10 @@ assign st_dout =
     view == 4'h2 ? { 4'h2, dbg_gpen[7:4]   } :  // bad pen: pixel byte hi
     view == 4'h3 ? { 4'h3, dbg_gpen[11:8]  } :  // bad pen: colour latch [3:0]
     view == 4'h4 ? { 4'h4, 1'b0, dbg_gpen[14:12] } : // colour latch [6:4]
-    view == 4'h5 ? { 4'h5, 3'd0, dbg_gseen } :  // control: green ever seen
+    view == 4'h5 ? { 4'h5, dbg_gmulti, dbg_palhit, dbg_gseen, 1'b0 } :
     view == 4'h6 ? { 4'h6, dbg_gcnt      } :   // control: green px/frame /256
-    view == 4'h7 ? { 4'h7, dbg_crn[3:0] } :
-    view == 4'h8 ? { 4'h8, dbg_crn[7:4] } :
+    view == 4'h7 ? { 4'h7, dbg_palcnt[3:0] } :   // palette writes /256 lo
+    view == 4'h8 ? { 4'h8, dbg_palcnt[7:4] } :   // palette writes /256 hi
     view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
     view == 4'hA ? { 4'hA, st_nv14[7:4] } :
     view == 4'hB ? { 4'hB, dbg_crp[3:0] } :

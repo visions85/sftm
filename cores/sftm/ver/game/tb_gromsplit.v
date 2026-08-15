@@ -112,7 +112,8 @@ reg  [ 1:0] grom_bank = 0;
 
 wire [3:0] st_bbusy, st_bwait, st_bwr, st_bgf, st_bnum, st_gcnt;
 wire [14:0] st_gpen;
-wire st_gseen;
+wire st_gseen, st_gmulti, st_palhit;
+wire [7:0] st_palcnt;
 
 sftm_video u_video(
     .rst(rst), .clk(clk), .pxl_cen(pxl_cen),
@@ -134,7 +135,8 @@ sftm_video u_video(
     .red(red), .green(green), .blue(blue),
     .gfx_en(4'hF), .debug_bus(8'h00),
     .st_bbusy(st_bbusy), .st_bwait(st_bwait), .st_bwr(st_bwr), .st_bgf(st_bgf), .st_bnum(st_bnum),
-    .st_gpen(st_gpen), .st_gseen(st_gseen), .st_gcnt(st_gcnt)
+    .st_gpen(st_gpen), .st_gseen(st_gseen), .st_gcnt(st_gcnt),
+    .st_gmulti(st_gmulti), .st_palhit(st_palhit), .st_palcnt(st_palcnt)
 );
 
 task wreg(input [5:0] idx, input [15:0] val); begin
@@ -237,33 +239,9 @@ initial begin
         $display("INSTRUMENT-FAIL: rate meter counted zero VRAM writes");
     end
 
-    // ---- verify the green-pen probe -------------------------------------
-    // It must be silent on a clean image and must latch the pen that produced
-    // pure green. Forcing the palette OUTPUT exercises the capture without
-    // needing a 16.7 ms frame of real scanout.
-    if( st_gseen !== 1'b0 ) begin
-        fails = fails + 1;
-        $display("PROBE-FAIL: green flagged on a clean image");
-    end
-    // scan_pen must be forced to a KNOWN value: the line buffers are unwritten
-    // at this scan_x, so pen is X and an unforced comparison passes vacuously.
-    force u_video.scan_pen  = 16'h12FD;
-    force u_video.pal_b2_qb = 8'h00;
-    force u_video.pal_b1_qb = 8'hFF;
-    force u_video.pal_b0_qb = 8'h00;
-    repeat(4) @(posedge clk);
-    release u_video.pal_b2_qb; release u_video.pal_b1_qb; release u_video.pal_b0_qb;
-    release u_video.scan_pen;
-    repeat(4) @(posedge clk);
-    if( st_gseen !== 1'b1 || st_gpen !== 15'h12FD ) begin
-        fails = fails + 1;
-        $display("PROBE-FAIL: seen=%b pen=%04X (expected 1 and 12FD)", st_gseen, st_gpen);
-    end else
-        $display("PROBE-OK: green capture latched pen 12FD, the one that produced it");
-
-    force u_video.LVBL = 1'b1; repeat(4) @(posedge clk);
-    force u_video.LVBL = 1'b0; repeat(4) @(posedge clk);
-    release u_video.LVBL;      repeat(4) @(posedge clk);
+    #1 force u_video.LVBL = 1'b1; repeat(4) @(posedge clk);
+    #1 force u_video.LVBL = 1'b0; repeat(4) @(posedge clk);
+    #1 release u_video.LVBL;      repeat(4) @(posedge clk);
 
     $display("after a forced frame edge: busy=%0d gromwait=%0d writes=%0d nblit=%0d",
              st_bbusy, st_bwait, st_bwr, st_bnum);
@@ -272,6 +250,65 @@ initial begin
         $display("INSTRUMENT-FAIL: latch did not publish the accumulated values");
     end else
         $display("INSTRUMENT-OK: accumulators count and the frame latch publishes them");
+
+    // ---- verify the green-pen probe (AFTER the instrument check: forcing a
+    // frame edge here publishes and resets the blitter counters, which broke
+    // the instrument's own comparison when this ran first) ---------------
+    if( st_gseen !== 1'b0 ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: green flagged on a clean image");
+    end
+    // Hold scan_pen forced until AFTER the frame-end publish: releasing it
+    // early leaves pen undefined and the published value comes back X.
+    #1 force u_video.scan_pen  = 16'h12FD;
+    force u_video.pal_b2_qb = 8'h00;
+    force u_video.pal_b1_qb = 8'hFF;
+    force u_video.pal_b0_qb = 8'h00;
+    repeat(4) @(posedge clk);
+    if( st_gseen !== 1'b1 ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: green not flagged");
+    end
+    // publish happens at frame end, from the frame with the most green
+    #1 force u_video.LVBL = 1'b1; repeat(3) @(posedge clk);
+    #1 force u_video.LVBL = 1'b0; repeat(3) @(posedge clk);
+    #1 release u_video.LVBL;
+    release u_video.pal_b2_qb; release u_video.pal_b1_qb; release u_video.pal_b0_qb;
+    release u_video.scan_pen;
+    repeat(3) @(posedge clk);
+    if( st_gpen !== 15'h12FD ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: published pen %04X, expected 12FD", st_gpen);
+    end else
+        $display("PROBE-OK: worst-frame latch published pen 12FD");
+
+    // st_palhit must actually respond: a permanently clear bit looks exactly
+    // like the finding being hunted (palette entry never written).
+    if( st_palhit !== 1'b0 ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: palhit set before any palette write");
+    end
+    // cpu_addr is declared [23:1], so literal bit i lands on cpu_addr[i+1];
+    // pal_addr is cpu_addr[16:2] = literal[15:1], hence 12FD<<1.
+    @(posedge clk);
+    cpu_addr <= 23'h25FA;
+    cpu_dout <= 16'h0000;
+    #1 force u_video.pal_cs = 1'b1;
+    bus_wstb <= 1;
+    @(posedge clk);
+    bus_wstb <= 0;
+    #1 release u_video.pal_cs;
+    repeat(4) @(posedge clk);
+    if( st_palhit !== 1'b1 ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: palhit did not set on a write to palette[12FD]");
+    end else
+        $display("PROBE-OK: palhit responds to a write at the captured pen");
+    if( u_video.palcnt === 16'd0 ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: palette-write counter never moved");
+    end else
+        $display("PROBE-OK: palette-write counter moved (%0d)", u_video.palcnt);
 
     if( fails == 0 ) $display("PASS: each grom bank reaches its own SDRAM bus");
     else             $display("FAIL: %0d check(s) failed", fails);
