@@ -1002,3 +1002,39 @@ an unwritten palette entry, a pen index that escapes its expected range, or a
 readback the shiftreg/c3 path uses. The colour being a single exact value makes
 this findable: latch the pen whenever the blitter writes one that will resolve
 to that palette slot, and capture the source address and blit state with it.
+
+### Resolved: the streaks ARE the throughput problem
+
+The "one wrong pen" reading was wrong, and so was treating the corruption as a
+separate defect. Two measurements settled it.
+
+**The pen probe (build 59)** reported pen 0xB8 / colour latch 0x03 with
+`gmulti` SET -- several distinct pens resolve to pure green -- and `palhit`
+SET, so the CPU does write that palette entry. Both hypotheses died: it is
+neither a single bad index nor an uninitialised palette slot. Pure green is
+simply the most conspicuous subset of arbitrary wrong pixels, which is why a
+photograph of another stage showed orange streaks instead.
+
+**Frame-to-frame comparison** then identified what the wrong pixels are. Across
+eight consecutive corrupted fight frames the green-pixel sets overlap by only
+0-6%: essentially every corrupt pixel is new each frame, and pixels green in
+one frame come back as ordinary dark scene colours in the next. They are not
+systematically wrong, they are TRANSIENTLY wrong -- stale content in whichever
+region the blitter failed to redraw that frame.
+
+An earlier build-54 measurement found the opposite, 99% overlap. That was
+before the arbiter rework, when writes ran at ~2227 clk each and the same
+partial state persisted for many frames. At ~12 clk the corruption sweeps
+instead of sitting still. Same mechanism, different speed -- and a good warning
+that a measurement's meaning can depend on the very defect being fixed.
+
+So the corruption and the frame rate are ONE problem: the blitter cannot finish
+a frame's drawing. At ~65k writes/frame against 92,160 for a background alone,
+it never will. Fixing write throughput fixes both, and no separate corruption
+hunt is needed.
+
+The validated route is cache-lanes (see above): jtframe mem accepts the layout
+and the vram lane gives 32-bit data, 32-bit word addressing, four byte enables
+and a flush interface. Constraints found: banks and cache-lanes are mutually
+exclusive so all seven buses convert, offsets must be hex strings or parameter
+names, and rw lanes must be among the first four.
