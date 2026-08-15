@@ -911,3 +911,35 @@ logic and let the JTFRAME slot arbiter interleave them, and drop the
 settle/gap overhead by tracking outstanding requests instead of idling between
 them. That is the same lesson as Bug A one level up: it is not the width of a
 single access that hurts, it is refusing to have more than one in flight.
+
+## After the rework: the write path is at its architectural limit
+
+Build 56 replaced the saturating stall flag with rate meters. Measured on the
+.98 board, per frame:
+
+| quantity | reading |
+|----------|---------|
+| blitter busy | 13 -- still the whole frame |
+| GROM words fetched | 0 -- fewer than 8192, never the constraint |
+| VRAM writes issued | 8-12 units of 8192, i.e. **65k-98k writes/frame** |
+
+A frame is 800k clk, so that is 8-12 clk per write: the arbiter is running at
+close to the cost of a single transaction, which is what the rework was for.
+The blitter is nonetheless busy the entire frame, because a 384x240 background
+alone needs 92,160 writes -- about one full frame of write bandwidth before a
+single sprite is drawn. Hence "faster, but not full speed".
+
+The GROM reading confirms the fetcher was never worth rewriting.
+
+### Where the remaining factor of two has to come from
+
+Not from the arbiter: at 8-12 clk per transaction there is little left to
+recover (dropping the one-cycle `settle` buys ~10%). It has to come from
+issuing FEWER transactions. The blitter writes pixels sequentially along a
+row, so adjacent pixels are adjacent VRAM words and can be coalesced into
+32-bit writes -- halving the transaction count, exactly the trick the scanline
+prefetch already uses on the read side via the `vramrd` alias.
+
+That means widening the `vram` bus to 32 bits with byte enables and having the
+write FIFO merge adjacent pixel pairs, with care where transparency skips a
+pixel and where the blitter reads back what it has just written.
