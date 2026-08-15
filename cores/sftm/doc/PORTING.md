@@ -943,3 +943,36 @@ prefetch already uses on the read side via the `vramrd` alias.
 That means widening the `vram` bus to 32 bits with byte enables and having the
 write FIFO merge adjacent pixel pairs, with care where transparency skips a
 pixel and where the blitter reads back what it has just written.
+
+### The plain rw slot cannot do 32 bits (and says nothing about it)
+
+The obvious fix for the write bottleneck -- widen `vram` to 32 bits and
+coalesce adjacent pixels, the way `vramrd` already halves the prefetch's
+accesses -- is not available. Setting `data_width: 32` with `rw: true` on a
+plain bank bus was tried and `jtframe mem` emitted a 16-bit port anyway:
+
+    wire [21:1] vram_addr;   wire [15:0] vram_din;   wire [1:0] vram_dsn;
+
+No error, no warning; the request is silently dropped. The reason is in
+jtframe_ram_rq.v, the module behind an rw slot: it takes read data as
+`din[0+:DW]` from the 16-bit `data_read` bus and special-cases only DW==8, so
+16 bits is its ceiling. Only the read-only `jtframe_romrq` assembles 32-bit
+words, which is why `vramrd` can be 32 bits and `vram` cannot.
+
+That is the same failure mode as the grom bank-width bug: a memory attribute
+quietly ignored rather than rejected. Check the GENERATED port widths in
+cores/sftm/mister/jtsftm_game_sdram.v after any mem.yaml change; do not assume
+the yaml was honoured.
+
+Two routes remain for the remaining factor of two:
+
+* **cache-lanes** (`sdram.cache-lanes` in mem.yaml, JTFRAME_SDRAM_CACHE).
+  This is JTFRAME's supported 32-bit rw path -- a block cache in front of
+  SDRAM, which coalesces writes naturally. It is the right mechanism and a
+  substantial rework: new mem.yaml section, a different port set, and
+  sftm_vram talking to a cache rather than a raw slot.
+* **FASTWR** on the rw slot, a jtframe_ram_rq parameter that acknowledges a
+  write as soon as the slot mux accepts it, allowing one more operation in
+  flight. Small and contained, but neither jtframe_ram1_3slots nor the mem.yaml
+  schema exposes it, so it needs a jtframe patch (docker/jtframe-patches/
+  already exists for this purpose).
