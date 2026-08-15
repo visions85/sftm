@@ -56,6 +56,9 @@ wire [ 4:0] dbg_actv;
 wire        dbg_anyrun;
 wire [15:0] dbg_peak;
 wire [ 3:0] dbg_bbusy, dbg_bwait, dbg_bwr, dbg_bgf, dbg_bnum;
+wire [14:0] dbg_gpen;
+wire        dbg_gseen;
+wire [ 3:0] dbg_gcnt;
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -117,6 +120,9 @@ sftm_main u_main(
     .dbg_bwr      ( dbg_bwr       ),
     .dbg_bgf      ( dbg_bgf       ),
     .dbg_bnum     ( dbg_bnum      ),
+    .dbg_gpen     ( dbg_gpen      ),
+    .dbg_gseen    ( dbg_gseen     ),
+    .dbg_gcnt     ( dbg_gcnt      ),
     .dbg_anyrun   ( dbg_anyrun    ),
     .dbg_cr0      ( dbg_cr0       ),
     .dbg_crn      ( dbg_crn       ),
@@ -196,6 +202,9 @@ sftm_video u_video(
     .st_bwr       ( dbg_bwr       ),
     .st_bgf       ( dbg_bgf       ),
     .st_bnum      ( dbg_bnum      ),
+    .st_gpen      ( dbg_gpen      ),
+    .st_gseen     ( dbg_gseen     ),
+    .st_gcnt      ( dbg_gcnt      ),
     .debug_bus    ( debug_bus     )
 
 );

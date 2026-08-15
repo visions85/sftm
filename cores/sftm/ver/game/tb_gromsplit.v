@@ -110,7 +110,9 @@ wire        vid_wait, vblank_irq, blit_irq, scan_irq, HS, VS, LHBL, LVBL;
 wire [ 4:0] red, green, blue;
 reg  [ 1:0] grom_bank = 0;
 
-wire [3:0] st_bbusy, st_bwait, st_bwr, st_bgf, st_bnum;
+wire [3:0] st_bbusy, st_bwait, st_bwr, st_bgf, st_bnum, st_gcnt;
+wire [14:0] st_gpen;
+wire st_gseen;
 
 sftm_video u_video(
     .rst(rst), .clk(clk), .pxl_cen(pxl_cen),
@@ -131,7 +133,8 @@ sftm_video u_video(
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
     .gfx_en(4'hF), .debug_bus(8'h00),
-    .st_bbusy(st_bbusy), .st_bwait(st_bwait), .st_bwr(st_bwr), .st_bgf(st_bgf), .st_bnum(st_bnum)
+    .st_bbusy(st_bbusy), .st_bwait(st_bwait), .st_bwr(st_bwr), .st_bgf(st_bgf), .st_bnum(st_bnum),
+    .st_gpen(st_gpen), .st_gseen(st_gseen), .st_gcnt(st_gcnt)
 );
 
 task wreg(input [5:0] idx, input [15:0] val); begin
@@ -233,6 +236,30 @@ initial begin
         fails = fails + 1;
         $display("INSTRUMENT-FAIL: rate meter counted zero VRAM writes");
     end
+
+    // ---- verify the green-pen probe -------------------------------------
+    // It must be silent on a clean image and must latch the pen that produced
+    // pure green. Forcing the palette OUTPUT exercises the capture without
+    // needing a 16.7 ms frame of real scanout.
+    if( st_gseen !== 1'b0 ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: green flagged on a clean image");
+    end
+    // scan_pen must be forced to a KNOWN value: the line buffers are unwritten
+    // at this scan_x, so pen is X and an unforced comparison passes vacuously.
+    force u_video.scan_pen  = 16'h12FD;
+    force u_video.pal_b2_qb = 8'h00;
+    force u_video.pal_b1_qb = 8'hFF;
+    force u_video.pal_b0_qb = 8'h00;
+    repeat(4) @(posedge clk);
+    release u_video.pal_b2_qb; release u_video.pal_b1_qb; release u_video.pal_b0_qb;
+    release u_video.scan_pen;
+    repeat(4) @(posedge clk);
+    if( st_gseen !== 1'b1 || st_gpen !== 15'h12FD ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: seen=%b pen=%04X (expected 1 and 12FD)", st_gseen, st_gpen);
+    end else
+        $display("PROBE-OK: green capture latched pen 12FD, the one that produced it");
 
     force u_video.LVBL = 1'b1; repeat(4) @(posedge clk);
     force u_video.LVBL = 1'b0; repeat(4) @(posedge clk);

@@ -112,7 +112,11 @@ module sftm_video(
     // work COMPLETED instead, in units of 8192 per frame.
     output reg [ 3:0] st_bwr,     // VRAM writes issued
     output reg [ 3:0] st_bgf,     // GROM words fetched
-    output reg [ 3:0] st_bnum     // blits started in that frame (saturating)
+    output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
+    // background-streak probe, see below
+    output reg [14:0] st_gpen,
+    output reg        st_gseen,
+    output reg [ 3:0] st_gcnt
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -455,6 +459,58 @@ always @(posedge clk) begin
 end
 
 assign pal_dout = !cpu_addr[1] ? {pal_b3_qa, pal_b2_qa} : {pal_b1_qa, pal_b0_qa};
+
+// ---------------------------------------------------------------------------
+// Background-streak probe
+//
+// The streak pixels are EXACTLY (0,255,0). Measured on two different stages:
+// 2496 of them in a VEGA/BALROG capture, 2051 in another, against 566 distinct
+// colours in the same band. Pure green is not in these digitised backgrounds,
+// so those pixels carry a wrong pen INDEX landing on one palette slot; the
+// image data itself is not being mangled. Run starts split evenly between even
+// and odd x with mixed lengths, so it is not a 32-bit pairing or byte-enable
+// fault, and tb_svcfont decodes real ROM bytes perfectly, so it is not the RLE
+// decoder.
+//
+// (A photograph of a third stage showed orange streaks and briefly cast doubt
+// on all of this. A digital capture of that stage still contained 2051 pure
+// green pixels -- the camera and the stage palette hid them. Trust the
+// captures, not the photographs.)
+//
+// The output colour is known but the pen index is not, so read it off where
+// the palette resolves: latch `pen` whenever the lookup produces pure green.
+// That yields the pen byte the blitter wrote AND the colour latch in force,
+// which together say where it came from.
+//
+// Deliberately NOT gated on LVBL/LHBL and in its own block rather than hanging
+// off the CRT timing: the palette read is ungated so pal_*_qb tracks `pen`
+// continuously, and a green pixel in the line buffer is a real VRAM pixel
+// whether or not it is on screen at that instant. That also makes the probe
+// testable without simulating a whole 16.7 ms frame.
+//
+// st_gcnt is the control: the captures show ~2000-2500 green pixels per frame,
+// so a reading of zero means the probe is broken, not that the streaks stopped.
+// ---------------------------------------------------------------------------
+wire pal_is_green = pal_b2_qb[7:3]==5'd0 && pal_b1_qb[7:3]==5'd31 && pal_b0_qb[7:3]==5'd0;
+reg [11:0] gcnt_acc;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        st_gpen <= 0; st_gseen <= 0; st_gcnt <= 0; gcnt_acc <= 0;
+    end else begin
+        if( pal_is_green ) begin
+            if( !st_gseen ) begin           // hold the FIRST one seen
+                st_gpen  <= pen;
+                st_gseen <= 1'b1;
+            end
+            if( ~&gcnt_acc ) gcnt_acc <= gcnt_acc + 12'd1;
+        end
+        if( frame_end ) begin
+            st_gcnt  <= gcnt_acc[11:8];     // green pixels per frame / 256
+            gcnt_acc <= 0;
+        end
+    end
+end
 
 // ---------------------------------------------------------------------------
 // CRT timing + scanout. Pipeline: scan_x -> scan_pen (1 clk) -> palette

@@ -130,6 +130,9 @@ module sftm_main #(
     input      [ 3:0] dbg_bwr,
     input      [ 3:0] dbg_bgf,
     input      [ 3:0] dbg_bnum,
+    input      [14:0] dbg_gpen,
+    input             dbg_gseen,
+    input      [ 3:0] dbg_gcnt,
 
     // NVRAM persistence (JTFRAME_IOCTL_RD). ioctl_ram marks NVRAM traffic; it
     // is also high while the firmware restores during download.
@@ -820,12 +823,12 @@ end
 // ---------------------------------------------------------------------------
 assign st_dout =
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_bbusy    } :   // blitter busy    cycles/65536
-    view == 4'h2 ? { 4'h2, dbg_bgf      } :   // GROM words fetched /8192
-    view == 4'h3 ? { 4'h3, dbg_bwr      } :   // VRAM writes issued /8192
-    view == 4'h4 ? { 4'h4, dbg_bnum     } :   // blits that frame
-    view == 4'h5 ? { 4'h5, dbg_cr0[3:0] } :
-    view == 4'h6 ? { 4'h6, dbg_cr0[7:4] } :
+    view == 4'h1 ? { 4'h1, dbg_gpen[3:0]   } :  // bad pen: pixel byte lo
+    view == 4'h2 ? { 4'h2, dbg_gpen[7:4]   } :  // bad pen: pixel byte hi
+    view == 4'h3 ? { 4'h3, dbg_gpen[11:8]  } :  // bad pen: colour latch [3:0]
+    view == 4'h4 ? { 4'h4, 1'b0, dbg_gpen[14:12] } : // colour latch [6:4]
+    view == 4'h5 ? { 4'h5, 3'd0, dbg_gseen } :  // control: green ever seen
+    view == 4'h6 ? { 4'h6, dbg_gcnt      } :   // control: green px/frame /256
     view == 4'h7 ? { 4'h7, dbg_crn[3:0] } :
     view == 4'h8 ? { 4'h8, dbg_crn[7:4] } :
     view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
