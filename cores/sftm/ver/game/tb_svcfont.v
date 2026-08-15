@@ -78,72 +78,52 @@ end
 // ---------------------------------------------------------------------------
 // VRAM SDRAM model, init 0x1111, 3-cycle ok latency
 // ---------------------------------------------------------------------------
-wire [21:1] vram_addr;
-wire [15:0] vram_din;
-wire [ 1:0] vram_dsn;
-wire        vram_we, vram_cs;
+// 32-bit cache lane. vmem stays one entry per 16-bit pen, so the pixel checks
+// below are unchanged; the lane addresses PAIRS of pens.
+wire [20:2] vram_addr;
+wire [31:0] vram_din;
+wire [ 3:0] vram_dsn;
+wire        vram_we, vram_rd;
 reg  [15:0] vmem[0:1048575];
 reg         vram_ok = 0;
-reg  [21:1] vok_addr;
+reg  [20:2] vok_addr;
 reg  [ 1:0] vok_cnt;
-reg  [15:0] vram_data_r;
-wire [15:0] vram_data = vram_data_r;
+reg  [31:0] vram_data_r;
+wire [31:0] vram_data = vram_data_r;
 
 integer wr_count = 0;
 integer viol = 0;
 initial for( k=0; k<1048576; k=k+1 ) vmem[k] = 16'h1111;
 
-// Faithful to jtframe_ram_rq: a transaction is issued ONLY on a cs rising
-// edge ("It requires addr_ok signal to toggle for each request"), not on an
-// address change. ok is held until cs drops.
+// Same handshake discipline as before: a transaction is issued only on a rd
+// rising edge, the address must not move while it is high, and ok holds until
+// rd drops.
 reg last_cs = 0, busy_t = 0;
-wire cs_posedge = vram_cs && !last_cs;
+wire cs_posedge = vram_rd && !last_cs;
 
 always @(posedge clk) begin
-    last_cs <= vram_cs;
-    if( !vram_cs ) begin
+    last_cs <= vram_rd;
+    if( !vram_rd ) begin
         vok_cnt <= 0; vram_ok <= 0; busy_t <= 0;
     end else if( cs_posedge ) begin
         vok_addr <= vram_addr; vok_cnt <= 0; vram_ok <= 0; busy_t <= 1;
     end else if( busy_t ) begin
         if( vram_addr != vok_addr ) begin
-            $display("PROTOCOL VIOLATION at %0t: addr changed to %05X while cs high (req was %05X)",
+            $display("PROTOCOL VIOLATION at %0t: addr changed to %05X while rd high (req was %05X)",
                      $time, vram_addr, vok_addr);
             viol = viol + 1;
         end
         if( vok_cnt != 2'd3 ) vok_cnt <= vok_cnt + 2'd1;
         else if( !vram_ok ) begin
             if( vram_we ) begin
-                vmem[vok_addr] <= vram_din;
+                if( !vram_dsn[0] ) vmem[{vok_addr,1'b0}][ 7:0] <= vram_din[ 7:0];
+                if( !vram_dsn[1] ) vmem[{vok_addr,1'b0}][15:8] <= vram_din[15:8];
+                if( !vram_dsn[2] ) vmem[{vok_addr,1'b1}][ 7:0] <= vram_din[23:16];
+                if( !vram_dsn[3] ) vmem[{vok_addr,1'b1}][15:8] <= vram_din[31:24];
                 wr_count = wr_count + 1;
             end else
-                vram_data_r <= vmem[vok_addr];
+                vram_data_r <= { vmem[{vok_addr,1'b1}], vmem[{vok_addr,1'b0}] };
             vram_ok <= 1;
-        end
-    end
-end
-
-
-// vramrd: read-only 32-bit alias of vmem
-localparam [7:0] RDLAT = 8'd3;
-wire [21:2] vramrd_addr;
-wire        vramrd_cs;
-reg         vramrd_ok = 0;
-reg  [21:2] rok_addr;
-reg  [ 7:0] rok_cnt;
-reg  [31:0] vramrd_data_r;
-wire [31:0] vramrd_data = vramrd_data_r;
-reg         rd_last_cs = 0, rd_busy = 0;
-wire        rd_cs_posedge = vramrd_cs && !rd_last_cs;
-always @(posedge clk) begin
-    rd_last_cs <= vramrd_cs;
-    if( !vramrd_cs ) begin rok_cnt <= 0; vramrd_ok <= 0; rd_busy <= 0; end
-    else if( rd_cs_posedge ) begin rok_addr <= vramrd_addr; rok_cnt <= 0; vramrd_ok <= 0; rd_busy <= 1; end
-    else if( rd_busy ) begin
-        if( rok_cnt != RDLAT ) rok_cnt <= rok_cnt + 8'd1;
-        else if( !vramrd_ok ) begin
-            vramrd_data_r <= { vmem[{rok_addr,1'b1}], vmem[{rok_addr,1'b0}] };
-            vramrd_ok <= 1;
         end
     end
 end
@@ -174,13 +154,11 @@ sftm_video u_video(
     .vreg_dout(vreg_dout), .pal_dout(pal_dout), .cpu_wait(vid_wait),
     .plane_en(2'b11), .grom_bank(2'b00),
     .color_latch0(PEN0), .color_latch1(7'h00),
-    .grom0_addr(grom_addr), .grom0_data(grom_data), .grom0_cs(grom_cs), .grom0_ok(grom_ok),
-    .grom1_addr(), .grom1_data(16'h0000), .grom1_cs(grom1_cs), .grom1_ok(1'b1),
-    .grm3_addr(grm3_addr), .grm3_data(16'h0000), .grm3_cs(grm3_cs), .grm3_ok(1'b1),
+    .grom0_addr(grom_addr), .grom0_data(grom_data), .grom0_rd(grom_cs), .grom0_ok(grom_ok),
+    .grom1_addr(), .grom1_data(16'h0000), .grom1_rd(grom1_cs), .grom1_ok(1'b1),
+    .grm3_addr(grm3_addr), .grm3_data(16'h0000), .grm3_rd(grm3_cs), .grm3_ok(1'b1),
     .vram_addr(vram_addr), .vram_data(vram_data), .vram_din(vram_din),
-    .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(vram_ok),
-    .vramrd_addr(vramrd_addr), .vramrd_data(vramrd_data),
-    .vramrd_cs(vramrd_cs), .vramrd_ok(vramrd_ok),
+    .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_rd(vram_rd), .vram_ok(vram_ok),
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
@@ -278,7 +256,7 @@ initial begin
       integer xx, yy;
       for( yy=0; yy<HEIGHT; yy=yy+1 )
         for( xx=0; xx<PIXELS; xx=xx+1 ) begin
-            a = 20'h40000 + (BY+yy)*512 + (BX+xx);
+            a = (BY+yy)*512 + (BX+xx);
             w = vmem[a];
             if( w === exp_pen[yy*5+xx] ) got = got + 1;
             else begin
@@ -295,7 +273,7 @@ initial begin
       for( yy=0; yy<HEIGHT; yy=yy+1 ) begin
         $write("   ");
         for( xx=0; xx<PIXELS; xx=xx+1 )
-            $write("%s", vmem[20'h40000 + (BY+yy)*512 + (BX+xx)] === 16'h1111 ? "." : "#");
+            $write("%s", vmem[(BY+yy)*512 + (BX+xx)] === 16'h1111 ? "." : "#");
         $write("\n");
       end
     end
