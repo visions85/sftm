@@ -976,3 +976,29 @@ Two routes remain for the remaining factor of two:
   flight. Small and contained, but neither jtframe_ram1_3slots nor the mem.yaml
   schema exposes it, so it needs a jtframe patch (docker/jtframe-patches/
   already exists for this purpose).
+
+### The background streaks: one wrong pen, not corrupted image data
+
+Characterised from a digital capture of a VEGA/BALROG fight (build 56):
+
+* every streak pixel is **exactly (0,255,0)**, pure saturated green -- 2496 of
+  them, one single colour. These are digitised photographic backgrounds; RGB555
+  (0,31,0) is not in the artwork. The pixels therefore carry a WRONG PEN INDEX
+  that lands on one palette slot; the image data itself is not being mangled.
+* the runs are **not aligned to 32-bit pairs**: starts split evenly between
+  even and odd x (375 vs 354), lengths mostly 1-3 with mixed parity. That rules
+  out a write-pairing or byte-enable alignment fault.
+* sprites, HUD and all text render perfectly, and tb_svcfont decodes real ROM
+  bytes correctly, so neither the RLE decoder nor the small-blit path is at
+  fault.
+
+Also measured: the background is drawn in about three horizontal strips. Across
+twelve fight frames the filled height clusters at exactly rows 58, 150 and 240,
+never in between, so partial frames are whole strips missing rather than a blit
+stopping at an arbitrary point.
+
+Next step is to identify which pen maps to (0,255,0) and where it comes from --
+an unwritten palette entry, a pen index that escapes its expected range, or a
+readback the shiftreg/c3 path uses. The colour being a single exact value makes
+this findable: latch the pen whenever the blitter writes one that will resolve
+to that palette slot, and capture the source address and blit state with it.
