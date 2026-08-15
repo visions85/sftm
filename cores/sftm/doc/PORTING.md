@@ -829,3 +829,27 @@ cycling means the driver is programming many different voices.
 The lesson matches the grom bug's: a downstream subsystem that looks broken may
 just be starved by an upstream one. Before instrumenting the ES5506 further it
 was worth asking whether the game had any reason to make a sound yet.
+
+## ...but the output port still had no driver
+
+Even with the mixer running, the board was silent, because none of that ever
+left the game module. `jtframe_mem_ports.inc` gates the audio port on a macro:
+
+    `ifndef JTFRAME_STEREO  output signed [15:0] snd;
+    `else                   output signed [15:0] snd_left, snd_right;
+
+JTFRAME_STEREO was not defined, so the game's only audio port was the mono
+`snd`, which jtsftm_game.v never drives, and its connections to sftm_snd's
+snd_left/snd_right became implicit nets going nowhere. Defining the macro was
+the entire fix -- itech32 is genuinely stereo with the channels swapped
+(itech32.cpp:1798) and sftm5506.v already applies that swap.
+
+Quartus had been reporting all three facts for many builds:
+
+    Warning (10236): created implicit net for "snd_left"  jtsftm_game.v(224)
+    Warning (10236): created implicit net for "snd_right" jtsftm_game.v(225)
+    Warning (10034): Output port "snd" at mem_ports.inc(17) has no driver
+
+**Grep every build log for `has no driver` before instrumenting anything.** It
+costs seconds and would have skipped the whole ES5506 investigation. Build 53
+is clean of snd warnings and audio is confirmed audible on hardware.
