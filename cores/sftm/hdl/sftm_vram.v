@@ -266,8 +266,12 @@ always @(posedge clk) begin
                 vram_din  <= wr_pen[0] ? { wf_head[15:0], 16'd0 }
                                        : { 16'd0, wf_head[15:0] };
                 vram_dsn  <= wr_pen[0] ? 4'b0011 : 4'b1100;
+                // rd and wr are SEPARATE request strobes on a cache lane
+                // (jtframe_cache_mux: wire req0 = rd0 | wr0). Asserting rd
+                // alongside we makes the lane service a READ, so the write is
+                // silently dropped -- build 60 rendered a black screen because
+                // nothing ever reached VRAM.
                 vram_we   <= 1;
-                vram_rd   <= 1;
                 owner     <= OWN_WR;
                 settle    <= 0;
                 astate    <= A_WAIT;

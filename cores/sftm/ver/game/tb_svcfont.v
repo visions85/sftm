@@ -84,6 +84,9 @@ wire [20:2] vram_addr;
 wire [31:0] vram_din;
 wire [ 3:0] vram_dsn;
 wire        vram_we, vram_rd;
+// the lane services a request when EITHER strobe is up; modelling only rd
+// would re-encode the bug that made build 60 render a black screen
+wire        vram_req = vram_rd | vram_we;
 reg  [15:0] vmem[0:1048575];
 reg         vram_ok = 0;
 reg  [20:2] vok_addr;
@@ -99,11 +102,11 @@ initial for( k=0; k<1048576; k=k+1 ) vmem[k] = 16'h1111;
 // rising edge, the address must not move while it is high, and ok holds until
 // rd drops.
 reg last_cs = 0, busy_t = 0;
-wire cs_posedge = vram_rd && !last_cs;
+wire cs_posedge = vram_req && !last_cs;
 
 always @(posedge clk) begin
-    last_cs <= vram_rd;
-    if( !vram_rd ) begin
+    last_cs <= vram_req;
+    if( !vram_req ) begin
         vok_cnt <= 0; vram_ok <= 0; busy_t <= 0;
     end else if( cs_posedge ) begin
         vok_addr <= vram_addr; vok_cnt <= 0; vram_ok <= 0; busy_t <= 1;

@@ -56,6 +56,9 @@ wire [20:2] vram_addr;
 wire [31:0] vram_din;
 wire [ 3:0] vram_dsn;
 wire        vram_we, vram_rd;
+// the lane services a request when EITHER strobe is up; modelling only rd
+// would re-encode the bug that made build 60 render a black screen
+wire        vram_req = vram_rd | vram_we;
 reg  [31:0] vram_data;
 reg         vram_ok;
 reg  [ 7:0] vcnt;
@@ -73,7 +76,7 @@ wire hit = valid[blk_idx] && tag[blk_idx]==blk_of;
 wire [7:0] need = hit ? HITLAT : FILLLAT;
 
 always @(posedge clk) begin
-    if( !vram_rd ) begin
+    if( !vram_req ) begin
         vcnt <= 0; vram_ok <= 0;
     end else if( vcnt != need ) begin
         vcnt <= vcnt + 8'd1; vram_ok <= 0;
@@ -180,7 +183,7 @@ initial begin
     // Drain: wf_cnt hits zero at ISSUE of the last write, which is still in
     // flight, so wait for the sequencer to go idle too before checking memory.
     while( uut.wf_cnt != 0 ) @(posedge clk);
-    while( uut.astate != 2'd0 || vram_rd ) @(posedge clk);
+    while( uut.astate != 2'd0 || vram_req ) @(posedge clk);
     t1 = clk_count;
     cycles = t1 - t0;
 

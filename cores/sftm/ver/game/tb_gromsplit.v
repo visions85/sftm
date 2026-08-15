@@ -91,11 +91,14 @@ wire [20:2] vram_addr;
 wire [31:0] vram_data, vram_din;
 wire [ 3:0] vram_dsn;
 wire        vram_we, vram_rd;
+// the lane services a request when EITHER strobe is up; modelling only rd
+// would re-encode the bug that made build 60 render a black screen
+wire        vram_req = vram_rd | vram_we;
 reg         vram_ok = 1;
 
 reg [15:0] vmem[0:1048575];
 assign vram_data = { vmem[{vram_addr,1'b1}], vmem[{vram_addr,1'b0}] };
-always @(posedge clk) if( vram_rd && vram_we ) begin
+always @(posedge clk) if( vram_req && vram_we ) begin
     if( !vram_dsn[0] ) vmem[{vram_addr,1'b0}][ 7:0] <= vram_din[ 7:0];
     if( !vram_dsn[1] ) vmem[{vram_addr,1'b0}][15:8] <= vram_din[15:8];
     if( !vram_dsn[2] ) vmem[{vram_addr,1'b1}][ 7:0] <= vram_din[23:16];
