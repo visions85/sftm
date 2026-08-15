@@ -97,7 +97,15 @@ module sftm_video(
     output reg [ 4:0] green,
     output reg [ 4:0] blue,
     input      [ 3:0] gfx_en,
-    input      [ 7:0] debug_bus
+    input      [ 7:0] debug_bus,
+
+    // Blitter throughput, for the truncated-background investigation. All
+    // three counts are in the SAME units (cycles/65536) so they compare
+    // directly; a 384x240 frame is 800k clk, i.e. about 12 units.
+    output reg [ 3:0] st_bbusy,   // cycles the blitter was busy
+    output reg [ 3:0] st_bwait,   // ...of which stalled on a GROM fetch
+    output reg [ 3:0] st_bwrf,    // ...of which stalled on the VRAM write port
+    output reg [ 3:0] st_bnum     // blits started in that frame (saturating)
 );
 
 // blitter constants (itech32_v.cpp:117)
@@ -123,6 +131,61 @@ wire [5:0] ridx    = cpu_addr[7:2];
 wire       vreg_wr = bus_wstb && vreg_cs;
 
 wire        blit_busy, blit_done, c3_active;
+wire        blit_stallw, blit_waiting;
+
+// ---------------------------------------------------------------------------
+// Blitter throughput measurement.
+//
+// The fight-stage background is drawn only down to a VARYING row (92/145/144
+// on three consecutive frames) and the rest stays black, while every small
+// blit -- sprites, HUD, glyphs, character portraits -- is perfect. A varying
+// cutoff means the blit is not finishing, so the question is what it is
+// waiting for. This counts, per frame, the cycles the blitter was busy and how
+// many of those it spent stalled on a GROM read versus stalled on the VRAM
+// write port.
+//
+// Reported from the frame with the LARGEST busy count rather than the latest:
+// the background blit happens on some frames and not others, and sampling an
+// arbitrary frame would usually catch an idle one. All four values are latched
+// together from that same frame so they are always coherent -- an earlier
+// diagnostic in this core reported an id and a result from different frames
+// and could never be paired.
+//
+// st_bbusy is also the control: the blitter demonstrably draws sprites every
+// frame, so a reading of 0 means the instrument itself is broken, not that the
+// blitter is idle.
+// ---------------------------------------------------------------------------
+reg [19:0] bc_busy, bc_wait, bc_wrf, bc_best;
+reg [ 3:0] bc_num;
+reg        lvbl_d, busy_d;
+wire       frame_end = lvbl_d && !LVBL;
+wire       blit_rise = blit_busy && !busy_d;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        bc_busy <= 0; bc_wait <= 0; bc_wrf <= 0; bc_best <= 0; bc_num <= 0;
+        st_bbusy<= 0; st_bwait<= 0; st_bwrf <= 0; st_bnum <= 0;
+        lvbl_d  <= 0; busy_d  <= 0;
+    end else begin
+        lvbl_d <= LVBL;
+        busy_d <= blit_busy;
+        if( frame_end ) begin
+            if( bc_busy > bc_best ) begin
+                bc_best  <= bc_busy;
+                st_bbusy <= bc_busy[19:16];
+                st_bwait <= bc_wait[19:16];
+                st_bwrf  <= bc_wrf [19:16];
+                st_bnum  <= bc_num;
+            end
+            bc_busy <= 0; bc_wait <= 0; bc_wrf <= 0; bc_num <= 0;
+        end else begin
+            if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
+            if( blit_busy && blit_waiting&& ~&bc_wait ) bc_wait <= bc_wait + 20'd1;
+            if( blit_stallw             && ~&bc_wrf  ) bc_wrf  <= bc_wrf  + 20'd1;
+            if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
+        end
+    end
+end
 wire [15:0] xfer_rdata;
 
 // video_r special cases (:1438); VIDEO_TRANSFER reads return the cmd-3 old
@@ -220,7 +283,6 @@ wire [18:0] vw_addr, vr_addr;
 wire [15:0] vw_data, vr_data;
 
 wire [4:0] blit_state;
-wire       blit_waiting;
 
 sftm_blit u_blit(
     .rst        ( rst           ),
@@ -231,6 +293,7 @@ sftm_blit u_blit(
     .done_pulse ( blit_done     ),
     .st_state   ( blit_state    ),
     .st_waiting ( blit_waiting  ),
+    .st_stallw  ( blit_stallw   ),
 
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06

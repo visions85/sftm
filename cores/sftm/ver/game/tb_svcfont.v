@@ -161,6 +161,8 @@ wire [ 4:0] red, green, blue;
 wire [18:1] grm3_addr;
 wire        grm3_cs;
 
+wire [3:0] st_bbusy, st_bwait, st_bwrf, st_bnum;
+
 sftm_video u_video(
     .rst(rst), .clk(clk), .pxl_cen(pxl_cen),
     .cpu_addr(cpu_addr), .cpu_dout(cpu_dout),
@@ -179,7 +181,8 @@ sftm_video u_video(
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
-    .gfx_en(4'hF), .debug_bus(8'h00)
+    .gfx_en(4'hF), .debug_bus(8'h00),
+    .st_bbusy(st_bbusy), .st_bwait(st_bwait), .st_bwrf(st_bwrf), .st_bnum(st_bnum)
 );
 
 

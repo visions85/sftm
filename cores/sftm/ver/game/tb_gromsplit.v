@@ -110,6 +110,8 @@ wire        vid_wait, vblank_irq, blit_irq, scan_irq, HS, VS, LHBL, LVBL;
 wire [ 4:0] red, green, blue;
 reg  [ 1:0] grom_bank = 0;
 
+wire [3:0] st_bbusy, st_bwait, st_bwrf, st_bnum;
+
 sftm_video u_video(
     .rst(rst), .clk(clk), .pxl_cen(pxl_cen),
     .cpu_addr(cpu_addr), .cpu_dout(cpu_dout),
@@ -128,7 +130,8 @@ sftm_video u_video(
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
-    .gfx_en(4'hF), .debug_bus(8'h00)
+    .gfx_en(4'hF), .debug_bus(8'h00),
+    .st_bbusy(st_bbusy), .st_bwait(st_bwait), .st_bwrf(st_bwrf), .st_bnum(st_bnum)
 );
 
 task wreg(input [5:0] idx, input [15:0] val); begin
@@ -142,6 +145,8 @@ end endtask
 integer fails; integer yy, xx;
 reg [15:0] got;
 reg [21:0] a;
+reg [19:0] sb, sw, sf;
+reg [ 3:0] sn;
 
 // draw the glyph from `bank` at row `row` and check the pen that came back
 task run_case(input [1:0] bank, input integer row, input [7:0] want_pen,
@@ -204,6 +209,39 @@ initial begin
     run_case(2'd2, BY+16, 8'hC7, 3, "bank 2 -> grm3");
 
     $display("");
+    // ---- verify the throughput instrument -------------------------------
+    // Two separate things have to work: the per-frame ACCUMULATORS, and the
+    // LATCH that publishes them. The latch fires on the LVBL falling edge,
+    // once per 16.7 ms frame -- far longer than this testbench runs -- so
+    // sample the accumulators directly, then force one LVBL edge to exercise
+    // the latch path. Reading only the published outputs would show zeros and
+    // say nothing about whether the counting works.
+    $display("");
+    sb = u_video.bc_busy; sw = u_video.bc_wait;
+    sf = u_video.bc_wrf;  sn = u_video.bc_num;
+    $display("accumulators after %0d blits: busy=%0d wait=%0d wrf=%0d nblit=%0d",
+             sn, sb, sw, sf, sn);
+    if( sb == 0 || sn != 3 ) begin
+        fails = fails + 1;
+        $display("INSTRUMENT-FAIL: accumulators did not count the blits");
+    end
+    if( sw == 0 ) begin
+        fails = fails + 1;
+        $display("INSTRUMENT-FAIL: no GROM stall counted despite 3-cycle bus latency");
+    end
+
+    force u_video.LVBL = 1'b1; repeat(4) @(posedge clk);
+    force u_video.LVBL = 1'b0; repeat(4) @(posedge clk);
+    release u_video.LVBL;      repeat(4) @(posedge clk);
+
+    $display("after a forced frame edge: busy=%0d wait=%0d wrf=%0d nblit=%0d",
+             st_bbusy, st_bwait, st_bwrf, st_bnum);
+    if( st_bnum !== sn[3:0] || st_bbusy !== sb[19:16] || st_bwait !== sw[19:16] ) begin
+        fails = fails + 1;
+        $display("INSTRUMENT-FAIL: latch did not publish the accumulated values");
+    end else
+        $display("INSTRUMENT-OK: accumulators count and the frame latch publishes them");
+
     if( fails == 0 ) $display("PASS: each grom bank reaches its own SDRAM bus");
     else             $display("FAIL: %0d check(s) failed", fails);
     $finish;

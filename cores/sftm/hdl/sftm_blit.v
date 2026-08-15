@@ -44,6 +44,10 @@ module sftm_blit(
                                     // -> VIDEO_INTSTATE |= VIDEOINT_BLITTER
     output     [4:0]  st_state,     // bring-up: live FSM state
     output            st_waiting,   // bring-up: stalled on a GROM fetch
+    // Stalled on the VRAM write side: the FSM has a pixel but the write port
+    // will not take it. Paired with st_waiting this separates a read-starved
+    // blitter from a write-backpressured one.
+    output            st_stallw,
 
     // grm3 read-back self-test. The real text glyphs live in grm3 (blits
     // carry bank=2 -> GROM address 0x207xxxx), and a Python decode of the
@@ -347,6 +351,7 @@ reg  [15:0] shrow[0:511];
 reg  [15:0] shrow_q;
 
 wire vw_free = !vw_req || vw_rdy;
+assign st_stallw = busy && !vw_free;
 
 
 // ---------------------------------------------------------------------------
