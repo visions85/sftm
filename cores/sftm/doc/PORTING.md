@@ -1038,3 +1038,33 @@ and the vram lane gives 32-bit data, 32-bit word addressing, four byte enables
 and a flush interface. Constraints found: banks and cache-lanes are mutually
 exclusive so all seven buses convert, offsets must be hex strings or parameter
 names, and rw lanes must be among the first four.
+
+### jtframe bug: cache-lane offsets are emitted as C hex
+
+`jtframe mem` validates `sdram.cache-lanes[].at.offset` as an `0x...` string and
+then interpolates that STRING verbatim into the generated wrapper
+(`hdl/inc/game_sdram.v:411`), producing
+
+    .OFFSET0  ( 0x80000 ),
+
+which is not Verilog -- iverilog and Quartus both reject it. Every cache lane
+with an offset yields an uncompilable file, `0x0` included. Its own unit tests
+only cover `( 0 )` and a parameter name, so the hex path was never exercised.
+Rewriting the YAML is no escape: the validator DEMANDS the `0x` form while
+Verilog demands `'h`, and the two never overlap.
+
+Fixed by patching `src/jtframe/mem/mem.go` to normalise the string to Verilog
+hex AFTER `resolve_cache_lane_offset_words()` has consumed the original for its
+range check, so only the emitted text changes and parameter-name offsets pass
+through untouched. The patch lives in
+`docker/jtframe-patches/patch_mem_offsets.py` and is applied by
+`docker/entrypoint.sh`, which also deletes the compiled jtframe binary so it
+rebuilds. Verified: offsets now emit as `.OFFSET0 ( 'h40000 )`.
+
+Note the entrypoint is baked INTO the sftm-quartus image, so editing
+`docker/entrypoint.sh` alone does not affect a running container -- the volume
+must be patched directly (or the image rebuilt) for the change to take effect
+now.
+
+**`at.offset` is in 16-bit WORDS, not bytes** (`mem.go` computes
+`offset_bytes := offset_words << 1`). Byte offsets are twice the YAML value.

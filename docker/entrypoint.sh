@@ -54,6 +54,31 @@ fi
 # cannot express this, so patch the default here.
 sed -i 's/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/' "${JTFRAME_DIR}/hdl/sdram/jtframe_ram1_3slots.v" 2>/dev/null || true
 
+# Cache-lane offsets: emit VERILOG hex, not C hex.
+#
+# jtframe mem validates `sdram.cache-lanes[].at.offset` as an 0x... string and
+# then interpolates that STRING verbatim into the generated wrapper
+# (hdl/inc/game_sdram.v:411), producing `.OFFSET0 ( 0x80000 )`. That is not
+# Verilog -- iverilog and Quartus both reject it -- so every cache lane with an
+# offset yields an uncompilable file, including the 0x0 ones. Its own unit
+# tests only ever cover `( 0 )` and a parameter name, so the hex path was never
+# exercised. Rewriting the YAML is not a way out: the validator DEMANDS the
+# 0x form and Verilog demands 'h, and the two never overlap.
+#
+# Normalise after resolve_cache_lane_offset_words() has consumed the original
+# string for its range check, so only the emitted text changes. Parameter-name
+# offsets do not start with 0x and pass through untouched.
+JTMEM="${JTFRAME_DIR}/src/jtframe/mem/mem.go"
+if [ -f "${JTMEM}" ] && ! grep -q "sftm: verilog hex" "${JTMEM}"; then
+    sed -i "s|^\t\t\toffset_bytes := offset_words << 1$|\t\t\toffset_bytes := offset_words << 1\n\t\t\tif len(line.At.Offset) > 2 \&\& (line.At.Offset[:2] == \"0x\" || line.At.Offset[:2] == \"0X\") { line.At.Offset = \"'h\" + line.At.Offset[2:] } // sftm: verilog hex|" "${JTMEM}"
+    if grep -q "sftm: verilog hex" "${JTMEM}"; then
+        echo "[sftm] patched jtframe mem.go for Verilog cache-lane offsets"
+        rm -f "${JTFRAME_COMPILED}"        # force a rebuild of the binary
+    else
+        echo "[sftm] WARNING: cache-lane offset patch did not apply" >&2
+    fi
+fi
+
 # GAMMA=0: disable gamma correction LUT tables (~2k ALMs saved; no dedicated macro exists)
 sed -i 's/GAMMA=1/GAMMA=0/' "${JTFRAME_DIR}/target/mister/hdl/sys/arcade_video.v" 2>/dev/null || true
 
