@@ -127,7 +127,8 @@ module sftm_main #(
     // blitter throughput (see sftm_video.v)
     input      [ 3:0] dbg_bbusy,
     input      [ 3:0] dbg_bwait,
-    input      [ 3:0] dbg_bwrf,
+    input      [ 3:0] dbg_bwr,
+    input      [ 3:0] dbg_bgf,
     input      [ 3:0] dbg_bnum,
 
     // NVRAM persistence (JTFRAME_IOCTL_RD). ioctl_ram marks NVRAM traffic; it
@@ -820,8 +821,8 @@ end
 assign st_dout =
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
     view == 4'h1 ? { 4'h1, dbg_bbusy    } :   // blitter busy    cycles/65536
-    view == 4'h2 ? { 4'h2, dbg_bwait    } :   // ...GROM-stalled  cycles/65536
-    view == 4'h3 ? { 4'h3, dbg_bwrf     } :   // ...write-stalled cycles/65536
+    view == 4'h2 ? { 4'h2, dbg_bgf      } :   // GROM words fetched /8192
+    view == 4'h3 ? { 4'h3, dbg_bwr      } :   // VRAM writes issued /8192
     view == 4'h4 ? { 4'h4, dbg_bnum     } :   // blits that frame
     view == 4'h5 ? { 4'h5, dbg_cr0[3:0] } :
     view == 4'h6 ? { 4'h6, dbg_cr0[7:4] } :

@@ -48,6 +48,8 @@ module sftm_blit(
     // will not take it. Paired with st_waiting this separates a read-starved
     // blitter from a write-backpressured one.
     output            st_stallw,
+    // one pulse per completed GROM word fetch, for the throughput meter
+    output            st_gdone,
 
     // grm3 read-back self-test. The real text glyphs live in grm3 (blits
     // carry bank=2 -> GROM address 0x207xxxx), and a Python decode of the
@@ -298,6 +300,9 @@ assign pix      = fetch_addr[0] ? cache_word[15:8] : cache_word[7:0];
 assign fetch_ok = cache_hit;
 // bring-up: high while the FSM is stalled waiting on a GROM word
 assign st_waiting = fetch_req && !fetch_ok;
+assign st_gdone   = fetch_busy && ( (fetch_src==SRC_G0 && grom0_ok) ||
+                                    (fetch_src==SRC_G1 && grom1_ok) ||
+                                    (fetch_src==SRC_G3 && grm3_ok ) );
 
 always @(posedge clk) begin
     if( rst ) begin

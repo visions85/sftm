@@ -102,7 +102,7 @@ sftm_vram uut(
     .vr_req(vr_req), .vr_plane(vr_plane), .vr_addr(vr_addr),
     .vr_ack(vr_ack), .vr_data(vr_data),
     .line_go(line_go), .line_base(line_base), .line_sel(line_sel),
-    .scan_x(scan_x), .scan_pen(scan_pen)
+    .scan_x(scan_x), .scan_pen(scan_pen), .st_wpop()
 );
 
 // continuous prefetch: retrigger as soon as the previous line completes

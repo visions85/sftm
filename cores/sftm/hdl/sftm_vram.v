@@ -73,7 +73,12 @@ module sftm_vram(
     input             line_sel,      // buffer to fill
     // scanout read of the other buffer
     input      [ 8:0] scan_x,
-    output     [15:0] scan_pen
+    output     [15:0] scan_pen,
+
+    // one pulse per VRAM write issued -- the throughput meter. `!vw_free`
+    // only says the FIFO is full, which it always is once the blitter runs,
+    // so it cannot show whether the drain RATE improved. This can.
+    output            st_wpop
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
@@ -289,6 +294,7 @@ wire b_do_write = bstate==B_IDLE && !wf_empty;
 
 // pop at issue: the head is latched into vram_addr/vram_din this same cycle
 assign wf_pop = b_do_write;
+assign st_wpop = wf_pop;
 
 always @(posedge clk) begin
     if( rst ) begin

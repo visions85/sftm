@@ -104,7 +104,14 @@ module sftm_video(
     // directly; a 384x240 frame is 800k clk, i.e. about 12 units.
     output reg [ 3:0] st_bbusy,   // cycles the blitter was busy
     output reg [ 3:0] st_bwait,   // ...of which stalled on a GROM fetch
-    output reg [ 3:0] st_bwrf,    // ...of which stalled on the VRAM write port
+    // RATE meters, not stall flags. A "stalled on the write port" reading
+    // (busy && !vw_free) saturates the moment the blitter runs -- it produces
+    // pixels faster than any SDRAM absorbs them, so the FIFO is always full
+    // and the reading is 12 whether writes drain at 9 clk or 2227. That is
+    // why the arbiter rework showed no change on the old counter. These count
+    // work COMPLETED instead, in units of 8192 per frame.
+    output reg [ 3:0] st_bwr,     // VRAM writes issued
+    output reg [ 3:0] st_bgf,     // GROM words fetched
     output reg [ 3:0] st_bnum     // blits started in that frame (saturating)
 );
 
@@ -131,7 +138,7 @@ wire [5:0] ridx    = cpu_addr[7:2];
 wire       vreg_wr = bus_wstb && vreg_cs;
 
 wire        blit_busy, blit_done, c3_active;
-wire        blit_stallw, blit_waiting;
+wire        blit_stallw, blit_waiting, blit_gdone, vram_wpop;
 
 // ---------------------------------------------------------------------------
 // Blitter throughput measurement.
@@ -155,7 +162,8 @@ wire        blit_stallw, blit_waiting;
 // frame, so a reading of 0 means the instrument itself is broken, not that the
 // blitter is idle.
 // ---------------------------------------------------------------------------
-reg [19:0] bc_busy, bc_wait, bc_wrf, bc_best;
+reg [19:0] bc_busy, bc_wait, bc_best;
+reg [19:0] bc_wr, bc_gf;
 reg [ 3:0] bc_num;
 reg        lvbl_d, busy_d;
 wire       frame_end = lvbl_d && !LVBL;
@@ -163,8 +171,9 @@ wire       blit_rise = blit_busy && !busy_d;
 
 always @(posedge clk) begin
     if( rst ) begin
-        bc_busy <= 0; bc_wait <= 0; bc_wrf <= 0; bc_best <= 0; bc_num <= 0;
-        st_bbusy<= 0; st_bwait<= 0; st_bwrf <= 0; st_bnum <= 0;
+        bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0;
+        bc_best <= 0; bc_num <= 0;
+        st_bbusy<= 0; st_bwait<= 0; st_bwr <= 0; st_bgf <= 0; st_bnum <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
     end else begin
         lvbl_d <= LVBL;
@@ -174,14 +183,16 @@ always @(posedge clk) begin
                 bc_best  <= bc_busy;
                 st_bbusy <= bc_busy[19:16];
                 st_bwait <= bc_wait[19:16];
-                st_bwrf  <= bc_wrf [19:16];
+                st_bwr   <= bc_wr[19:13] > 7'd15 ? 4'd15 : bc_wr[16:13];
+                st_bgf   <= bc_gf[19:13] > 7'd15 ? 4'd15 : bc_gf[16:13];
                 st_bnum  <= bc_num;
             end
-            bc_busy <= 0; bc_wait <= 0; bc_wrf <= 0; bc_num <= 0;
+            bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0; bc_num <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
             if( blit_busy && blit_waiting&& ~&bc_wait ) bc_wait <= bc_wait + 20'd1;
-            if( blit_stallw             && ~&bc_wrf  ) bc_wrf  <= bc_wrf  + 20'd1;
+            if( vram_wpop               && ~&bc_wr   ) bc_wr   <= bc_wr   + 20'd1;
+            if( blit_gdone              && ~&bc_gf   ) bc_gf   <= bc_gf   + 20'd1;
             if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
         end
     end
@@ -294,6 +305,7 @@ sftm_blit u_blit(
     .st_state   ( blit_state    ),
     .st_waiting ( blit_waiting  ),
     .st_stallw  ( blit_stallw   ),
+    .st_gdone   ( blit_gdone    ),
 
 
     .r_flags    ( vregs[6'h03]  ),  // 0x06
@@ -393,7 +405,8 @@ sftm_vram u_vram(
     .line_base  ( line_base     ),
     .line_sel   ( line_sel      ),
     .scan_x     ( scan_x        ),
-    .scan_pen   ( scan_pen      )
+    .scan_pen   ( scan_pen      ),
+    .st_wpop    ( vram_wpop     )
 );
 
 // ---------------------------------------------------------------------------
