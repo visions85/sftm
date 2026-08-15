@@ -853,3 +853,61 @@ Quartus had been reporting all three facts for many builds:
 **Grep every build log for `has no driver` before instrumenting anything.** It
 costs seconds and would have skipped the whole ES5506 investigation. Build 53
 is clean of snd warnings and audio is confirmed audible on hardware.
+
+---
+
+# The blitter is write-starved, not read-starved (2026-08-14)
+
+With graphics and audio working, the remaining fault is that the game runs far
+below speed: sprites flash in and out because they are redrawn every frame and
+often do not get drawn, while the background and JTFRAME's own debug text stay
+stable because they are drawn once or are independent of the game. The fight
+stage background is left truncated at a varying row.
+
+`cpu_wait` stalls the 68020 on COMMAND/TRANSFER while the blitter is busy
+(sftm_video.v), so blitter throughput sets the frame rate directly.
+
+## Measurement
+
+Per frame, in units of 65536 clocks (a 384x240 frame is ~800k clk, so ~12
+units), published from the frame with the largest busy count:
+
+| quantity | reading |
+|----------|---------|
+| blitter busy | 13 -- busy the entire frame |
+| ...stalled on a GROM read | 0 |
+| ...stalled on the VRAM write port | 12 |
+| blits started that frame | 0 -- one blit spans many frames |
+
+**The GROM fetcher is not the bottleneck.** The prior hypothesis -- that the
+single-outstanding-fetch grom cache was starving the blitter, by analogy with
+Bug A -- was wrong, and the measurement killed it before any code was written.
+
+## Cause
+
+`sftm_vram.v` serialises EVERY VRAM access through one single-transaction FSM:
+
+    A_IDLE -> A_WAIT (settle x2 + SDRAM latency) -> A_GAP -> A_IDLE
+
+Two problems compound:
+
+1. **Fixed overhead per access.** Even at zero SDRAM latency an access costs
+   ~5 clocks (A_IDLE + 2 settle + A_GAP); with real latency ~13. Nothing is
+   pipelined and only one transaction is ever in flight.
+2. **The prefetch has absolute priority.** A_IDLE tests `pf_active` first,
+   blitter reads second, writes last. At 192 32-bit accesses per line and
+   ~13 clk each, the prefetch alone claims roughly 2,500 of a line's 3,048
+   clocks, leaving writes the remainder.
+
+The deeper mistake is architectural: `vram` and `vramrd` are already SEPARATE
+JTFRAME slots in the same bank, and `jtframe_ram1_3slots` arbitrates between
+them. Serialising them behind our own FSM throws that away -- the two could be
+in flight at once.
+
+## Fix direction
+
+Stop serialising. Give the write path and the prefetch independent request
+logic and let the JTFRAME slot arbiter interleave them, and drop the
+settle/gap overhead by tracking outstanding requests instead of idling between
+them. That is the same lesson as Bug A one level up: it is not the width of a
+single access that hurts, it is refusing to have more than one in flight.
