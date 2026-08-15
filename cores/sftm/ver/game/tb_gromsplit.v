@@ -151,6 +151,7 @@ integer fails; integer yy, xx;
 reg [15:0] got;
 reg [21:0] a;
 reg [19:0] sb, sw, sf;
+reg [15:0] gsave;
 reg [ 3:0] sn;
 
 // draw the glyph from `bank` at row `row` and check the pen that came back
@@ -260,11 +261,19 @@ initial begin
     end
     // Hold scan_pen forced until AFTER the frame-end publish: releasing it
     // early leaves pen undefined and the published value comes back X.
+    // The capture now mirrors the scanout output stage, so the test must too:
+    // it only counts when a pixel is actually being emitted. Without LVBL/LHBL
+    // forced this silently captures nothing -- which is the whole point of the
+    // fix, since ungated it was latching unwritten line-buffer slots (0x7FFF)
+    // during blanking.
     #1 force u_video.scan_pen  = 16'h12FD;
     force u_video.pal_b2_qb = 8'h00;
     force u_video.pal_b1_qb = 8'hFF;
     force u_video.pal_b0_qb = 8'h00;
-    repeat(4) @(posedge clk);
+    force u_video.LVBL = 1'b1;
+    force u_video.LHBL = 1'b1;
+    repeat(20) @(posedge clk);       // needs a pxl_cen tick (1 in 6)
+    #1 release u_video.LHBL;
     if( st_gseen !== 1'b1 ) begin
         fails = fails + 1;
         $display("PROBE-FAIL: green not flagged");
@@ -309,6 +318,26 @@ initial begin
         $display("PROBE-FAIL: palette-write counter never moved");
     end else
         $display("PROBE-OK: palette-write counter moved (%0d)", u_video.palcnt);
+
+    // Regression guard for the build-58 fault: green during BLANKING must be
+    // ignored. Ungated, this incremented and latched an off-screen pen.
+    gsave = u_video.gcnt_acc;
+    #1 force u_video.scan_pen  = 16'h7FFF;
+    force u_video.pal_b2_qb = 8'h00;
+    force u_video.pal_b1_qb = 8'hFF;
+    force u_video.pal_b0_qb = 8'h00;
+    force u_video.LVBL = 1'b0;          // blanking
+    force u_video.LHBL = 1'b0;
+    repeat(20) @(posedge clk);
+    #1 release u_video.pal_b2_qb; release u_video.pal_b1_qb; release u_video.pal_b0_qb;
+    release u_video.scan_pen; release u_video.LVBL; release u_video.LHBL;
+    repeat(3) @(posedge clk);
+    if( u_video.gcnt_acc !== gsave ) begin
+        fails = fails + 1;
+        $display("PROBE-FAIL: counted green during blanking (%0d -> %0d)",
+                 gsave, u_video.gcnt_acc);
+    end else
+        $display("PROBE-OK: green during blanking is ignored");
 
     if( fails == 0 ) $display("PASS: each grom bank reaches its own SDRAM bus");
     else             $display("FAIL: %0d check(s) failed", fails);

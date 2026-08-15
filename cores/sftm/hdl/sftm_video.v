@@ -492,15 +492,20 @@ assign pal_dout = !cpu_addr[1] ? {pal_b3_qa, pal_b2_qa} : {pal_b1_qa, pal_b0_qa}
 //              as the throughput problem, since cpu_wait starves the 68020.
 //   st_gseen   green was seen at all (control).
 //
+// st_gcnt is green pixels per frame / 256, so the captures' ~2000-2500 should
+// read about 8-9. A reading far above that means the gating is wrong again.
+//
 // st_palcnt counts palette writes overall: it must be non-zero, otherwise a
 // clear st_palhit means nothing.
 // ---------------------------------------------------------------------------
 wire pal_is_green = pal_b2_qb[7:3]==5'd0 && pal_b1_qb[7:3]==5'd31 && pal_b0_qb[7:3]==5'd0;
+// same instant and same condition as the scanout's red/green/blue assignment
+wire green_disp   = pxl_cen && LVBL && LHBL && gfx_en[0] && pal_is_green;
 
-reg [11:0] gcnt_acc, gcnt_best;
+reg [15:0] gcnt_acc, gcnt_best;
 reg [14:0] gpen_first, gpen_last;
 reg        gmulti_acc;
-reg [15:0] palcnt;
+reg [19:0] palcnt;
 
 always @(posedge clk) begin
     if( rst ) begin
@@ -511,18 +516,18 @@ always @(posedge clk) begin
     end else begin
         // ---- palette write watch ----
         if( pal_wr ) begin
-            if( ~&palcnt ) palcnt <= palcnt + 16'd1;
+            if( ~&palcnt ) palcnt <= palcnt + 20'd1;
             if( pal_addr == st_gpen ) st_palhit <= 1'b1;
         end
-        st_palcnt <= palcnt[15:8];
+        st_palcnt <= palcnt[19:12];        // palette writes / 4096
 
         // ---- green accumulation for this frame ----
-        if( pal_is_green ) begin
+        if( green_disp ) begin
             st_gseen <= 1'b1;
             if( gcnt_acc == 0 ) gpen_first <= pen;
             else if( pen != gpen_first ) gmulti_acc <= 1'b1;
             gpen_last <= pen;
-            if( ~&gcnt_acc ) gcnt_acc <= gcnt_acc + 12'd1;
+            if( ~&gcnt_acc ) gcnt_acc <= gcnt_acc + 16'd1;
         end
 
         // ---- publish from the frame with the most green ----
@@ -530,7 +535,7 @@ always @(posedge clk) begin
             if( gcnt_acc > gcnt_best ) begin
                 gcnt_best <= gcnt_acc;
                 st_gpen   <= gpen_last;
-                st_gcnt   <= gcnt_acc[11:8];
+                st_gcnt   <= |gcnt_acc[15:12] ? 4'd15 : gcnt_acc[11:8]; // /256
                 st_gmulti <= gmulti_acc;
                 st_palhit <= 1'b0;   // re-arm: it refers to the NEW st_gpen
             end
