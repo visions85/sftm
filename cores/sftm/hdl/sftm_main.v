@@ -130,6 +130,7 @@ module sftm_main #(
     input      [ 3:0] dbg_bwr,
     input      [ 3:0] dbg_bgf,
     input      [ 3:0] dbg_bstw,
+    input      [ 3:0] dbg_fper,
     input      [ 3:0] dbg_bnum,
     // per-lane liveness, {req_ever, ok_ever, stuck, -} (see jtsftm_game.v)
     input      [ 3:0] dbg_lsnd,
@@ -865,7 +866,9 @@ end
 //   3 : ...of which stalled on a GROM fetch   / 65536 (sftm_blit.v:302)
 //   4 : ...of which stalled on the write FIFO / 65536 (sftm_blit.v:359)
 //   5 : blits started this frame
-//   6 : GROM fetch completions / 8192
+//   6 : measured frame period / 65536 -- must be 0xD (871,728 clk).
+//       If busy (view 2) reads 0xF while this reads 0xD, busy is impossible
+//       and the fault is in that counter, not the video timing.
 //   7-9 : vram / grom0 / grom1 lane {req_ever, ok_ever, stuck, -}
 //   A : sound commands read by the 6809
 //   B : ACTV, the voice count the driver programmed
@@ -896,7 +899,7 @@ end
 // from the same frame. This is the same coherence rule sftm_video.v:160 already
 // states for the counters themselves.
 // ---------------------------------------------------------------------------
-reg [3:0] sn_bwr, sn_bbusy, sn_bwait, sn_bstw;
+reg [3:0] sn_bwr, sn_bbusy, sn_bwait, sn_bstw, sn_fper;
 reg [3:0] sn_bnum;
 reg [3:0] view_d;
 reg [1:0] cyc;
@@ -904,6 +907,7 @@ reg [1:0] cyc;
 always @(posedge clk) begin
     if( rst ) begin
         sn_bwr <= 0; sn_bbusy <= 0; sn_bwait <= 0; sn_bstw <= 0; sn_bnum <= 0;
+        sn_fper <= 0;
         view_d <= 0; cyc <= 0;
     end else begin
         view_d <= view;
@@ -915,6 +919,7 @@ always @(posedge clk) begin
             sn_bbusy <= dbg_bbusy;
             sn_bwait <= dbg_bwait;
             sn_bstw  <= dbg_bstw;
+            sn_fper  <= dbg_fper;
             sn_bnum  <= dbg_bnum;
         end
     end
@@ -937,7 +942,7 @@ assign st_dout =
     view == 4'h3 ? { 4'h3, sn_bwait       } :  // GROM fetch stall, same units
     view == 4'h4 ? { 4'h4, sn_bstw        } :  // write-FIFO stall, same units
     view == 4'h5 ? { 4'h5, sn_bnum        } :  // blits started this frame
-    view == 4'h6 ? { 4'h6, dbg_bgf        } :
+    view == 4'h6 ? { 4'h6, sn_fper        } :  // ACTUAL frame period /65536, expect 0xD
     view == 4'h7 ? { 4'h7, dbg_lvram      } :
     view == 4'h8 ? { 4'h8, dbg_lgrom0     } :
     view == 4'h9 ? { 4'h9, dbg_lgrom1     } :

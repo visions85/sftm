@@ -109,6 +109,7 @@ module sftm_video(
     output reg [ 3:0] st_bwr,     // VRAM writes issued
     output reg [ 3:0] st_bgf,     // GROM words fetched
     output reg [ 3:0] st_bstw,    // ...stalled on the VRAM write FIFO
+    output reg [ 3:0] st_fper,    // clk between frame_end pulses / 65536
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
     output reg [14:0] st_gpen,     // pen from the frame with the most green
@@ -167,6 +168,7 @@ wire        blit_stallw, blit_waiting, blit_gdone, vram_wpop;
 // blitter is idle.
 // ---------------------------------------------------------------------------
 reg [19:0] bc_busy, bc_wait, bc_stw;
+reg [19:0] fp_cnt;   // clocks since the last frame_end
 reg [19:0] bc_wr, bc_gf;
 reg [ 3:0] bc_num;
 reg        lvbl_d, busy_d;
@@ -176,7 +178,7 @@ wire       blit_rise = blit_busy && !busy_d;
 always @(posedge clk) begin
     if( rst ) begin
         bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0;
-        bc_num  <= 0; bc_stw <= 0;
+        bc_num  <= 0; bc_stw <= 0; fp_cnt <= 0; st_fper <= 0;
         st_bbusy<= 0; st_bwait<= 0; st_bwr <= 0; st_bgf <= 0; st_bnum <= 0;
         st_bstw <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
@@ -210,6 +212,19 @@ always @(posedge clk) begin
             st_bstw  <= bc_stw [19:16];
             bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0; bc_num <= 0;
             bc_stw  <= 0;
+            // How long a frame ACTUALLY is, measured rather than assumed.
+            // 508*286*6 = 871,728 clk at JTFRAME_PXLCLK=8 on a 48 MHz clock,
+            // so this must read 13 (0xD). bc_busy is reset here and therefore
+            // cannot exceed the same 0xD -- yet hardware reports 0xF for it.
+            // Simulation (ver/game/tb_frameend.v) shows frame_end firing once
+            // per frame at exactly 871,728 clk, so either the hardware frame is
+            // longer than the timing implies or frame_end is being missed
+            // there. This nibble distinguishes the two: 0xD means the frame is
+            // what it should be and the busy reading is the anomaly; anything
+            // larger means the frame itself is longer and busy=0xF is simply a
+            // blitter busy the whole of it.
+            st_fper <= fp_cnt[19:16];
+            fp_cnt  <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
             // TWO different stalls, and only the first used to be counted:
@@ -223,6 +238,7 @@ always @(posedge clk) begin
             if( vram_wpop               && ~&bc_wr   ) bc_wr   <= bc_wr   + 20'd1;
             if( blit_gdone              && ~&bc_gf   ) bc_gf   <= bc_gf   + 20'd1;
             if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
+            if(                            ~&fp_cnt ) fp_cnt  <= fp_cnt  + 20'd1;
         end
     end
 end
