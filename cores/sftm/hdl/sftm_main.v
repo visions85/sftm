@@ -936,7 +936,16 @@ assign st_dout =
     // pixel per clock exactly when fetch_ok && vw_free. Whichever stall
     // dominates is the bottleneck; if neither does, the blitter is issuing
     // pixels as fast as it can and the scene is simply too big for the frame.
-    view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
+    // READOUT SELF-TEST. Views 0 and F carry fixed constants. Every meter
+    // reading for four builds running has been arithmetically impossible --
+    // busy longer than the frame containing it, a frame period shorter than
+    // the busy it brackets -- while each counter checks out in simulation.
+    // Either the counters lie or the path that renders them does, and nothing
+    // downstream is worth trusting until that is settled. If 0 does not read 5
+    // and F does not read A, the readout is the fault and every number taken
+    // through it, in this session and earlier, has to be discarded.
+    view == 4'h0 ? { 4'h0, 4'h5 } :
+    view == 4'hF ? { 4'hF, 4'hA } :
     view == 4'h1 ? { 4'h1, sn_bwr         } :  // writes /8192,  background 0xB
     view == 4'h2 ? { 4'h2, sn_bbusy       } :  // busy   /65536, frame      0xD
     view == 4'h3 ? { 4'h3, sn_bwait       } :  // GROM fetch stall, same units
@@ -951,7 +960,7 @@ assign st_dout =
     view == 4'hC ? { 4'hC, dbg_lgrm3      } :
     view == 4'hD ? { 4'hD, dbg_lsrom      } :
     view == 4'hE ? { 4'hE, dbg_lsnd       } :
-                   { 4'hF, dbg_peak[15:12] };
+                   { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 };
 
 // verilator lint_off UNUSEDSIGNAL
 // nopr_sel/duart_sel document the 0x578000 and 0x680800 read ranges; both
