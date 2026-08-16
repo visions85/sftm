@@ -32,6 +32,16 @@ cores/*/hdl/tg68k/TG68KdotC_Kernel_conv.v
 # ROMs are never committed
 *.zip
 *.7z
+# NVRAM images are game-derived data and are not distributed. sftm_main.v
+# $readmemh's the two .hex files at synthesis time -- generate them from your
+# own MAME dump with doc/make_nvram_hex.py before building.
+/nvram32
+cores/*/hdl/nvram_hi.hex
+cores/*/hdl/nvram_lo.hex
+cores/*/ver/lint/nvram_hi.hex
+cores/*/ver/lint/nvram_lo.hex
+# Agent working notes, not part of the core
+/AGENTS.md
 # macOS
 .DS_Store
 # MAME driver source vendored locally for porting reference (BSD-3-Clause,
