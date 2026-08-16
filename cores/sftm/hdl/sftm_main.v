@@ -726,11 +726,18 @@ reg [11:0] pc_max_hi;
 reg        vec_pend, pc_vec_done, pc_stuck_done;
 reg [22:0] vint_timer;                  // 100 ms @ 48 MHz = 4.8e6 -> 23 bits
 reg [28:0] diag_cnt;
-// ~0.09 s per view, ~1.4 s for all sixteen. It was diag_cnt[28:25] -- 0.7 s
-// per view, 11 s per cycle -- but the watchdog resets diag_cnt every ~3 s when
-// the core is unhealthy, so views 5-F were unreachable and every reading during
-// the cache-lanes debugging was silently truncated to views 0-4.
-wire [3:0] view = diag_cnt[25:22];
+// ~0.35 s per view, ~5.6 s for all sixteen, and the snapshot below holds for
+// four of those cycles (~22 s).
+//
+// This was diag_cnt[25:22] (~1.4 s per cycle) because the watchdog used to
+// reboot the core every ~3 s and a slower cycle could not be read inside one
+// reboot. The core is stable now -- it runs attract mode indefinitely -- so
+// that constraint is gone, and the fast cycle had become the problem: a burst
+// of screenshots spans several cycles, so nibble pairs of one counter were
+// still being read from DIFFERENT snapshots even after the snapshot register
+// made each single cycle self-consistent. A capture must fit inside one
+// snapshot lifetime, which is what the ~22 s hold below guarantees.
+wire [3:0] view = diag_cnt[27:24];
 
 // exception vector longwords (VBR = 0): 0x60 spurious, 0x64/0x68/0x6C autovec
 wire vec60 = A[23:2] == 22'h000018;
@@ -885,14 +892,18 @@ end
 reg [7:0] sn_bwr, sn_bbusy, sn_bwait, sn_bstw;
 reg [3:0] sn_bnum;
 reg [3:0] view_d;
+reg [1:0] cyc;
 
 always @(posedge clk) begin
     if( rst ) begin
         sn_bwr <= 0; sn_bbusy <= 0; sn_bwait <= 0; sn_bstw <= 0; sn_bnum <= 0;
-        view_d <= 0;
+        view_d <= 0; cyc <= 0;
     end else begin
         view_d <= view;
-        if( view == 4'h0 && view_d != 4'h0 ) begin
+        // once every four full view cycles (~22 s), so an entire screenshot
+        // burst reads one frame's numbers
+        if( view == 4'h0 && view_d != 4'h0 ) cyc <= cyc + 2'd1;
+        if( view == 4'h0 && view_d != 4'h0 && cyc == 2'd3 ) begin
             sn_bwr   <= dbg_bwr;
             sn_bbusy <= dbg_bbusy;
             sn_bwait <= dbg_bwait;
