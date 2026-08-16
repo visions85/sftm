@@ -1193,3 +1193,35 @@ does not. The bench models a hazard of the wrong SHAPE: the fault is not "the
 write has not landed yet", it is "the ack does not belong to this transaction".
 Reproducing that needs the ack condition itself modelled, keyed on the previous
 request's direction rather than the current one.
+
+### No lane is stuck -- the game hangs before its first blit
+
+Build 65 probed every cache lane for {ever requested, ever acked, stuck}:
+
+| lane  | req | ack | stuck | verdict |
+|-------|-----|-----|-------|---------|
+| main  |  1  |  1  |   -   | healthy, data non-zero |
+| snd   |  1  |  1  |   0   | healthy |
+| srom  |  0  |  0  |   0   | never requested |
+| grm3  |  0  |  0  |   0   | never requested |
+| grom0 |  0  |  0  |   0   | never requested |
+| grom1 |  0  |  0  |   0   | never requested |
+
+Nothing is stuck, so the hypothesis this probe was built for -- "one of the
+other lanes stopped answering" -- is wrong. The 68020 runs, the 6809 runs, and
+the blitter's three graphics lanes are never asked for anything, i.e. the game
+never issues a single blit. It hangs before drawing at all.
+
+That leaves the obvious gap in the earlier measurement. Build 62 reported
+`data_nonzero=1` for the main lane, and "non-zero" was taken as "working" --
+but non-zero is not CORRECT. The first fetch must return the reset SP longword
+0x00008000 (maindata begins 00 00 80 00 00 80 04 00), and that value was
+captured in m_first but never actually read: the view counter was still at
+diag_cnt[28:25] then, so views 4-7 were unreachable inside a watchdog period,
+and build 65 reassigned those views to the lane probes.
+
+Next measurement: put m_first back on views 4-7, now readable thanks to the
+faster counter, and compare against 0x8000/0x0000. A main lane that answers
+promptly with the WRONG data explains everything seen so far -- the CPU
+executes garbage, never reaches the drawing code, and the watchdog reboots it,
+while every lane looks electrically healthy.
