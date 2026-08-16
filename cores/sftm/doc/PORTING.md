@@ -1318,3 +1318,57 @@ different heights each frame and the characters animate between them, i.e.
 they are mid-frame captures rather than static corruption. Whether any visible
 tearing remains during play needs a human at the machine -- controller input
 cannot be injected over ssh.
+
+## Where the blitter actually waits (build 73, 2026-08-16)
+
+First self-consistent throughput reading. Views repeat identically across
+cycles and satisfy wait+stw <= busy and wr <= busy, which none of builds 69-72
+did.
+
+    writes            0xD   106,496  (units of 8192)
+    busy              0xF   SATURATED, >=983,040 clk
+    GROM fetch stall  0x3   196,608 clk
+    write-FIFO stall  0x0   <65,536 clk
+    blits started     0x2
+
+**The GROM fetch stall is at least 3x the write-FIFO stall.** Both counters run
+over the same window, so that ratio holds even though the window length is in
+doubt. The bottleneck is the blitter's source fetch, NOT the VRAM write path
+that the whole cache-lanes conversion was aimed at.
+
+CAVEAT: busy saturating is itself a defect. bc_busy resets on frame_end and a
+frame is 508*286*6 = 871,728 clk, so it cannot exceed 0xD in one frame.
+Reading 0xF means frame_end -- the falling edge of LVBL -- is being missed and
+two frames are accumulating. Every ABSOLUTE figure above is therefore over an
+ambiguous window; if it is two frames then writes are ~53k per frame, well
+under the 92,160 one background needs, which alone would explain a partial
+redraw. Fix frame_end before quoting absolutes.
+
+The per-lane liveness views are not trustworthy: grom0 reports req_ever=0 while
+sprites are visibly rendering. They predate this work and were never validated.
+
+### How five builds produced no valid measurement
+
+Worth recording, because each fault looked like a result:
+
+1. **Frozen high-water latch.** st_* only latched when bc_busy beat bc_best, a
+   maximum that never decayed, so the meters froze on one outlier frame and
+   reported it forever. The frame they froze on had busy >= 983,040 clk -- more
+   than a whole frame -- i.e. it had already missed a frame_end.
+2. **Half the stall uninstrumented.** sftm_blit has two stalls, st_waiting
+   (GROM, :302) and st_stallw (write FIFO, :359); only the first was counted,
+   so the write port was invisible and "20% stalled" meant 20% on GROM alone.
+3. **Cross-frame nibble pairing.** Widening the meters to 8 bits meant showing
+   each across two views, and consecutive views are sampled from different
+   snapshots -- so the halves never described the same frame. This produced
+   bwr > bbusy, a write count larger than the busy time containing it, which
+   sftm_blit.v:359 makes impossible.
+4. **Fixing the wrong end of 3.** A snapshot register made each single view
+   cycle self-consistent, but a screenshot burst spans several cycles, so the
+   pairing was still cross-snapshot.
+5. **The widening was the bug.** The original 4-bit meters carried one complete
+   number per view and could not be mispaired. Reverting to single nibbles is
+   what finally produced a consistent reading.
+
+Rule for this core: one view, one self-contained number. Never split a value
+across views -- the display cycles far slower than the data changes.
