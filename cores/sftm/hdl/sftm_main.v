@@ -630,13 +630,13 @@ TG68KdotC_Kernel #(
 //                        block filled before the ROM arrived
 // ---------------------------------------------------------------------------
 reg        m_cs_ever, m_ok_ever, m_got, m_data_nz;
-reg [15:0] m_first;
+reg [31:0] m_first;      // the WHOLE first longword, so byte order cannot confuse the verdict
 reg [15:0] m_cnt, m_stall, stall_run;
 
 always @(posedge clk) begin
     if( rst ) begin
         m_cs_ever <= 0; m_ok_ever <= 0; m_got <= 0; m_data_nz <= 0;
-        m_first   <= 0; m_cnt <= 0; m_stall <= 0; stall_run <= 0;
+        m_first   <= 32'd0; m_cnt <= 0; m_stall <= 0; stall_run <= 0;
     end else begin
         if( rom_cs ) m_cs_ever <= 1'b1;
         if( rom_ok ) m_ok_ever <= 1'b1;
@@ -644,7 +644,7 @@ always @(posedge clk) begin
             if( ~&m_cnt ) m_cnt <= m_cnt + 16'd1;
             if( |rom_data ) m_data_nz <= 1'b1;
             if( !m_got ) begin
-                m_first <= rom_data[15:0];
+                m_first <= rom_data;
                 m_got   <= 1'b1;
             end
         end
@@ -889,17 +889,23 @@ end
 assign st_dout =
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
     view == 4'h1 ? { 4'h1, m_cs_ever, m_ok_ever, m_got, m_data_nz } :
-    view == 4'h2 ? { 4'h2, dbg_lsnd   } :   // snd   {req,ok,stuck,-}
-    view == 4'h3 ? { 4'h3, dbg_lsrom  } :   // srom
-    view == 4'h4 ? { 4'h4, dbg_lgrm3  } :   // grm3
-    view == 4'h5 ? { 4'h5, dbg_lgrom0 } :   // grom0
-    view == 4'h6 ? { 4'h6, dbg_lgrom1 } :   // grom1
-    view == 4'h7 ? { 4'h7, dbg_lvram  } :   // vram  {req,ok,stuck,-}
-    view == 4'h8 ? { 4'h8, m_cnt[7:4] } :   // main completed fetches
+    // The WHOLE first longword the main lane returned. Build 62 only checked
+    // it was non-zero and that was read as "the lane works"; non-zero is not
+    // CORRECT. maindata begins 00 00 80 00, so the reset SP longword at
+    // address 0 is 0x00008000 and anything else means the lane answers
+    // promptly with the wrong bytes -- which would explain the CPU executing
+    // garbage, never reaching the drawing code, and every lane looking healthy.
+    view == 4'h2 ? { 4'h2, m_first[ 3: 0] } :
+    view == 4'h3 ? { 4'h3, m_first[ 7: 4] } :
+    view == 4'h4 ? { 4'h4, m_first[11: 8] } :
+    view == 4'h5 ? { 4'h5, m_first[15:12] } :
+    view == 4'h6 ? { 4'h6, m_first[19:16] } :
+    view == 4'h7 ? { 4'h7, m_first[23:20] } :
+    view == 4'h8 ? { 4'h8, m_first[27:24] } :
+    view == 4'hB ? { 4'hB, m_first[31:28] } :
+    view == 4'hC ? { 4'hC, dbg_lvram      } :   // vram {req,ok,stuck,-}
     view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
     view == 4'hA ? { 4'hA, st_nv14[7:4] } :
-    view == 4'hB ? { 4'hB, dbg_crp[3:0] } :
-    view == 4'hC ? { 4'hC, 1'b0, dbg_crp[6:4] } :
     view == 4'hD ? { 4'hD, dbg_cmdr[3:0] } :
     view == 4'hE ? { 4'hE, dbg_cmdr[7:4] } :
                    { 4'hF, dbg_peak[15:12] };
