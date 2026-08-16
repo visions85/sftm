@@ -1068,3 +1068,38 @@ now.
 
 **`at.offset` is in 16-bit WORDS, not bytes** (`mem.go` computes
 `offset_bytes := offset_words << 1`). Byte offsets are twice the YAML value.
+
+### cache-lanes: the CPU does not boot (builds 60/61)
+
+Both cache-lane builds render a black screen with only JTFRAME's own overlay,
+which never touches VRAM or the game's ROM lanes.
+
+Diagnosis, from the overlay alone. `view = diag_cnt[28:25]`, 0.7 s per view and
+11 s for a full cycle, yet across 20 screenshots spread over 20 REAL seconds --
+nearly two cycles -- the counter never got past view 4. So `diag_cnt` is being
+reset about every 3.5 s: the core is in a WATCHDOG REBOOT LOOP. The watchdog
+only fires when the 68020 fails to kick it, so the CPU is not running.
+
+That clears sftm_vram: the fault is in the ROM lanes, `main` above all, not in
+the 32-bit VRAM rewrite. Note the earlier capture that appeared to show the
+view counter stuck was a measurement artifact -- the /dev/MiSTer_cmd FIFO
+batches queued screenshot requests into a ~3 s burst, so a loop of 14 requests
+samples only ~4 consecutive views however long the shell sleeps between them.
+Spread captures across real time with one request per ssh call.
+
+Two bugs found and fixed on the way, both real:
+  * asserting vram_rd alongside vram_we made the lane service a READ and drop
+    the write (jtframe_cache_mux: `wire req0 = rd0 | wr0`, separate strobes);
+  * jtframe emits cache-lane offsets as C hex, which is not Verilog.
+
+Still unresolved for the ROM lanes:
+  * whether the download lands where the lanes expect (BA*_START placement
+    versus each lane's `at: {bank, offset}`);
+  * whether the caches can hold pre-download data, i.e. what invalidates them
+    when the ROM arrives;
+  * the exact `ok` timing on a hit versus a fill -- sftm_main's read handshake
+    was written for jtframe_romrq's "hold cs, settle, sample ok" convention and
+    a cache lane may not honour it.
+
+The conversion is committed but NOT deployed. Build 59 (banks) is the working
+core on hardware.
