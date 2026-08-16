@@ -629,46 +629,11 @@ TG68KdotC_Kernel #(
 //                        land where the lane looks, or the cache served a
 //                        block filled before the ROM arrived
 // ---------------------------------------------------------------------------
-reg        m_cs_ever, m_ok_ever, m_got, m_data_nz;
-reg [31:0] m_first;      // first longword returned
-reg [31:0] m_second;     // second longword -- proves whether the shift is uniform
-reg [ 3:0] m_addr1;      // the second fetch's address, low nibble (expect 1)
-reg        m_got2;
-reg [15:0] m_cnt, m_stall, stall_run;
-
-always @(posedge clk) begin
-    if( rst ) begin
-        m_cs_ever <= 0; m_ok_ever <= 0; m_got <= 0; m_data_nz <= 0;
-        m_first   <= 32'd0; m_second <= 32'd0; m_addr1 <= 4'd0;
-        m_got2    <= 1'b0;  m_cnt <= 0; m_stall <= 0; stall_run <= 0;
-    end else begin
-        if( rom_cs ) m_cs_ever <= 1'b1;
-        if( rom_ok ) m_ok_ever <= 1'b1;
-        if( rom_cs && rom_ok ) begin
-            if( ~&m_cnt ) m_cnt <= m_cnt + 16'd1;
-            if( |rom_data ) m_data_nz <= 1'b1;
-            if( !m_got ) begin
-                m_first <= rom_data;
-                m_got   <= 1'b1;
-            end else if( !m_got2 ) begin
-                // Build 66 got {w1,w2} at address 0 where {w0,w1} was due, so
-                // the data is one 16-bit word late. If this second fetch comes
-                // back {w3,w4} = 0x04000080 rather than the correct {w2,w3} =
-                // 0x00800400, the shift is uniform and the fault is the 32-bit
-                // lane's word-address conversion, not a one-off at address 0.
-                m_second <= rom_data;
-                m_addr1  <= rom_addr[5:2];
-                m_got2   <= 1'b1;
-            end
-        end
-        // longest run of cs high without ok -- a hung handshake shows here
-        if( rom_cs && !rom_ok ) begin
-            stall_run <= stall_run + 16'd1;
-            if( stall_run > m_stall ) m_stall <= stall_run;
-        end else
-            stall_run <= 16'd0;
-    end
-end
+// Probe removed after build 68. It was written against the banks-path
+// handshake ("hold cs, settle, sample ok") and does not hold on a cache lane:
+// build 68 reported m_got=0 while m_second held non-zero nibbles, which cannot
+// both be true. The bug it was chasing is fixed (cache-lane word order, see
+// cfg/mem.yaml) and the core boots, so the views now carry throughput instead.
 
 // JTFRAME renders st_dout as two hex digits over the game image (debug_view,
 // jtframe_debug.v:50; the viewmux defaults to debug_view with sel=0). OSD
@@ -900,27 +865,27 @@ end
 //   F   : peak |snd_left| high nibble (0 = no audio produced)
 // ---------------------------------------------------------------------------
 assign st_dout =
+    // Throughput panel. dbg_bwr is the number the cache-lanes conversion was
+    // for: VRAM writes in the busiest frame, in units of 8192 (sftm_video.v:189
+    // latches bc_wr[16:13], saturating at F). One full background is 92,160
+    // writes = 0xB. Build 56 on the banks arbiter measured ~65k = 0x8, i.e. it
+    // never finished a frame, which is both the low frame rate and the
+    // background streaks.
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, m_cs_ever, m_ok_ever, m_got, m_data_nz } :
-    // The WHOLE first longword the main lane returned. Build 62 only checked
-    // it was non-zero and that was read as "the lane works"; non-zero is not
-    // CORRECT. maindata begins 00 00 80 00, so the reset SP longword at
-    // address 0 is 0x00008000 and anything else means the lane answers
-    // promptly with the wrong bytes -- which would explain the CPU executing
-    // garbage, never reaching the drawing code, and every lane looking healthy.
-    view == 4'h2 ? { 4'h2, m_second[ 3: 0] } :
-    view == 4'h3 ? { 4'h3, m_second[ 7: 4] } :
-    view == 4'h4 ? { 4'h4, m_second[11: 8] } :
-    view == 4'h5 ? { 4'h5, m_second[15:12] } :
-    view == 4'h6 ? { 4'h6, m_second[19:16] } :
-    view == 4'h7 ? { 4'h7, m_second[23:20] } :
-    view == 4'h8 ? { 4'h8, m_second[27:24] } :
-    view == 4'hB ? { 4'hB, m_second[31:28] } :
-    view == 4'hC ? { 4'hC, m_addr1         } :  // 2nd fetch address, expect 1
-    view == 4'h9 ? { 4'h9, m_first[7:4] } :   // sanity: build 66 read 8
-    view == 4'hA ? { 4'hA, 2'd0, m_got, m_got2 } :
-    view == 4'hD ? { 4'hD, dbg_cmdr[3:0] } :
-    view == 4'hE ? { 4'hE, dbg_cmdr[7:4] } :
+    view == 4'h1 ? { 4'h1, dbg_bwr        } :  // VRAM writes/frame  /8192
+    view == 4'h2 ? { 4'h2, dbg_bbusy      } :  // blitter busy clk   /65536
+    view == 4'h3 ? { 4'h3, dbg_bwait      } :  // ...of which stalled
+    view == 4'h4 ? { 4'h4, dbg_bgf        } :  // GROM words fetched /8192
+    view == 4'h5 ? { 4'h5, dbg_bnum       } :  // blits started
+    view == 4'h6 ? { 4'h6, dbg_lvram      } :  // lane {req,ok,stuck,-}
+    view == 4'h7 ? { 4'h7, dbg_lgrom0     } :
+    view == 4'h8 ? { 4'h8, dbg_lgrom1     } :
+    view == 4'h9 ? { 4'h9, dbg_lgrm3      } :
+    view == 4'hA ? { 4'hA, dbg_lsrom      } :
+    view == 4'hB ? { 4'hB, dbg_lsnd       } :
+    view == 4'hC ? { 4'hC, dbg_cmdw[3:0]  } :  // sound cmds written
+    view == 4'hD ? { 4'hD, dbg_cmdr[3:0]  } :  // ...and read by the 6809
+    view == 4'hE ? { 4'hE, dbg_actv[3:0]  } :
                    { 4'hF, dbg_peak[15:12] };
 
 // verilator lint_off UNUSEDSIGNAL

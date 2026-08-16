@@ -1,5 +1,12 @@
 `timescale 1ns/1ps
-// What address units does a DW=32 cache lane expect?
+// What address units does the SLOT-path DW=32 module expect?
+//
+// NOTE ON SCOPE: this drives jtframe_romrq_bcache, which is the BANKS/slots
+// path. The cache-lanes path uses jtframe_cache instead, whose addr port is
+// [AW-1:AW0] with AW0=2 for DW=32 -- i.e. a longword index, exactly the
+// main_addr[19:2] the generator wires. The two modules take DIFFERENT units.
+// Confusing them cost a wrong diagnosis; this bench pins down the slot path so
+// that does not repeat.
 //
 // The banks build wires the CPU as  .slot0_addr({main_addr,1'b0})  -- main_addr
 // is [19:2], a LONGWORD index, so the slot is handed a 16-bit WORD address --
@@ -134,12 +141,13 @@ initial begin
     $display("word address {a,1'b0}: addr=0 -> %08X   addr=2 -> %08X", g0, g1);
     $display("");
 
-    if( errors == 0 )
-        $display("PASS: the DW=32 lane accepts a raw longword index");
-    else begin
-        $display("FAIL: the DW=32 lane needs a 16-bit WORD address, not a longword index");
-        $display("      -> the generator must wire .addrN({name_addr,1'b0})");
-    end
+    // The EXPECTED result is that a raw longword index aliases: that is why
+    // jtframe_rom_2slots is wired .slot0_addr({main_addr,1'b0}). Passing here
+    // means the slot path still takes 16-bit word addresses.
+    if( errors == 1 )
+        $display("PASS: slot-path bcache takes a 16-bit word address (banks wiring is right)");
+    else
+        $display("FAIL: slot-path bcache no longer aliases on a raw longword index -- convention changed");
     $finish;
 end
 
