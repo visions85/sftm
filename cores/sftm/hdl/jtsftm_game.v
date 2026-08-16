@@ -79,36 +79,16 @@ wire [ 7:0] dbg_palcnt;
 //   requested=1, acked=0   the lane never answers: this is the one
 //   requested=1, acked=1, stuck=1   it answers sometimes then wedges
 // ---------------------------------------------------------------------------
-`define LANEPROBE(NM, REQ, OK)                                                \
-    reg NM``_req_ev, NM``_ok_ev, NM``_stuck;                                  \
-    reg [12:0] NM``_wait;                                                     \
-    always @(posedge clk) begin                                               \
-        if( rst ) begin                                                       \
-            NM``_req_ev <= 0; NM``_ok_ev <= 0;                                \
-            NM``_stuck  <= 0; NM``_wait  <= 0;                                \
-        end else begin                                                        \
-            if( REQ ) NM``_req_ev <= 1'b1;                                    \
-            if( OK  ) NM``_ok_ev  <= 1'b1;                                    \
-            if( REQ && !(OK) ) begin                                          \
-                if( ~&NM``_wait ) NM``_wait <= NM``_wait + 13'd1;             \
-                if( NM``_wait > 13'd4095 ) NM``_stuck <= 1'b1;                \
-            end else NM``_wait <= 13'd0;                                      \
-        end                                                                   \
-    end
+wire [3:0] dbg_lsnd, dbg_lsrom, dbg_lgrm3, dbg_lgrom0, dbg_lgrom1, dbg_lvram;
 
-`LANEPROBE(lp_snd,   snd_rd,   snd_ok  )
-`LANEPROBE(lp_srom,  srom_rd,  srom_ok )
-`LANEPROBE(lp_grm3,  grm3_rd,  grm3_ok )
-`LANEPROBE(lp_grom0, grom0_rd, grom0_ok)
-`LANEPROBE(lp_grom1, grom1_rd, grom1_ok)
-`LANEPROBE(lp_vram,  (vram_rd|vram_we), vram_ok)
-
-wire [3:0] dbg_lsnd   = { lp_snd_req_ev,   lp_snd_ok_ev,   lp_snd_stuck,   1'b0 };
-wire [3:0] dbg_lsrom  = { lp_srom_req_ev,  lp_srom_ok_ev,  lp_srom_stuck,  1'b0 };
-wire [3:0] dbg_lgrm3  = { lp_grm3_req_ev,  lp_grm3_ok_ev,  lp_grm3_stuck,  1'b0 };
-wire [3:0] dbg_lgrom0 = { lp_grom0_req_ev, lp_grom0_ok_ev, lp_grom0_stuck, 1'b0 };
-wire [3:0] dbg_lgrom1 = { lp_grom1_req_ev, lp_grom1_ok_ev, lp_grom1_stuck, 1'b0 };
-wire [3:0] dbg_lvram  = { lp_vram_req_ev,  lp_vram_ok_ev,  lp_vram_stuck,  1'b0 };
+// Quartus rejects the NM``_sig token-pasting idiom that iverilog accepts, so
+// this is a small module instantiated once per lane rather than a macro.
+sftm_laneprobe u_lp_snd  (.rst(rst),.clk(clk),.req(snd_rd  ),.ok(snd_ok  ),.st(dbg_lsnd  ));
+sftm_laneprobe u_lp_srom (.rst(rst),.clk(clk),.req(srom_rd ),.ok(srom_ok ),.st(dbg_lsrom ));
+sftm_laneprobe u_lp_grm3 (.rst(rst),.clk(clk),.req(grm3_rd ),.ok(grm3_ok ),.st(dbg_lgrm3 ));
+sftm_laneprobe u_lp_grom0(.rst(rst),.clk(clk),.req(grom0_rd),.ok(grom0_ok),.st(dbg_lgrom0));
+sftm_laneprobe u_lp_grom1(.rst(rst),.clk(clk),.req(grom1_rd),.ok(grom1_ok),.st(dbg_lgrom1));
+sftm_laneprobe u_lp_vram (.rst(rst),.clk(clk),.req(vram_rd|vram_we),.ok(vram_ok),.st(dbg_lvram));
 
 sftm_main u_main(
     .rst          ( rst           ),
@@ -331,5 +311,37 @@ assign debug_view = st_main;
 // verilator lint_off UNUSEDSIGNAL
 wire unused = &{ cpu_rnw, 1'b0 };
 // verilator lint_on UNUSEDSIGNAL
+
+endmodule
+
+// ---------------------------------------------------------------------------
+// One SDRAM lane's liveness: {ever requested, ever acked, stuck, -}.
+// "Stuck" is a request held over 4096 clocks without an ack -- a lane that
+// stops answering freezes whatever waits on it, which is how the CPU can fetch
+// instructions correctly and still hang.
+// ---------------------------------------------------------------------------
+module sftm_laneprobe(
+    input            rst,
+    input            clk,
+    input            req,
+    input            ok,
+    output reg [3:0] st
+);
+
+reg [12:0] wcnt;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        st <= 4'd0; wcnt <= 13'd0;
+    end else begin
+        if( req ) st[3] <= 1'b1;
+        if( ok  ) st[2] <= 1'b1;
+        if( req && !ok ) begin
+            if( ~&wcnt ) wcnt <= wcnt + 13'd1;
+            if( wcnt > 13'd4095 ) st[1] <= 1'b1;
+        end else
+            wcnt <= 13'd0;
+    end
+end
 
 endmodule
