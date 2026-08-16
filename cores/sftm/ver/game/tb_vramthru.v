@@ -21,12 +21,12 @@
 module tb_vramthru;
 
 localparam LAT     = 6;             // SDRAM round trip
-// FASTWR: jtframe_ram_rq acks a WRITE as soon as the slot mux grants it rather
-// than when din_ok arrives, so the requester stops blocking on the burst. The
-// burst still takes LAT and the slot will not accept a new request until it
-// finishes, so this models an early ack with the memory committing later and
-// the port staying busy meanwhile.
-localparam FASTWR  = 1;
+// FASTWR acks a write when the slot mux GRANTS it, while the burst -- and the
+// actual commit -- happens later. Modelling an early ack that commits in the
+// SAME cycle cannot represent the hazard at all, so the ordering check could
+// never fail. Here an early-acked write goes to a pending slot and lands LAT
+// cycles later, so a read issued in between correctly sees STALE data.
+localparam FASTWR  = 0;   // see docker/entrypoint.sh: unsafe on this slot
 localparam WRACK   = FASTWR ? 1 : LAT;
 localparam NWRITE = 400;
 
@@ -37,7 +37,7 @@ reg [2:0] cendiv = 0;
 wire pxl_cen = cendiv == 3'd0;
 always @(posedge clk) cendiv <= cendiv == 3'd5 ? 3'd0 : cendiv + 3'd1;
 
-integer i, errors;
+integer i, errors, ord;
 
 // ---------------------------------------------------------------------------
 // two independent SDRAM slot models over one memory
@@ -52,26 +52,42 @@ reg  [15:0] vram_data;
 reg         vram_ok;
 reg  [ 3:0] vcnt;
 
-// The slot accepts a new request only when the previous burst has finished
-// ("a new operation won't be accepted until the current one finishes"), so an
-// early ack frees the REQUESTER, not the port. Without this the bench reports
-// an optimistic 4 clk/write; the port occupancy is the real limit.
 reg [3:0] occ = 0;
 always @(posedge clk) if( occ != 0 ) occ <= occ - 4'd1;
+
+reg        pw_v = 0;
+reg [21:1] pw_a;
+reg [15:0] pw_d;
+reg [ 1:0] pw_dsn;
+reg [ 3:0] pw_t = 0;
+always @(posedge clk) begin
+    if( pw_v ) begin
+        if( pw_t != 0 ) pw_t <= pw_t - 4'd1;
+        else begin
+            if( !pw_dsn[0] ) mem[pw_a][ 7:0] <= pw_d[ 7:0];
+            if( !pw_dsn[1] ) mem[pw_a][15:8] <= pw_d[15:8];
+            pw_v <= 1'b0;
+        end
+    end
+end
 
 always @(posedge clk) begin
     if( !vram_cs ) begin
         vcnt <= 0; vram_ok <= 0;
     end else if( occ != 0 ) begin
-        vram_ok <= 0;                       // port still busy with the last burst
+        vram_ok <= 0;
     end else if( vcnt != (vram_we ? WRACK : LAT) ) begin
         vcnt <= vcnt + 4'd1; vram_ok <= 0;
-    end else begin
+    end else if( !vram_ok ) begin
         vram_ok <= 1;
-        if( vram_we && FASTWR ) occ <= LAT[3:0];   // burst continues after the ack
         if( vram_we ) begin
-            if( !vram_dsn[0] ) mem[vram_addr][ 7:0] <= vram_din[ 7:0];
-            if( !vram_dsn[1] ) mem[vram_addr][15:8] <= vram_din[15:8];
+            if( FASTWR ) begin
+                pw_v<=1; pw_a<=vram_addr; pw_d<=vram_din; pw_dsn<=vram_dsn;
+                pw_t<=LAT[3:0]; occ<=LAT[3:0];
+            end else begin
+                if( !vram_dsn[0] ) mem[vram_addr][ 7:0] <= vram_din[ 7:0];
+                if( !vram_dsn[1] ) mem[vram_addr][15:8] <= vram_din[15:8];
+            end
         end else
             vram_data <= mem[vram_addr];
     end
@@ -172,7 +188,7 @@ initial begin
     // Drain: wf_cnt hits zero at ISSUE of the last write, which is still in
     // flight, so wait for the sequencer to go idle too before checking memory.
     while( uut.wf_cnt != 0 ) @(posedge clk);
-    while( uut.bstate != 2'd0 || vram_cs ) @(posedge clk);
+    while( uut.bstate != 2'd0 || vram_cs || pw_v ) @(posedge clk);
     t1 = clk_count;
     cycles = t1 - t0;
 
@@ -202,26 +218,45 @@ initial begin
     if( errors == 0 ) $display("ok: all %0d words landed at the right address", NWRITE);
 
     // ---- ordering: a read must see writes queued before it ---------------
-    @(posedge clk);
-    vw_addr <= 19'd5000; vw_data <= 16'h1234; vw_req <= 1'b1;
-    @(posedge clk);
+    // A BURST, then read it straight back. The old check wrote ONE word: with
+    // a single write in flight even an early ack precedes the read, so it
+    // passed under FASTWR while hardware corrupted every read-modify-write
+    // blit. A burst leaves later writes uncommitted when the FIFO reports
+    // empty, which is the real hazard.
+    ord = 0;
+    for( i=0; i<24; i=i+1 ) begin
+        vw_addr <= 19'd6000 + i[18:0];
+        vw_data <= 16'h5500 + i[15:0];
+        vw_plane<= 1'b0;
+        vw_req  <= 1'b1;
+        @(posedge clk);
+        while( !vw_rdy ) @(posedge clk);
+    end
     vw_req <= 1'b0;
-    vr_addr <= 19'd5000; vr_plane <= 1'b0; vr_req <= 1'b1;
     @(posedge clk);
-    while( !vr_ack ) @(posedge clk);
-    if( vr_data !== 16'h1234 ) begin
-        errors = errors + 1;
-        $display("FAIL: read got %04X, expected 1234 -- read overtook a queued write",
-                 vr_data);
-    end else
-        $display("ok: blitter read sees a write queued just before it");
-    vr_req <= 1'b0;
-    repeat(20) @(posedge clk);
+    for( i=23; i>=0; i=i-1 ) begin      // newest first: most likely uncommitted
+        vr_addr <= 19'd6000 + i[18:0]; vr_plane <= 1'b0; vr_req <= 1'b1;
+        @(posedge clk);
+        while( !vr_ack ) @(posedge clk);
+        if( vr_data !== (16'h5500 + i[15:0]) ) begin
+            if( ord < 3 )
+                $display("FAIL: read %0d got %04X, expected %04X -- read overtook an uncommitted write",
+                         6000+i, vr_data, 16'h5500 + i[15:0]);
+            ord = ord + 1;
+        end
+        vr_req <= 1'b0;
+        @(posedge clk);
+    end
+    if( ord == 0 ) $display("ok: reads see every write of a burst, committed");
+    else begin
+        errors = errors + ord;
+        $display("FAIL: %0d of 24 reads returned stale data", ord);
+    end
 
     // ---- handshake: exactly one ack for that one request -----------------
-    if( ack_count != 1 ) begin
+    if( ack_count != 24 ) begin
         errors = errors + 1;
-        $display("FAIL: %0d acks for 1 read request", ack_count);
+        $display("FAIL: %0d acks for 24 read requests", ack_count);
     end else
         $display("ok: exactly one ack per request");
 

@@ -1163,3 +1163,33 @@ sftm_vram would need to count outstanding writes and hold reads until the count
 reaches zero -- which reclaims some, but not all, of the gain.
 
 Build 59 (no FASTWR) remains the deployed core.
+
+### Why FASTWR cannot be used here
+
+The mechanism, from jtframe_ram_rq:
+
+    if( FASTWR && !req_rnw ) data_ok <= 1;
+
+`req_rnw` is set when a request is ISSUED and persists until the next issue, so
+on any slot grant where the LAST ISSUED request was a write, data_ok is forced
+high regardless of what the current transaction is. A read that follows a write
+therefore gets a spurious immediate ack carrying stale `dout`.
+
+FASTWR is built for a CPU write-behind that only ever writes. The blitter
+interleaves reads and writes on one slot -- shiftreg and cmd-3 read back pens
+they have just written -- so nearly every read-modify-write blit is corrupted.
+That is the dense per-pixel speckle in build 63, HUD text included.
+
+The speed was real: >=122,880 writes/frame against 65,536, <=6.5 clk/write
+against 12.2, and a background fitting inside one frame instead of 1.41. It is
+simply not correct.
+
+tb_vramthru did NOT catch this, and the reason is worth recording. Its ordering
+check was strengthened to write a BURST and read every word back, and the model
+was extended so an early-acked write commits LAT cycles later -- both real
+improvements, kept. But the bench still passed, because the model makes a read
+wait for port occupancy, which incidentally enforces the ordering the hardware
+does not. The bench models a hazard of the wrong SHAPE: the fault is not "the
+write has not landed yet", it is "the ack does not belong to this transaction".
+Reproducing that needs the ack condition itself modelled, keyed on the previous
+request's direction rather than the current one.

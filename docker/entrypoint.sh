@@ -79,20 +79,24 @@ if [ -f "${JTMEM}" ] && ! grep -q "sftm: verilog hex" "${JTMEM}"; then
     fi
 fi
 
-# FASTWR=1 on the bank-3 rw slot (vram).
+# FASTWR is NOT safe on this slot -- left here, disabled, as a warning.
 #
-# jtframe_ram_rq acks a write only when din_ok arrives, i.e. after the full
-# SDRAM round trip, so sftm_vram waits out every write before issuing the next.
-# With FASTWR the ack comes as soon as the slot mux GRANTS the write
-# (`if( FASTWR && !req_rnw ) data_ok <= 1;`) -- the burst still happens, we just
-# stop blocking on it. Measured on build 56: ~65k writes/frame against the
-# 92,160 one background needs.
+# It acks a write when the slot mux grants it, which measured >=122,880
+# writes/frame against 65,536 (12.2 -> <=6.5 clk/write) and made a background
+# fit inside one frame. But jtframe_ram_rq gates the early ack on
 #
-# jtframe_ram1_3slots does not expose the parameter and mem.yaml has no field
-# for it, so patch the instantiation. Read-after-write ordering still holds:
-# reads wait for the write FIFO to drain and then travel through the SAME slot,
-# whose req/pending logic serialises them behind the in-flight write.
-sed -i 's/jtframe_ram_rq #(.SDRAMW(SDRAMW),.AW(SLOT0_AW),.DW(SLOT0_DW),.ERASE(SLOT0_ERASE)) u_slot0(/jtframe_ram_rq #(.SDRAMW(SDRAMW),.AW(SLOT0_AW),.DW(SLOT0_DW),.ERASE(SLOT0_ERASE),.FASTWR(1)) u_slot0(/' "${JTFRAME_DIR}/hdl/sdram/jtframe_ram1_3slots.v" 2>/dev/null || true
+#     if( FASTWR && !req_rnw ) data_ok <= 1;
+#
+# and req_rnw is set when a request is ISSUED, persisting until the next issue.
+# So on any grant where the LAST ISSUED request was a write, data_ok is forced
+# high whatever the current transaction is: a read following a write gets a
+# spurious immediate ack carrying stale dout. FASTWR suits a CPU write-behind
+# that only ever writes; our blitter interleaves reads and writes on one slot
+# (shiftreg and cmd-3 read back pens they just wrote), so nearly every
+# read-modify-write blit is corrupted. Build 63 rendered full-height frames
+# with the streaks gone but dense per-pixel speckle, HUD text included.
+#
+# sed -i 's/...ERASE(SLOT0_ERASE)) u_slot0(/...ERASE(SLOT0_ERASE),.FASTWR(1)) u_slot0(/' jtframe_ram1_3slots.v
 
 # GAMMA=0: disable gamma correction LUT tables (~2k ALMs saved; no dedicated macro exists)
 sed -i 's/GAMMA=1/GAMMA=0/' "${JTFRAME_DIR}/target/mister/hdl/sys/arcade_video.v" 2>/dev/null || true
