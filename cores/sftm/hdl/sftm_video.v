@@ -98,16 +98,16 @@ module sftm_video(
     // Blitter throughput, for the truncated-background investigation. All
     // three counts are in the SAME units (cycles/65536) so they compare
     // directly; a 384x240 frame is 800k clk, i.e. about 12 units.
-    output reg [ 3:0] st_bbusy,   // cycles the blitter was busy
-    output reg [ 3:0] st_bwait,   // ...of which stalled on a GROM fetch
+    output reg [ 7:0] st_bbusy,   // cycles the blitter was busy
+    output reg [ 7:0] st_bwait,   // ...of which stalled on a GROM fetch
     // RATE meters, not stall flags. A "stalled on the write port" reading
     // (busy && !vw_free) saturates the moment the blitter runs -- it produces
     // pixels faster than any SDRAM absorbs them, so the FIFO is always full
     // and the reading is 12 whether writes drain at 9 clk or 2227. That is
     // why the arbiter rework showed no change on the old counter. These count
     // work COMPLETED instead, in units of 8192 per frame.
-    output reg [ 3:0] st_bwr,     // VRAM writes issued
-    output reg [ 3:0] st_bgf,     // GROM words fetched
+    output reg [ 7:0] st_bwr,     // VRAM writes issued
+    output reg [ 7:0] st_bgf,     // GROM words fetched
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
     output reg [14:0] st_gpen,     // pen from the frame with the most green
@@ -165,7 +165,7 @@ wire        blit_stallw, blit_waiting, blit_gdone, vram_wpop;
 // frame, so a reading of 0 means the instrument itself is broken, not that the
 // blitter is idle.
 // ---------------------------------------------------------------------------
-reg [19:0] bc_busy, bc_wait, bc_best;
+reg [19:0] bc_busy, bc_wait;
 reg [19:0] bc_wr, bc_gf;
 reg [ 3:0] bc_num;
 reg        lvbl_d, busy_d;
@@ -175,21 +175,29 @@ wire       blit_rise = blit_busy && !busy_d;
 always @(posedge clk) begin
     if( rst ) begin
         bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0;
-        bc_best <= 0; bc_num <= 0;
+        bc_num  <= 0;
         st_bbusy<= 0; st_bwait<= 0; st_bwr <= 0; st_bgf <= 0; st_bnum <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
     end else begin
         lvbl_d <= LVBL;
         busy_d <= blit_busy;
         if( frame_end ) begin
-            if( bc_busy > bc_best ) begin
-                bc_best  <= bc_busy;
-                st_bbusy <= bc_busy[19:16];
-                st_bwait <= bc_wait[19:16];
-                st_bwr   <= bc_wr[19:13] > 7'd15 ? 4'd15 : bc_wr[16:13];
-                st_bgf   <= bc_gf[19:13] > 7'd15 ? 4'd15 : bc_gf[16:13];
-                st_bnum  <= bc_num;
-            end
+            // EVERY frame, not the best one. These used to latch only when
+            // bc_busy beat a running maximum that never decayed, so they froze
+            // on the single busiest frame since reset and reported it forever.
+            // That peak read bc_busy[19:16]=F, i.e. >=983,040 clk, which is
+            // longer than a whole frame (508*286*6 = 871,728) -- an outlier
+            // where frame_end was missed and two frames accumulated. Reading
+            // typical behaviour off it is not possible.
+            //
+            // Now [19:12], so one unit is 4096 rather than 8192/65536:
+            //   writes for one full background = 92,160 = 0x16 units
+            //   a whole frame of busy          = 871,728 = 0xD4 units
+            st_bbusy <= bc_busy[19:12];
+            st_bwait <= bc_wait[19:12];
+            st_bwr   <= bc_wr  [19:12];
+            st_bgf   <= bc_gf  [19:12];
+            st_bnum  <= bc_num;
             bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0; bc_num <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;

@@ -125,10 +125,10 @@ module sftm_main #(
     input      [ 7:0] dbg_crv,
     input      [ 6:0] dbg_crp,
     // blitter throughput (see sftm_video.v)
-    input      [ 3:0] dbg_bbusy,
-    input      [ 3:0] dbg_bwait,
-    input      [ 3:0] dbg_bwr,
-    input      [ 3:0] dbg_bgf,
+    input      [ 7:0] dbg_bbusy,
+    input      [ 7:0] dbg_bwait,
+    input      [ 7:0] dbg_bwr,
+    input      [ 7:0] dbg_bgf,
     input      [ 3:0] dbg_bnum,
     // per-lane liveness, {req_ever, ok_ever, stuck, -} (see jtsftm_game.v)
     input      [ 3:0] dbg_lsnd,
@@ -865,26 +865,27 @@ end
 //   F   : peak |snd_left| high nibble (0 = no audio produced)
 // ---------------------------------------------------------------------------
 assign st_dout =
-    // Throughput panel. dbg_bwr is the number the cache-lanes conversion was
-    // for: VRAM writes in the busiest frame, in units of 8192 (sftm_video.v:189
-    // latches bc_wr[16:13], saturating at F). One full background is 92,160
-    // writes = 0xB. Build 56 on the banks arbiter measured ~65k = 0x8, i.e. it
-    // never finished a frame, which is both the low frame rate and the
-    // background streaks.
+    // Throughput panel, CURRENT frame (sftm_video.v latches every frame_end).
+    // Each counter shows as two nibbles, one unit = 4096:
+    //   writes/frame  = (v1<<4|v2) * 4096   full background 92,160 = 0x16
+    //   busy clk      = (v3<<4|v4) * 4096   whole frame     871,728 = 0xD4
+    //   stalled clk   = (v5<<4|v6) * 4096
+    // busy vs stalled says which bottleneck this is: busy near 0xD4 with a
+    // small stall means the blitter's own inner loop, not the memory system.
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_bwr        } :  // VRAM writes/frame  /8192
-    view == 4'h2 ? { 4'h2, dbg_bbusy      } :  // blitter busy clk   /65536
-    view == 4'h3 ? { 4'h3, dbg_bwait      } :  // ...of which stalled
-    view == 4'h4 ? { 4'h4, dbg_bgf        } :  // GROM words fetched /8192
-    view == 4'h5 ? { 4'h5, dbg_bnum       } :  // blits started
-    view == 4'h6 ? { 4'h6, dbg_lvram      } :  // lane {req,ok,stuck,-}
-    view == 4'h7 ? { 4'h7, dbg_lgrom0     } :
-    view == 4'h8 ? { 4'h8, dbg_lgrom1     } :
-    view == 4'h9 ? { 4'h9, dbg_lgrm3      } :
-    view == 4'hA ? { 4'hA, dbg_lsrom      } :
-    view == 4'hB ? { 4'hB, dbg_lsnd       } :
-    view == 4'hC ? { 4'hC, dbg_cmdw[3:0]  } :  // sound cmds written
-    view == 4'hD ? { 4'hD, dbg_cmdr[3:0]  } :  // ...and read by the 6809
+    view == 4'h1 ? { 4'h1, dbg_bwr  [7:4] } :  // writes/frame  hi
+    view == 4'h2 ? { 4'h2, dbg_bwr  [3:0] } :  // writes/frame  lo
+    view == 4'h3 ? { 4'h3, dbg_bbusy[7:4] } :  // blitter busy  hi
+    view == 4'h4 ? { 4'h4, dbg_bbusy[3:0] } :  // blitter busy  lo
+    view == 4'h5 ? { 4'h5, dbg_bwait[7:4] } :  // ...stalled    hi
+    view == 4'h6 ? { 4'h6, dbg_bwait[3:0] } :  // ...stalled    lo
+    view == 4'h7 ? { 4'h7, dbg_bnum       } :  // blits started this frame
+    view == 4'h8 ? { 4'h8, dbg_lvram      } :  // lane {req,ok,stuck,-}
+    view == 4'h9 ? { 4'h9, dbg_lgrom0     } :
+    view == 4'hA ? { 4'hA, dbg_lgrom1     } :
+    view == 4'hB ? { 4'hB, dbg_lgrm3      } :
+    view == 4'hC ? { 4'hC, dbg_cmdw[3:0]  } :
+    view == 4'hD ? { 4'hD, dbg_cmdr[3:0]  } :
     view == 4'hE ? { 4'hE, dbg_actv[3:0]  } :
                    { 4'hF, dbg_peak[15:12] };
 
