@@ -61,6 +61,55 @@ wire        dbg_gseen, dbg_gmulti, dbg_palhit;
 wire [ 3:0] dbg_gcnt;
 wire [ 7:0] dbg_palcnt;
 
+
+// ---------------------------------------------------------------------------
+// Per-lane liveness probe (cache-lanes bring-up)
+//
+// Build 62 cleared the main lane: cs, ok, a completed fetch and non-zero data
+// were all present, so the 68020 runs and executes from ROM. It still fails to
+// kick the watchdog, so it hangs downstream of instruction fetch. Under banks
+// the same code runs, so one of the OTHER lanes has stopped answering.
+//
+// One nibble per lane: {ever requested, ever acked, stuck}. "Stuck" is a
+// request held for more than 4096 clocks without an ack -- a lane that never
+// answers freezes whatever waits on it, which is exactly how the CPU would
+// stall after fetching fine.
+//
+//   requested=0            nothing ever asks for this lane -- not the culprit
+//   requested=1, acked=0   the lane never answers: this is the one
+//   requested=1, acked=1, stuck=1   it answers sometimes then wedges
+// ---------------------------------------------------------------------------
+`define LANEPROBE(NM, REQ, OK)                                                \
+    reg NM``_req_ev, NM``_ok_ev, NM``_stuck;                                  \
+    reg [12:0] NM``_wait;                                                     \
+    always @(posedge clk) begin                                               \
+        if( rst ) begin                                                       \
+            NM``_req_ev <= 0; NM``_ok_ev <= 0;                                \
+            NM``_stuck  <= 0; NM``_wait  <= 0;                                \
+        end else begin                                                        \
+            if( REQ ) NM``_req_ev <= 1'b1;                                    \
+            if( OK  ) NM``_ok_ev  <= 1'b1;                                    \
+            if( REQ && !(OK) ) begin                                          \
+                if( ~&NM``_wait ) NM``_wait <= NM``_wait + 13'd1;             \
+                if( NM``_wait > 13'd4095 ) NM``_stuck <= 1'b1;                \
+            end else NM``_wait <= 13'd0;                                      \
+        end                                                                   \
+    end
+
+`LANEPROBE(lp_snd,   snd_rd,   snd_ok  )
+`LANEPROBE(lp_srom,  srom_rd,  srom_ok )
+`LANEPROBE(lp_grm3,  grm3_rd,  grm3_ok )
+`LANEPROBE(lp_grom0, grom0_rd, grom0_ok)
+`LANEPROBE(lp_grom1, grom1_rd, grom1_ok)
+`LANEPROBE(lp_vram,  (vram_rd|vram_we), vram_ok)
+
+wire [3:0] dbg_lsnd   = { lp_snd_req_ev,   lp_snd_ok_ev,   lp_snd_stuck,   1'b0 };
+wire [3:0] dbg_lsrom  = { lp_srom_req_ev,  lp_srom_ok_ev,  lp_srom_stuck,  1'b0 };
+wire [3:0] dbg_lgrm3  = { lp_grm3_req_ev,  lp_grm3_ok_ev,  lp_grm3_stuck,  1'b0 };
+wire [3:0] dbg_lgrom0 = { lp_grom0_req_ev, lp_grom0_ok_ev, lp_grom0_stuck, 1'b0 };
+wire [3:0] dbg_lgrom1 = { lp_grom1_req_ev, lp_grom1_ok_ev, lp_grom1_stuck, 1'b0 };
+wire [3:0] dbg_lvram  = { lp_vram_req_ev,  lp_vram_ok_ev,  lp_vram_stuck,  1'b0 };
+
 sftm_main u_main(
     .rst          ( rst           ),
     .clk          ( clk           ),
@@ -68,7 +117,7 @@ sftm_main u_main(
 
     .rom_addr     ( main_addr     ),
     .rom_data     ( main_data     ),
-    .rom_cs       ( main_cs       ),
+    .rom_cs       ( main_rd       ),
     .rom_ok       ( main_ok       ),
 
     .joystick1    ( joystick1     ),
@@ -121,6 +170,12 @@ sftm_main u_main(
     .dbg_bwr      ( dbg_bwr       ),
     .dbg_bgf      ( dbg_bgf       ),
     .dbg_bnum     ( dbg_bnum      ),
+    .dbg_lsnd     ( dbg_lsnd      ),
+    .dbg_lsrom    ( dbg_lsrom     ),
+    .dbg_lgrm3    ( dbg_lgrm3     ),
+    .dbg_lgrom0   ( dbg_lgrom0    ),
+    .dbg_lgrom1   ( dbg_lgrom1    ),
+    .dbg_lvram    ( dbg_lvram     ),
     .dbg_gpen     ( dbg_gpen      ),
     .dbg_gseen    ( dbg_gseen     ),
     .dbg_gcnt     ( dbg_gcnt      ),
@@ -164,15 +219,15 @@ sftm_video u_video(
 
     .grom0_addr   ( grom0_addr    ),
     .grom0_data   ( grom0_data    ),
-    .grom0_cs     ( grom0_cs      ),
+    .grom0_rd     ( grom0_rd      ),
     .grom0_ok     ( grom0_ok      ),
     .grom1_addr   ( grom1_addr    ),
     .grom1_data   ( grom1_data    ),
-    .grom1_cs     ( grom1_cs      ),
+    .grom1_rd     ( grom1_rd      ),
     .grom1_ok     ( grom1_ok      ),
     .grm3_addr    ( grm3_addr     ),
     .grm3_data    ( grm3_data     ),
-    .grm3_cs      ( grm3_cs       ),
+    .grm3_rd      ( grm3_rd       ),
     .grm3_ok      ( grm3_ok       ),
 
     // VRAM SDRAM bus (mem.yaml `vram`, bank 3; ports appear in
@@ -182,12 +237,8 @@ sftm_video u_video(
     .vram_din     ( vram_din      ),
     .vram_dsn     ( vram_dsn      ),
     .vram_we      ( vram_we       ),
-    .vram_cs      ( vram_cs       ),
+    .vram_rd      ( vram_rd       ),
     .vram_ok      ( vram_ok       ),
-    .vramrd_addr  ( vramrd_addr   ),
-    .vramrd_data  ( vramrd_data   ),
-    .vramrd_cs    ( vramrd_cs     ),
-    .vramrd_ok    ( vramrd_ok     ),
 
     .vblank_irq   ( vblank_irq    ),
     .blit_irq     ( blit_irq      ),
@@ -224,12 +275,12 @@ sftm_snd u_snd(
 
     .rom_addr     ( snd_addr      ),
     .rom_data     ( snd_data      ),
-    .rom_cs       ( snd_cs        ),
+    .rom_cs       ( snd_rd        ),
     .rom_ok       ( snd_ok        ),
 
     .srom_addr    ( srom_addr     ),
     .srom_data    ( srom_data     ),
-    .srom_cs      ( srom_cs       ),
+    .srom_rd      ( srom_rd       ),
     .srom_ok      ( srom_ok       ),
 
     .snd_latch1   ( snd_latch1    ),

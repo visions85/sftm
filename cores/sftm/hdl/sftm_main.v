@@ -130,6 +130,13 @@ module sftm_main #(
     input      [ 3:0] dbg_bwr,
     input      [ 3:0] dbg_bgf,
     input      [ 3:0] dbg_bnum,
+    // per-lane liveness, {req_ever, ok_ever, stuck, -} (see jtsftm_game.v)
+    input      [ 3:0] dbg_lsnd,
+    input      [ 3:0] dbg_lsrom,
+    input      [ 3:0] dbg_lgrm3,
+    input      [ 3:0] dbg_lgrom0,
+    input      [ 3:0] dbg_lgrom1,
+    input      [ 3:0] dbg_lvram,
     input      [14:0] dbg_gpen,
     input             dbg_gseen,
     input      [ 3:0] dbg_gcnt,
@@ -599,6 +606,57 @@ TG68KdotC_Kernel #(
 // ---------------------------------------------------------------------------
 // Hardware bring-up diagnostics (Phase 4, revision 2).
 //
+// ---------------------------------------------------------------------------
+// Main-ROM lane probe (cache-lanes bring-up)
+//
+// Builds 60 and 61 render black and the overlay's view counter never gets past
+// 4, so diag_cnt is reset every ~3.5 s: a watchdog reboot loop, which means the
+// 68020 never runs. The watchdog reset clears these counters too, but a first
+// instruction fetch takes microseconds and the window is seconds, so whatever
+// the CPU manages before each reboot is captured.
+//
+// Ground truth from the ROM: maindata starts 00 00 80 00 00 80 04 00, so the
+// reset SP longword at address 0 is 0x00008000 and the PC longword is
+// 0x00800400. The first fetch is therefore rom_addr 0 and its data must carry
+// 0x8000 in one half.
+//
+// The three cases this separates:
+//   cs_ever=0            the CPU never even requests -- not a memory problem
+//   cs_ever=1, ok_ever=0 the lane never answers: handshake mismatch, since
+//                        sftm_main's read sequence was written for
+//                        jtframe_romrq ("hold cs, settle, sample ok")
+//   ok_ever=1, data 0    the lane answers with nothing: the download did not
+//                        land where the lane looks, or the cache served a
+//                        block filled before the ROM arrived
+// ---------------------------------------------------------------------------
+reg        m_cs_ever, m_ok_ever, m_got, m_data_nz;
+reg [15:0] m_first;
+reg [15:0] m_cnt, m_stall, stall_run;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        m_cs_ever <= 0; m_ok_ever <= 0; m_got <= 0; m_data_nz <= 0;
+        m_first   <= 0; m_cnt <= 0; m_stall <= 0; stall_run <= 0;
+    end else begin
+        if( rom_cs ) m_cs_ever <= 1'b1;
+        if( rom_ok ) m_ok_ever <= 1'b1;
+        if( rom_cs && rom_ok ) begin
+            if( ~&m_cnt ) m_cnt <= m_cnt + 16'd1;
+            if( |rom_data ) m_data_nz <= 1'b1;
+            if( !m_got ) begin
+                m_first <= rom_data[15:0];
+                m_got   <= 1'b1;
+            end
+        end
+        // longest run of cs high without ok -- a hung handshake shows here
+        if( rom_cs && !rom_ok ) begin
+            stall_run <= stall_run + 16'd1;
+            if( stall_run > m_stall ) m_stall <= stall_run;
+        end else
+            stall_run <= 16'd0;
+    end
+end
+
 // JTFRAME renders st_dout as two hex digits over the game image (debug_view,
 // jtframe_debug.v:50; the viewmux defaults to debug_view with sel=0). OSD
 // buttons are not reachable over SSH, so the display AUTO-CYCLES 16 views.
@@ -689,11 +747,10 @@ reg [11:0] pc_max_hi;
 reg        vec_pend, pc_vec_done, pc_stuck_done;
 reg [22:0] vint_timer;                  // 100 ms @ 48 MHz = 4.8e6 -> 23 bits
 reg [28:0] diag_cnt;
-// ~0.09 s per view, ~1.4 s for all sixteen. It used to be diag_cnt[28:25],
-// 0.7 s per view and 11 s per cycle -- but the watchdog resets diag_cnt every
-// ~3 s whenever the core is unhealthy, so views 5-F could never be reached and
-// every reading was silently truncated to views 0-4. A full cycle must fit
-// inside one watchdog period or the instrument cannot be read when it matters.
+// ~0.09 s per view, ~1.4 s for all sixteen. It was diag_cnt[28:25] -- 0.7 s
+// per view, 11 s per cycle -- but the watchdog resets diag_cnt every ~3 s when
+// the core is unhealthy, so views 5-F were unreachable and every reading during
+// the cache-lanes debugging was silently truncated to views 0-4.
 wire [3:0] view = diag_cnt[25:22];
 
 // exception vector longwords (VBR = 0): 0x60 spurious, 0x64/0x68/0x6C autovec
@@ -831,14 +888,14 @@ end
 // ---------------------------------------------------------------------------
 assign st_dout =
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_bwr       } :   // VRAM writes issued /8192
-    view == 4'h2 ? { 4'h2, dbg_bbusy     } :   // blitter busy cyc/65536
-    view == 4'h3 ? { 4'h3, dbg_bgf       } :   // GROM words fetched /8192
-    view == 4'h4 ? { 4'h4, dbg_gpen[3:0] } :   // bad pen: pixel byte lo
-    view == 4'h5 ? { 4'h5, dbg_gmulti, dbg_palhit, dbg_gseen, 1'b0 } :
-    view == 4'h6 ? { 4'h6, dbg_gcnt      } :   // control: green px/frame /256
-    view == 4'h7 ? { 4'h7, dbg_palcnt[3:0] } :   // palette writes /256 lo
-    view == 4'h8 ? { 4'h8, dbg_palcnt[7:4] } :   // palette writes /256 hi
+    view == 4'h1 ? { 4'h1, m_cs_ever, m_ok_ever, m_got, m_data_nz } :
+    view == 4'h2 ? { 4'h2, dbg_lsnd   } :   // snd   {req,ok,stuck,-}
+    view == 4'h3 ? { 4'h3, dbg_lsrom  } :   // srom
+    view == 4'h4 ? { 4'h4, dbg_lgrm3  } :   // grm3
+    view == 4'h5 ? { 4'h5, dbg_lgrom0 } :   // grom0
+    view == 4'h6 ? { 4'h6, dbg_lgrom1 } :   // grom1
+    view == 4'h7 ? { 4'h7, dbg_lvram  } :   // vram  {req,ok,stuck,-}
+    view == 4'h8 ? { 4'h8, m_cnt[7:4] } :   // main completed fetches
     view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
     view == 4'hA ? { 4'hA, st_nv14[7:4] } :
     view == 4'hB ? { 4'hB, dbg_crp[3:0] } :

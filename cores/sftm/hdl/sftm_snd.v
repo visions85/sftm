@@ -49,7 +49,7 @@ module sftm_snd(
     // ES5506 sample ROM (SDRAM bank 1)
     output     [21:1] srom_addr,
     input      [15:0] srom_data,
-    output            srom_cs,
+    output            srom_rd,
     input             srom_ok,
 
     // command latches (owned by sftm_main)
@@ -230,7 +230,7 @@ sftm5506 u_es(
     .host_rd   ( es_rd      ),
     .srom_addr ( srom_addr  ),
     .srom_data ( srom_data  ),
-    .srom_cs   ( srom_cs    ),
+    .srom_rd   ( srom_rd    ),
     .srom_ok   ( srom_ok    ),
     .snd_left  ( snd_left   ),
     .snd_right ( snd_right  ),

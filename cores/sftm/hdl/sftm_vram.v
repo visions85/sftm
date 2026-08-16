@@ -7,8 +7,19 @@
 
     Street Fighter: The Movie -- VRAM in SDRAM (see doc/PHASE2-DESIGN.md).
 
-    2 MB (2 planes x 512x1024 x 16-bit pen) on the jtframe rw bus `vram` in
-    bank 3. Word address = {plane, offs[18:0]}.
+    2 MB (2 planes x 512x1024 x 16-bit pen) on the jtframe CACHE LANE `vram`
+    in bank 3. Pen address = {plane, offs[18:0]}, a 16-bit-word index; the
+    lane is 32 bits wide, so the SDRAM address is that index >> 1 and bit 0
+    picks the half.
+
+    A cache lane, not a plain slot, because a plain rw slot is capped at 16
+    bits (jtframe_ram_rq reads din[0+:DW] off the 16-bit data_read bus) and
+    data_width: 32 on one is silently downgraded. The lane matters less for
+    its width than for its BLOCK CACHE: the blitter writes pixels sequentially
+    along a row, so a 256-byte block absorbs 128 pens before any SDRAM traffic,
+    and the prefetch reads a line in ~3 block fills instead of 192 accesses.
+    Build 56 measured ~65k writes/frame against the 92,160 one background
+    needs; that shortfall is both the frame rate and the background streaks.
 
     Clients, priority order:
       1. scanline prefetch: on `line_go`, burst-reads 384 words of plane 0
@@ -22,36 +33,30 @@
     The scanout side reads the OTHER line buffer (the one filled during the
     previous line) at pixel rate.
 
-    SDRAM handshake matches the jtframe convention used by the ROM buses in
-    sftm_main: hold cs with a stable address, wait 2 clks, then sample ok;
-    drop cs for at least one clk between operations. For writes, `we` and
-    `din` are held alongside; `ok` means the controller has committed the
-    write. Verify port names/semantics against the regenerated
-    jtsftm_game_sdram.v in Phase 4.
+    All three clients share the ONE cache port, which looks like a step back
+    from the two independent sequencers the plain-slot version needed -- but
+    that version's problem was the prefetch consuming most of every line at
+    ~13 clk per 2 pixels. Through the cache the prefetch costs a block fill per
+    128 pixels, so the port is idle most of the time and there is nothing left
+    to starve the writes.
+
+    Sharing one cache also removes the read/write coherency question: the
+    prefetch, the blitter reads and the blitter writes all see the same data,
+    so no flush interface is needed and none is declared in mem.yaml.
 */
 
 module sftm_vram(
     input             rst,
     input             clk,
 
-    // SDRAM rw bus (jtframe `vram` bus, bank 3)
-    output reg [21:1] vram_addr,
-    input      [15:0] vram_data,     // read data
-    output reg [15:0] vram_din,      // write data
-    output reg [ 1:0] vram_dsn,      // byte disables (active low select)
+    // jtframe cache lane `vram`, bank 3, 32-bit
+    output reg [20:2] vram_addr,     // 32-bit word index within the lane
+    input      [31:0] vram_data,     // read data
+    output reg [31:0] vram_din,      // write data
+    output reg [ 3:0] vram_dsn,      // byte disables, active low
     output reg        vram_we,
-    output reg        vram_cs,
+    output reg        vram_rd,
     input             vram_ok,
-
-    // Read-only 32-bit alias of the same 2 MB (mem.yaml `vramrd`, offset 0).
-    // The scanline prefetch reads through this so one SDRAM access yields two
-    // pixels: 192 accesses per line instead of 384, doubling the per-word
-    // budget from 7.9 to 15.9 clk. Writes still go through the 16-bit rw
-    // `vram` port above.
-    output reg [21:2] vramrd_addr,
-    input      [31:0] vramrd_data,
-    output reg        vramrd_cs,
-    input             vramrd_ok,
 
     // blitter write FIFO
     input             vw_req,
@@ -89,7 +94,9 @@ localparam [18:0] VRAM_MASK = 19'h7FFFF;
 // at 0 -- it did, and the blitter was overwriting the glyph ROM in place
 // while grm3 reads returned framebuffer pixels. That was the checkerboard.
 // VRAM is therefore biased clear of grm3's 512 KB.
-localparam [20:0] VRAM_ORG = 21'h40000;      // 16-bit words (= 512 KB)
+// No VRAM_ORG bias: the cache lane is placed by `at: offset` in cfg/mem.yaml
+// (word 0x40000 of bank 3, i.e. byte 0x80000, clear of grm3's 512 kB). Adding
+// a bias here would double-count that offset.
 
 
 // ---------------------------------------------------------------------------
@@ -158,104 +165,145 @@ end
 assign scan_pen = line_sel ? lb_q0 : lb_q1;
 
 // ---------------------------------------------------------------------------
-// SDRAM sequencers -- one per slot, deliberately INDEPENDENT
+// Cache-lane sequencer
 // ---------------------------------------------------------------------------
-// Bug A: the prefetch needs 384 pixels inside one line (508 pxl_cen x 6 clk =
-// 3048 clk). Reading them 32 bits at a time halves that to 192 accesses.
+// One port, three clients, priority prefetch > blitter read > blitter write.
 //
-// The previous version put the prefetch, the blitter read port and the write
-// FIFO through ONE single-transaction state machine. Measured on hardware
-// (build 54, per frame, in units of 65536 clk): blitter busy 13 -- the whole
-// frame -- with 12 of it stalled on the write port and 0 stalled on GROM
-// reads. vw_rdy is just !wf_full, so that reading is literally the 16-deep
-// write FIFO standing full because the sequencer could not drain it. The game
-// ran at a few frames per second and sprites flashed, because cpu_wait stalls
-// the 68020 on COMMAND while the blitter is busy.
+// The plain-slot version had to run the prefetch and the writes as two
+// INDEPENDENT sequencers, because a single one let the prefetch -- tested
+// first, so absolute priority -- consume most of every active line and starve
+// the writes to ~2227 clk each. That is fixed here by economics rather than by
+// arbitration: through a 256-byte block cache the prefetch fills a block per
+// 128 pixels instead of touching SDRAM every 2, so it barely uses the port.
 //
-// Two causes, both fixed here:
+// A blitter READ still waits for the write FIFO to drain (wf_empty), because
+// the shiftreg and cmd-3 paths read back pens this same blit just wrote. Reads
+// and writes are therefore mutually exclusive by construction.
 //
-//  1. `vram` and `vramrd` are SEPARATE jtframe slots that
-//     jtframe_ram1_3slots already arbitrates between. Serialising them behind
-//     our own FSM threw that concurrency away and let the prefetch -- which
-//     had absolute priority and claimed most of every active line -- starve
-//     the writes. They are now two independent machines; the slot arbiter
-//     interleaves them.
+// vr_busy makes exactly one ack per vr_req assertion: the blitter holds vr_req
+// until the cycle AFTER vr_ack, so a busy flag that lagged would let the same
+// read reissue and hand it a second ack it would consume as the next word.
+// (tb_vramthru catches this.)
 //
-//  2. The write FIFO is now popped AT ISSUE instead of at completion. The old
-//     A_GAP state existed because wf_pop was registered, so the head only
-//     advanced a cycle after the transaction finished and A_IDLE would
-//     otherwise re-issue a stale wf_head. Popping at issue -- after the head
-//     has been latched into vram_addr/vram_din, so it need not stay stable --
-//     removes that hazard structurally rather than by waiting a cycle for it.
-//
-// The one-cycle `settle` guard before sampling *_ok is kept on both machines.
-// It costs a cycle per access and protects against a stale ok left over from
-// the previous transaction; this module has produced enough subtle bugs to
-// keep it.
+// The write FIFO is popped at ISSUE, once the head is latched into
+// vram_addr/vram_din and no longer has to stay stable. Popping at completion
+// needed an extra idle state to let the registered pop land before the next
+// issue could read the head.
 // ---------------------------------------------------------------------------
 
 reg        pf_active;
 reg [18:0] pf_base;
-reg [18:2] pf_j;        // 32-bit word index being fetched
+reg [18:1] pf_j;        // 32-bit word index being fetched (pen index >> 1)
 reg [ 9:0] pf_w;        // next line-buffer slot to fill (0..383)
 reg        pf_skip;     // odd line_base: discard the low half of the first pair
 reg [31:0] pf_data;
 reg        pf_half;     // which half of pf_data is being written
 
-// ---- prefetch sequencer: owns vramrd_* and the line-buffer write port -----
-localparam [1:0] P_IDLE=2'd0, P_WAIT=2'd1, P_WR=2'd2;
-reg [1:0] pstate;
-reg       p_settle;
+localparam [1:0] A_IDLE=2'd0, A_WAIT=2'd1, A_PFWR=2'd2;
+localparam [1:0] OWN_PF=2'd0, OWN_RD=2'd1, OWN_WR=2'd2;
+reg [1:0] astate, owner;
+reg       settle, vr_busy;
+
+// pen index -> lane address. {plane,addr} counts 16-bit pens; the lane is
+// 32 bits, so drop the low bit and remember it to pick the half.
+wire [19:0] rd_pen  = { vr_plane, vr_addr };
+wire [19:0] wr_pen  = { wf_head[35], wf_head[34:16] };
+
+wire b_do_rd = astate==A_IDLE && !pf_active && vr_req && !vr_busy && wf_empty;
+wire b_do_wr = astate==A_IDLE && !pf_active && !wf_empty;
+assign wf_pop = b_do_wr;          // pop at issue
+assign st_wpop = wf_pop;
 
 always @(posedge clk) begin
     if( rst ) begin
-        pstate    <= P_IDLE;
-        vramrd_cs <= 0;
+        astate    <= A_IDLE;
+        vram_rd   <= 0;
+        vram_we   <= 0;
+        vram_dsn  <= 4'hF;
+        vr_ack    <= 0;
+        vr_busy   <= 0;
         lb_we     <= 0;
         pf_active <= 0;
         pf_j      <= 0;
         pf_w      <= 0;
         pf_skip   <= 0;
         pf_half   <= 0;
-        p_settle  <= 0;
+        settle    <= 0;
+        owner     <= OWN_PF;
     end else begin
-        lb_we <= 0;
+        vr_ack <= 0;
+        lb_we  <= 0;
+        if( !vr_req ) vr_busy <= 1'b0;
 
         if( line_go ) begin
             pf_active <= 1;
             pf_base   <= line_base;
-            pf_j      <= line_base[18:1];   // pair containing the first word
+            pf_j      <= line_base[18:1];   // pair containing the first pen
             pf_w      <= 0;
-            pf_skip   <= line_base[0];      // odd start: low half is the pixel before
+            pf_skip   <= line_base[0];      // odd start: low half precedes it
             pf_half   <= 0;
         end
 
-        case( pstate )
-        P_IDLE: begin
-            vramrd_cs <= 0;
+        case( astate )
+        A_IDLE: begin
+            vram_rd <= 0;
+            vram_we <= 0;
             if( pf_active ) begin
-                vramrd_addr <= VRAM_ORG[20:1] + pf_j;   // 32-bit word units
-                vramrd_cs   <= 1;
-                p_settle    <= 0;
-                pstate      <= P_WAIT;
+                vram_addr <= { 1'b0, pf_j };   // pen>>1 already
+                vram_rd   <= 1;
+                owner     <= OWN_PF;
+                settle    <= 0;
+                astate    <= A_WAIT;
+            end else if( b_do_rd ) begin
+                vram_addr <= rd_pen[19:1];
+                vram_rd   <= 1;
+                owner     <= OWN_RD;
+                settle    <= 0;
+                astate    <= A_WAIT;
+            end else if( b_do_wr ) begin
+                vram_addr <= wr_pen[19:1];
+                // place the pen in its half and enable only those two bytes
+                vram_din  <= wr_pen[0] ? { wf_head[15:0], 16'd0 }
+                                       : { 16'd0, wf_head[15:0] };
+                vram_dsn  <= wr_pen[0] ? 4'b0011 : 4'b1100;
+                // rd and wr are SEPARATE request strobes on a cache lane
+                // (jtframe_cache_mux: wire req0 = rd0 | wr0). Asserting rd
+                // alongside we makes the lane service a READ, so the write is
+                // silently dropped -- build 60 rendered a black screen because
+                // nothing ever reached VRAM.
+                vram_we   <= 1;
+                owner     <= OWN_WR;
+                settle    <= 0;
+                astate    <= A_WAIT;
             end
         end
-        P_WAIT: begin
-            if( !p_settle )
-                p_settle <= 1'b1;
-            else if( vramrd_ok ) begin
-                pf_data   <= vramrd_data;
-                pf_half   <= 1'b0;
-                pf_j      <= pf_j + 17'd1;
-                vramrd_cs <= 0;
-                pstate    <= P_WR;
+        A_WAIT: begin
+            if( !settle )
+                settle <= 1'b1;
+            else if( vram_ok ) begin
+                vram_rd <= 0;
+                vram_we <= 0;
+                case( owner )
+                    OWN_PF: begin
+                        pf_data <= vram_data;
+                        pf_half <= 1'b0;
+                        pf_j    <= pf_j + 18'd1;
+                        astate  <= A_PFWR;
+                    end
+                    OWN_RD: begin
+                        vr_ack  <= 1;
+                        vr_busy <= 1;
+                        vr_data <= rd_pen[0] ? vram_data[31:16] : vram_data[15:0];
+                        astate  <= A_IDLE;
+                    end
+                    default: astate <= A_IDLE;
+                endcase
             end
         end
-        // Unpack the fetched pair into the line buffer, low half first
-        // (jtframe assembles dout with the lower address in [15:0]).
-        P_WR: begin
+        // unpack the fetched pair into the line buffer, low half first
+        A_PFWR: begin
             if( pf_skip && !pf_half ) begin
-                pf_skip <= 1'b0;             // odd line_base: drop the low half
+                pf_skip <= 1'b0;
                 pf_half <= 1'b1;
             end else begin
                 if( pf_w < 10'd384 ) begin
@@ -266,92 +314,12 @@ always @(posedge clk) begin
                 end
                 if( pf_half ) begin
                     if( pf_w + 10'd1 >= 10'd384 ) pf_active <= 0;
-                    pstate <= P_IDLE;
+                    astate <= A_IDLE;
                 end else
                     pf_half <= 1'b1;
             end
         end
-        default: pstate <= P_IDLE;
-        endcase
-    end
-end
-
-// ---- blitter sequencer: owns the rw vram_* slot ---------------------------
-// A blitter READ must not overtake queued writes -- the shiftreg and c3 modes
-// read back pixels this blit has just written -- so a read waits for the FIFO
-// to drain. Reads and writes are therefore mutually exclusive by construction
-// (one needs wf_empty, the other needs !wf_empty).
-//
-// vr_busy makes exactly one ack per vr_req assertion: the blitter holds vr_req
-// until the cycle AFTER vr_ack, so without it B_IDLE would re-issue the same
-// read and hand the blitter a second ack it would consume as the next word.
-localparam [1:0] B_IDLE=2'd0, B_WAIT=2'd1;
-reg [1:0] bstate;
-reg       b_isread, b_settle, vr_busy;
-
-wire b_do_read  = bstate==B_IDLE && vr_req && !vr_busy && wf_empty;
-wire b_do_write = bstate==B_IDLE && !wf_empty;
-
-// pop at issue: the head is latched into vram_addr/vram_din this same cycle
-assign wf_pop = b_do_write;
-assign st_wpop = wf_pop;
-
-always @(posedge clk) begin
-    if( rst ) begin
-        bstate   <= B_IDLE;
-        vram_cs  <= 0;
-        vram_we  <= 0;
-        vram_dsn <= 2'b00;
-        vr_ack   <= 0;
-        vr_busy  <= 0;
-        b_isread <= 0;
-        b_settle <= 0;
-    end else begin
-        vr_ack <= 0;
-        if( !vr_req ) vr_busy <= 1'b0;
-
-        case( bstate )
-        B_IDLE: begin
-            vram_cs <= 0;
-            vram_we <= 0;
-            if( b_do_write ) begin
-                vram_addr <= VRAM_ORG + { wf_head[35], wf_head[34:16] }; // {plane,addr}
-                vram_din  <= wf_head[15:0];
-                vram_dsn  <= 2'b00;
-                vram_we   <= 1;
-                vram_cs   <= 1;
-                b_isread  <= 0;
-                b_settle  <= 0;
-                bstate    <= B_WAIT;
-            end else if( b_do_read ) begin
-                vram_addr <= VRAM_ORG + { vr_plane, vr_addr };
-                vram_we   <= 0;
-                vram_cs   <= 1;
-                b_isread  <= 1;
-                b_settle  <= 0;
-                bstate    <= B_WAIT;
-            end
-        end
-        B_WAIT: begin
-            if( !b_settle )
-                b_settle <= 1'b1;
-            else if( vram_ok ) begin
-                if( b_isread ) begin
-                    vr_ack  <= 1;
-                    vr_data <= vram_data;
-                    // set busy HERE, not off the registered vr_ack: B_IDLE is
-                    // re-entered the very next cycle and vr_req is still high
-                    // then, so a busy that lags by one cycle lets the same
-                    // read reissue and delivers a second ack the blitter
-                    // consumes as the next word (caught by tb_vramthru).
-                    vr_busy <= 1'b1;
-                end
-                vram_cs <= 0;
-                vram_we <= 0;
-                bstate  <= B_IDLE;
-            end
-        end
-        default: bstate <= B_IDLE;
+        default: astate <= A_IDLE;
         endcase
     end
 end

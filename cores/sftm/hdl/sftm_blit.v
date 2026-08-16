@@ -100,15 +100,15 @@ module sftm_blit(
     // See cfg/macros.def for the full account.
     output reg [23:1] grom0_addr,
     input      [15:0] grom0_data,
-    output reg        grom0_cs,
+    output reg        grom0_rd,
     input             grom0_ok,
     output reg [23:1] grom1_addr,
     input      [15:0] grom1_data,
-    output reg        grom1_cs,
+    output reg        grom1_rd,
     input             grom1_ok,
     output reg [18:1] grm3_addr,
     input      [15:0] grm3_data,
-    output reg        grm3_cs,
+    output reg        grm3_rd,
     input             grm3_ok,
 
     // VRAM port (to sftm_vram): word address within a plane + plane bit.
@@ -308,39 +308,39 @@ always @(posedge clk) begin
     if( rst ) begin
         cache_valid <= 0;
         fetch_busy  <= 0;
-        grom0_cs    <= 0;
-        grom1_cs    <= 0;
-        grm3_cs     <= 0;
+        grom0_rd    <= 0;
+        grom1_rd    <= 0;
+        grm3_rd     <= 0;
     end else begin
         if( fetch_req && !cache_hit && !fetch_busy ) begin
             fetch_busy  <= 1;
             issue_waddr <= fword;
             fetch_src   <= f_src;
             case( f_src )
-                SRC_G3: begin grm3_addr  <= fetch_addr[18:1]; grm3_cs  <= 1; end
-                SRC_G1: begin grom1_addr <= fetch_addr[23:1]; grom1_cs <= 1; end
-                default:begin grom0_addr <= fetch_addr[23:1]; grom0_cs <= 1; end
+                SRC_G3: begin grm3_addr  <= fetch_addr[18:1]; grm3_rd  <= 1; end
+                SRC_G1: begin grom1_addr <= fetch_addr[23:1]; grom1_rd <= 1; end
+                default:begin grom0_addr <= fetch_addr[23:1]; grom0_rd <= 1; end
             endcase
         end else if( fetch_busy ) begin
             if( fetch_src == SRC_G0 && grom0_ok ) begin
                 cache_word  <= grom0_data;
                 cache_waddr <= issue_waddr;
                 cache_valid <= 1;
-                grom0_cs    <= 0;
+                grom0_rd    <= 0;
                 fetch_busy  <= 0;
             end
             if( fetch_src == SRC_G1 && grom1_ok ) begin
                 cache_word  <= grom1_data;
                 cache_waddr <= issue_waddr;
                 cache_valid <= 1;
-                grom1_cs    <= 0;
+                grom1_rd    <= 0;
                 fetch_busy  <= 0;
             end
             if( fetch_src == SRC_G3 && grm3_ok ) begin
                 cache_word  <= grm3_data;
                 cache_waddr <= issue_waddr;
                 cache_valid <= 1;
-                grm3_cs     <= 0;
+                grm3_rd     <= 0;
                 fetch_busy  <= 0;
             end
         end

@@ -56,7 +56,7 @@ module sftm5506(
     // sample ROM (SDRAM bank 1, packed bytes)
     output reg [21:1] srom_addr,
     input      [15:0] srom_data,
-    output reg        srom_cs,
+    output reg        srom_rd,
     input             srom_ok,
 
     // Sample-ROM observation. The 6809 now programs the chip (ES5506
@@ -392,7 +392,7 @@ integer j;
 always @(posedge clk) begin
     if( rst ) begin
         estate  <= E_IDLE;
-        srom_cs <= 0;
+        srom_rd <= 0;
         st_sromn <= 8'd0;
         st_sromd <= 8'd0;
         st_anyrun <= 1'b0;
@@ -522,7 +522,7 @@ always @(posedge clk) begin
             end else begin
                 cur_baddr   <= srom_baddr(bank, addr_int1);
                 srom_addr   <= srom_baddr(bank, addr_int1) >> 1;
-                srom_cs     <= 1;
+                srom_rd     <= 1;
                 srom_settle <= 0;
                 fetch2      <= 0;
                 estate      <= E_WAITF;
@@ -535,7 +535,7 @@ always @(posedge clk) begin
             end else begin
                 cur_baddr   <= srom_baddr(bank, addr_int2);
                 srom_addr   <= srom_baddr(bank, addr_int2) >> 1;
-                srom_cs     <= 1;
+                srom_rd     <= 1;
                 srom_settle <= 0;
                 fetch2      <= 1;
                 estate      <= E_WAITF;
@@ -545,7 +545,7 @@ always @(posedge clk) begin
             if( srom_settle != 2'd2 )
                 srom_settle <= srom_settle + 2'd1;
             else if( srom_ok ) begin
-                srom_cs <= 0;
+                srom_rd <= 0;
                 if( st_sromn != 8'hFF ) st_sromn <= st_sromn + 8'd1;
                 if( srom_byte != 8'd0 ) st_sromd <= srom_byte;
                 if( !fetch2 ) begin
