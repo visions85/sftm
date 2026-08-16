@@ -129,6 +129,7 @@ module sftm_main #(
     input      [ 7:0] dbg_bwait,
     input      [ 7:0] dbg_bwr,
     input      [ 7:0] dbg_bgf,
+    input      [ 7:0] dbg_bstw,
     input      [ 3:0] dbg_bnum,
     // per-lane liveness, {req_ever, ok_ever, stuck, -} (see jtsftm_game.v)
     input      [ 3:0] dbg_lsnd,
@@ -865,26 +866,29 @@ end
 //   F   : peak |snd_left| high nibble (0 = no audio produced)
 // ---------------------------------------------------------------------------
 assign st_dout =
-    // Throughput panel, CURRENT frame (sftm_video.v latches every frame_end).
-    // Each counter shows as two nibbles, one unit = 4096:
-    //   writes/frame  = (v1<<4|v2) * 4096   full background 92,160 = 0x16
-    //   busy clk      = (v3<<4|v4) * 4096   whole frame     871,728 = 0xD4
-    //   stalled clk   = (v5<<4|v6) * 4096
-    // busy vs stalled says which bottleneck this is: busy near 0xD4 with a
-    // small stall means the blitter's own inner loop, not the memory system.
+    // Throughput panel, CURRENT frame (sftm_video latches every frame_end).
+    // One unit = 4096 clk or writes:
+    //   writes/frame (v1v2)  full background 92,160 = 0x16
+    //   busy         (v3v4)  a whole frame  871,728 = 0xD4
+    //   fetch stall  (v5v6)  waiting on GROM
+    //   write stall  (v7v8)  waiting on the VRAM write FIFO
+    // busy = productive + fetch stall + write stall, because S_PIX advances one
+    // pixel per clock exactly when fetch_ok && vw_free. Whichever stall
+    // dominates is the bottleneck; if neither does, the blitter is issuing
+    // pixels as fast as it can and the scene is simply too big for the frame.
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_bwr  [7:4] } :  // writes/frame  hi
-    view == 4'h2 ? { 4'h2, dbg_bwr  [3:0] } :  // writes/frame  lo
-    view == 4'h3 ? { 4'h3, dbg_bbusy[7:4] } :  // blitter busy  hi
-    view == 4'h4 ? { 4'h4, dbg_bbusy[3:0] } :  // blitter busy  lo
-    view == 4'h5 ? { 4'h5, dbg_bwait[7:4] } :  // ...stalled    hi
-    view == 4'h6 ? { 4'h6, dbg_bwait[3:0] } :  // ...stalled    lo
-    view == 4'h7 ? { 4'h7, dbg_bnum       } :  // blits started this frame
-    view == 4'h8 ? { 4'h8, dbg_lvram      } :  // lane {req,ok,stuck,-}
-    view == 4'h9 ? { 4'h9, dbg_lgrom0     } :
-    view == 4'hA ? { 4'hA, dbg_lgrom1     } :
-    view == 4'hB ? { 4'hB, dbg_lgrm3      } :
-    view == 4'hC ? { 4'hC, dbg_cmdw[3:0]  } :
+    view == 4'h1 ? { 4'h1, dbg_bwr  [7:4] } :
+    view == 4'h2 ? { 4'h2, dbg_bwr  [3:0] } :
+    view == 4'h3 ? { 4'h3, dbg_bbusy[7:4] } :
+    view == 4'h4 ? { 4'h4, dbg_bbusy[3:0] } :
+    view == 4'h5 ? { 4'h5, dbg_bwait[7:4] } :  // GROM fetch stall
+    view == 4'h6 ? { 4'h6, dbg_bwait[3:0] } :
+    view == 4'h7 ? { 4'h7, dbg_bstw [7:4] } :  // VRAM write-FIFO stall
+    view == 4'h8 ? { 4'h8, dbg_bstw [3:0] } :
+    view == 4'h9 ? { 4'h9, dbg_bnum       } :  // blits started this frame
+    view == 4'hA ? { 4'hA, dbg_lvram      } :
+    view == 4'hB ? { 4'hB, dbg_lgrom0     } :
+    view == 4'hC ? { 4'hC, dbg_lgrom1     } :
     view == 4'hD ? { 4'hD, dbg_cmdr[3:0]  } :
     view == 4'hE ? { 4'hE, dbg_actv[3:0]  } :
                    { 4'hF, dbg_peak[15:12] };

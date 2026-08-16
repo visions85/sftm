@@ -108,6 +108,7 @@ module sftm_video(
     // work COMPLETED instead, in units of 8192 per frame.
     output reg [ 7:0] st_bwr,     // VRAM writes issued
     output reg [ 7:0] st_bgf,     // GROM words fetched
+    output reg [ 7:0] st_bstw,    // ...stalled on the VRAM write FIFO
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
     output reg [14:0] st_gpen,     // pen from the frame with the most green
@@ -165,7 +166,7 @@ wire        blit_stallw, blit_waiting, blit_gdone, vram_wpop;
 // frame, so a reading of 0 means the instrument itself is broken, not that the
 // blitter is idle.
 // ---------------------------------------------------------------------------
-reg [19:0] bc_busy, bc_wait;
+reg [19:0] bc_busy, bc_wait, bc_stw;
 reg [19:0] bc_wr, bc_gf;
 reg [ 3:0] bc_num;
 reg        lvbl_d, busy_d;
@@ -175,8 +176,9 @@ wire       blit_rise = blit_busy && !busy_d;
 always @(posedge clk) begin
     if( rst ) begin
         bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0;
-        bc_num  <= 0;
+        bc_num  <= 0; bc_stw <= 0;
         st_bbusy<= 0; st_bwait<= 0; st_bwr <= 0; st_bgf <= 0; st_bnum <= 0;
+        st_bstw <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
     end else begin
         lvbl_d <= LVBL;
@@ -198,10 +200,19 @@ always @(posedge clk) begin
             st_bwr   <= bc_wr  [19:12];
             st_bgf   <= bc_gf  [19:12];
             st_bnum  <= bc_num;
+            st_bstw  <= bc_stw [19:12];
             bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0; bc_num <= 0;
+            bc_stw  <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
+            // TWO different stalls, and only the first used to be counted:
+            //   blit_waiting = fetch_req && !fetch_ok  -- GROM fetch  (blit:302)
+            //   blit_stallw  = busy && !vw_free        -- write FIFO  (blit:359)
+            // S_PIX advances one pixel per clock when fetch_ok && vw_free, so
+            // busy time is productive + these two. Counting only the GROM
+            // stall made the write port -- the original bottleneck -- invisible.
             if( blit_busy && blit_waiting&& ~&bc_wait ) bc_wait <= bc_wait + 20'd1;
+            if( blit_stallw             && ~&bc_stw  ) bc_stw  <= bc_stw  + 20'd1;
             if( vram_wpop               && ~&bc_wr   ) bc_wr   <= bc_wr   + 20'd1;
             if( blit_gdone              && ~&bc_gf   ) bc_gf   <= bc_gf   + 20'd1;
             if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
