@@ -1254,3 +1254,67 @@ suspect is how a 32-bit cache lane converts its word address into the 16-bit
 SDRAM addresses it assembles the pair from. Confirm by reading the SECOND
 fetch too: if it returns {w3, w4} the shift is uniform and the address
 conversion is off by one, rather than a one-off at address zero.
+
+## Cache-lanes conversion: what unblocked it (build 68/69, 2026-08-16)
+
+The conversion from SDRAM banks to cache-lanes was stuck for builds 60-66 --
+black screen or an init loop. One parameter was responsible.
+
+A DW=32 cache lane fills from 16-bit SDRAM and must choose which half of the
+32-bit word each incoming SDRAM word lands in. `jtframe_cache_ctrl.sv` keys
+that on ENDIAN in three matching places -- :368 `fill_write_data`, :384
+`fill_write_mask`, :401 `wb_ext_word`:
+
+    if( DW == 32 && ENDIAN ) pos = half_idx[0] ? 0 : 1;
+    else                     pos = half_idx % HALF_PER_WORD;
+
+Default ENDIAN=0 puts SDRAM word 0 in `dout[15:0]`, so the big-endian 68EC020
+reads every longword with its halves swapped. `sdram.big_endian: true` in
+cfg/mem.yaml fixes it. jtframe emits it (game_sdram.v:403) as
+`ENDIANn ( big_endian && data_width==32 ? 1 : 0 )`, so it reaches EXACTLY the
+two 32-bit lanes, main and vram, and leaves grom/srom/grm3 packed as the
+working banks build had them. Verify in the generated
+`cores/sftm/mister/jtsftm_game_sdram.v`: ENDIAN0 and ENDIAN2 must read 1.
+
+vram needs no matching change. Fill data, fill byte-enables and writeback all
+derive from the same `pos`, so the permutation cancels on a lane that only
+sftm_vram reads or writes.
+
+### Two wrong turns, both cheap to repeat
+
+1. **`jtframe_romrq_bcache` is NOT the cache-lanes module.** It is the
+   banks/slots path. Its `addr` is a 16-bit WORD address, which is why
+   `jtframe_rom_2slots` is wired `.slot0_addr({main_addr,1'b0})`.
+   `jtframe_cache` -- the cache-lanes module -- instead takes
+   `addr [AW-1:AW0]` with `AW0 = DW==32 ? 2 : DW==16 ? 1 : 0`, i.e. a longword
+   index, exactly the raw `main_addr[19:2]` the generator wires. The generator
+   is right; the two modules just take different units. `ver/game/tb_bcache32.v`
+   pins the slot-path convention down so the confusion does not repeat.
+
+2. **`ENDIAN` in `jtframe_dual_ram32` is simulation-only** -- there it feeds
+   only `SIMFILE_BYTE`, which byte of a sim hex file seeds each byte-RAM, and
+   the data path is straight through (`data0[7:0]`->u_byte0, `we0[0]`,
+   `q0[7:0]`) for both values. Reading that file alone says "big_endian cannot
+   matter on hardware", which is wrong: the cache CONTROLLER is where 32-bit
+   word order is decided. Check the consumer, not the first file the parameter
+   appears in.
+
+### Result on hardware
+
+Build 68 boots to the real service/boot screen. Build 69 runs attract mode with
+correctly rendered digitised portraits (Sagat vs Chun Li), the STREETFIGHTER
+and BISON'S LAIR panels, and animation between frames.
+
+Throughput, read from `dbg_bwr` (VRAM writes in the busiest frame, units of
+8192, sftm_video.v:189):
+
+    banks arbiter, build 56   0x8  ~65,536 writes/frame
+    cache-lanes,   build 69   0xC  ~98,304 writes/frame
+    one full background            92,160 writes
+
+So the peak frame now clears a full background, which the banks arbiter never
+did. Screenshots still catch horizontal partial-redraw bands, but they sit at
+different heights each frame and the characters animate between them, i.e.
+they are mid-frame captures rather than static corruption. Whether any visible
+tearing remains during play needs a human at the machine -- controller input
+cannot be injected over ssh.
