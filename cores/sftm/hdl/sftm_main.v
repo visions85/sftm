@@ -630,13 +630,17 @@ TG68KdotC_Kernel #(
 //                        block filled before the ROM arrived
 // ---------------------------------------------------------------------------
 reg        m_cs_ever, m_ok_ever, m_got, m_data_nz;
-reg [31:0] m_first;      // the WHOLE first longword, so byte order cannot confuse the verdict
+reg [31:0] m_first;      // first longword returned
+reg [31:0] m_second;     // second longword -- proves whether the shift is uniform
+reg [ 3:0] m_addr1;      // the second fetch's address, low nibble (expect 1)
+reg        m_got2;
 reg [15:0] m_cnt, m_stall, stall_run;
 
 always @(posedge clk) begin
     if( rst ) begin
         m_cs_ever <= 0; m_ok_ever <= 0; m_got <= 0; m_data_nz <= 0;
-        m_first   <= 32'd0; m_cnt <= 0; m_stall <= 0; stall_run <= 0;
+        m_first   <= 32'd0; m_second <= 32'd0; m_addr1 <= 4'd0;
+        m_got2    <= 1'b0;  m_cnt <= 0; m_stall <= 0; stall_run <= 0;
     end else begin
         if( rom_cs ) m_cs_ever <= 1'b1;
         if( rom_ok ) m_ok_ever <= 1'b1;
@@ -646,6 +650,15 @@ always @(posedge clk) begin
             if( !m_got ) begin
                 m_first <= rom_data;
                 m_got   <= 1'b1;
+            end else if( !m_got2 ) begin
+                // Build 66 got {w1,w2} at address 0 where {w0,w1} was due, so
+                // the data is one 16-bit word late. If this second fetch comes
+                // back {w3,w4} = 0x04000080 rather than the correct {w2,w3} =
+                // 0x00800400, the shift is uniform and the fault is the 32-bit
+                // lane's word-address conversion, not a one-off at address 0.
+                m_second <= rom_data;
+                m_addr1  <= rom_addr[5:2];
+                m_got2   <= 1'b1;
             end
         end
         // longest run of cs high without ok -- a hung handshake shows here
@@ -895,17 +908,17 @@ assign st_dout =
     // address 0 is 0x00008000 and anything else means the lane answers
     // promptly with the wrong bytes -- which would explain the CPU executing
     // garbage, never reaching the drawing code, and every lane looking healthy.
-    view == 4'h2 ? { 4'h2, m_first[ 3: 0] } :
-    view == 4'h3 ? { 4'h3, m_first[ 7: 4] } :
-    view == 4'h4 ? { 4'h4, m_first[11: 8] } :
-    view == 4'h5 ? { 4'h5, m_first[15:12] } :
-    view == 4'h6 ? { 4'h6, m_first[19:16] } :
-    view == 4'h7 ? { 4'h7, m_first[23:20] } :
-    view == 4'h8 ? { 4'h8, m_first[27:24] } :
-    view == 4'hB ? { 4'hB, m_first[31:28] } :
-    view == 4'hC ? { 4'hC, dbg_lvram      } :   // vram {req,ok,stuck,-}
-    view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
-    view == 4'hA ? { 4'hA, st_nv14[7:4] } :
+    view == 4'h2 ? { 4'h2, m_second[ 3: 0] } :
+    view == 4'h3 ? { 4'h3, m_second[ 7: 4] } :
+    view == 4'h4 ? { 4'h4, m_second[11: 8] } :
+    view == 4'h5 ? { 4'h5, m_second[15:12] } :
+    view == 4'h6 ? { 4'h6, m_second[19:16] } :
+    view == 4'h7 ? { 4'h7, m_second[23:20] } :
+    view == 4'h8 ? { 4'h8, m_second[27:24] } :
+    view == 4'hB ? { 4'hB, m_second[31:28] } :
+    view == 4'hC ? { 4'hC, m_addr1         } :  // 2nd fetch address, expect 1
+    view == 4'h9 ? { 4'h9, m_first[7:4] } :   // sanity: build 66 read 8
+    view == 4'hA ? { 4'hA, 2'd0, m_got, m_got2 } :
     view == 4'hD ? { 4'hD, dbg_cmdr[3:0] } :
     view == 4'hE ? { 4'hE, dbg_cmdr[7:4] } :
                    { 4'hF, dbg_peak[15:12] };
