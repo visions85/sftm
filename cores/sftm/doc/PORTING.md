@@ -1103,3 +1103,27 @@ Still unresolved for the ROM lanes:
 
 The conversion is committed but NOT deployed. Build 59 (banks) is the working
 core on hardware.
+
+### The main lane is fine -- the CPU runs, something downstream hangs
+
+Build 62 instrumented rom_cs/rom_ok/rom_data on the main cache lane. Result:
+
+    cs_ever=1  ok_ever=1  got_first=1  data_nonzero=1
+
+with the completed-fetch counter climbing rapidly across samples. The 68020
+requests, the lane answers, fetches complete, and the data is real. **The main
+ROM lane works under cache-lanes.**
+
+That RETRACTS the previous entry's conclusion. "The CPU is not running" was
+inferred from the watchdog reboot loop alone, and the inference was wrong: the
+CPU runs and executes from ROM, but still fails to kick the watchdog, so it
+hangs somewhere downstream of instruction fetch. Under banks (build 59) the
+same code runs, so cache-lanes broke one of the OTHER lanes -- snd, srom, grm3,
+grom0/1 -- or the VRAM path, not main.
+
+Instrumentation problem to fix first: `view = diag_cnt[28:25]` gives 0.7 s per
+view and 11 s per cycle, but the watchdog resets diag_cnt every ~3 s, so views
+5-F can NEVER be reached while the core is looping. Only views 0-4 are legible.
+Speeding the counter to roughly diag_cnt[24:21] (~0.04 s per view, ~0.7 s per
+cycle) fits a whole cycle inside one watchdog period and makes every view
+readable. Do that before adding more probes, or they cannot be read.
