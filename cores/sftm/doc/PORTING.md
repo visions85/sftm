@@ -1225,3 +1225,32 @@ faster counter, and compare against 0x8000/0x0000. A main lane that answers
 promptly with the WRONG data explains everything seen so far -- the CPU
 executes garbage, never reaches the drawing code, and the watchdog reboots it,
 while every lane looks electrically healthy.
+
+### Found it: the main cache lane is off by one 16-bit word
+
+Build 66 read the WHOLE first longword the main lane returns:
+
+    got      0x80000080
+    expected 0x00008000     (maindata begins 00 00 80 00, the reset SP)
+
+Read as 16-bit words the ROM starts w0=0x0000, w1=0x8000, w2=0x0080,
+w3=0x0400. The lane returned {w1, w2} where address 0 must give {w0, w1}: real
+ROM content, shifted by exactly ONE 16-BIT WORD.
+
+That explains everything the earlier probes found and could not explain. The
+lane answers promptly (build 62: cs, ok, a completed fetch, non-zero data), so
+it looks healthy; but the 68020 gets a garbage reset vector, executes nonsense,
+never reaches the drawing code -- hence build 65 finding grom0/grom1/grm3 never
+requested at all -- and the watchdog reboots it every ~3 s.
+
+The lesson from the false trail: build 62 checked only `data_nonzero` and that
+was read as "the main lane works", which became a retraction of an earlier
+conclusion and sent the next build chasing the other lanes. Non-zero is not
+correct. When ground truth is available -- and it was, in the ROM image -- the
+probe should compare against it rather than against zero.
+
+Fix direction: main is 32 bits with main_addr[19:2] and at.offset "0x0", so the
+suspect is how a 32-bit cache lane converts its word address into the 16-bit
+SDRAM addresses it assembles the pair from. Confirm by reading the SECOND
+fetch too: if it returns {w3, w4} the shift is uniform and the address
+conversion is off by one, rather than a one-off at address zero.
