@@ -847,24 +847,61 @@ always @(posedge clk) begin
 end
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// Debug view map (rev25) -- sound bring-up only.
+// Debug view map (rev26) -- blitter throughput.
 //
-// The video diagnostics were stripped once Bug A and Bug B were fixed: the
-// design had grown past the device (build 41: "requires 4287 LABs but the
-// device contains only 4191"). What remains is the sound investigation.
+// Sound is working, so those views are retired. All values are snapshotted
+// once per 16-view cycle (below), so every nibble on screen belongs to one
+// frame. One unit = 4096 clk or 4096 writes.
 //   0   : {pal_wr, snd_wr, nvram_wr, 1'b0} -- the CPU reached those regions
-//   1-2 : ES5506 register writes by the 6809
-//   3   : ACTV, the voice count the driver programmed
-//   4   : {3'd0, any voice ever had STOP clear}
-//   5-6 : voice 0 CR low byte (bits 1:0 = STOP1/STOP0; 3 = still stopped)
-//   7-8 : CR (register 0) writes by the driver -- 0 means it never even
-//         attempts to start a voice
-//   9-A : NVRAM volume byte (0x14) as restored from SD -- 0 means no restore
-//         ever happened, 0x1E means the firmware pushed the saved value in
-//   B-C : page that CR write targeted (the voice number)
-//   D-E : sound commands read by the 6809
-//   F   : peak |snd_left| high nibble (0 = no audio produced)
+//   1-2 : VRAM writes this frame       (full background 92,160 = 0x16)
+//   3-4 : blitter busy clk             (a whole frame 871,728 = 0xD4)
+//   5-6 : ...of which stalled on a GROM fetch   (sftm_blit.v:302)
+//   7-8 : ...of which stalled on the write FIFO (sftm_blit.v:359)
+//   9   : blits started this frame
+//   A-C : vram / grom0 / grom1 lane {req_ever, ok_ever, stuck, -}
+//   D   : sound commands read by the 6809
+//   E   : ACTV, the voice count the driver programmed
+//   F   : peak |snd_left| high nibble
+//
+// S_PIX advances one pixel per clock exactly when fetch_ok && vw_free, so
+// busy = productive + fetch stall + write stall. Whichever stall dominates is
+// the bottleneck; if neither does, the blitter is issuing flat out and the
+// scene simply does not fit in a frame.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Display snapshot.
+//
+// The meters update every frame (~17 ms) but a view is on screen for ~87 ms,
+// so consecutive views are read from DIFFERENT frames. Splitting an 8-bit
+// counter across two views therefore pairs a high nibble from one frame with a
+// low nibble from another, and the result is not a number that ever existed:
+// build 70 read bbusy=0x30 and bstw=0xD1, i.e. a write stall longer than the
+// busy time that contains it, which sftm_blit.v:359 makes impossible.
+//
+// Latching all of them once per 16-view cycle makes every nibble on screen come
+// from the same frame. This is the same coherence rule sftm_video.v:160 already
+// states for the counters themselves.
+// ---------------------------------------------------------------------------
+reg [7:0] sn_bwr, sn_bbusy, sn_bwait, sn_bstw;
+reg [3:0] sn_bnum;
+reg [3:0] view_d;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        sn_bwr <= 0; sn_bbusy <= 0; sn_bwait <= 0; sn_bstw <= 0; sn_bnum <= 0;
+        view_d <= 0;
+    end else begin
+        view_d <= view;
+        if( view == 4'h0 && view_d != 4'h0 ) begin
+            sn_bwr   <= dbg_bwr;
+            sn_bbusy <= dbg_bbusy;
+            sn_bwait <= dbg_bwait;
+            sn_bstw  <= dbg_bstw;
+            sn_bnum  <= dbg_bnum;
+        end
+    end
+end
+
 assign st_dout =
     // Throughput panel, CURRENT frame (sftm_video latches every frame_end).
     // One unit = 4096 clk or writes:
@@ -877,15 +914,15 @@ assign st_dout =
     // dominates is the bottleneck; if neither does, the blitter is issuing
     // pixels as fast as it can and the scene is simply too big for the frame.
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_bwr  [7:4] } :
-    view == 4'h2 ? { 4'h2, dbg_bwr  [3:0] } :
-    view == 4'h3 ? { 4'h3, dbg_bbusy[7:4] } :
-    view == 4'h4 ? { 4'h4, dbg_bbusy[3:0] } :
-    view == 4'h5 ? { 4'h5, dbg_bwait[7:4] } :  // GROM fetch stall
-    view == 4'h6 ? { 4'h6, dbg_bwait[3:0] } :
-    view == 4'h7 ? { 4'h7, dbg_bstw [7:4] } :  // VRAM write-FIFO stall
-    view == 4'h8 ? { 4'h8, dbg_bstw [3:0] } :
-    view == 4'h9 ? { 4'h9, dbg_bnum       } :  // blits started this frame
+    view == 4'h1 ? { 4'h1, sn_bwr  [7:4] } :
+    view == 4'h2 ? { 4'h2, sn_bwr  [3:0] } :
+    view == 4'h3 ? { 4'h3, sn_bbusy[7:4] } :
+    view == 4'h4 ? { 4'h4, sn_bbusy[3:0] } :
+    view == 4'h5 ? { 4'h5, sn_bwait[7:4] } :  // GROM fetch stall
+    view == 4'h6 ? { 4'h6, sn_bwait[3:0] } :
+    view == 4'h7 ? { 4'h7, sn_bstw [7:4] } :  // VRAM write-FIFO stall
+    view == 4'h8 ? { 4'h8, sn_bstw [3:0] } :
+    view == 4'h9 ? { 4'h9, sn_bnum        } :  // blits started this frame
     view == 4'hA ? { 4'hA, dbg_lvram      } :
     view == 4'hB ? { 4'hB, dbg_lgrom0     } :
     view == 4'hC ? { 4'hC, dbg_lgrom1     } :
