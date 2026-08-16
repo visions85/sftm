@@ -41,6 +41,18 @@ clocks:
         - snd
 
 sdram:
+  # DO NOT set `big_endian: true` here hoping to fix 32-bit lane word order.
+  # It looks exactly like the right knob -- jtframe rejects it outside
+  # cache-lanes (mem.go:629), it reaches only 32-bit lanes (game_sdram.v:403,
+  # i.e. exactly main and vram), and jtframe_dual_ram32 documents ENDIAN=0 as
+  # "little endian: low byte comes first".
+  #
+  # But ENDIAN in jtframe_dual_ram32 is consumed ONLY as SIMFILE_BYTE, which
+  # picks which byte of a simulation hex file initialises each byte-RAM. The
+  # data path is straight through and identical either way: data0[7:0]->u_byte0
+  # with we0[0] and q0[7:0], for both ENDIAN values. It is a SIMULATION-ONLY
+  # knob and changes nothing on hardware. Checked 2026-08-16.
+
   # cache-lanes, not banks: they are mutually exclusive so the whole map
   # converts. The reason is the vram lane. A plain rw slot is capped at 16 bits
   # (jtframe_ram_rq takes read data as din[0+:DW] off the 16-bit data_read bus
