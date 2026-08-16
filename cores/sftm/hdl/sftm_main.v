@@ -599,6 +599,57 @@ TG68KdotC_Kernel #(
 // ---------------------------------------------------------------------------
 // Hardware bring-up diagnostics (Phase 4, revision 2).
 //
+// ---------------------------------------------------------------------------
+// Main-ROM lane probe (cache-lanes bring-up)
+//
+// Builds 60 and 61 render black and the overlay's view counter never gets past
+// 4, so diag_cnt is reset every ~3.5 s: a watchdog reboot loop, which means the
+// 68020 never runs. The watchdog reset clears these counters too, but a first
+// instruction fetch takes microseconds and the window is seconds, so whatever
+// the CPU manages before each reboot is captured.
+//
+// Ground truth from the ROM: maindata starts 00 00 80 00 00 80 04 00, so the
+// reset SP longword at address 0 is 0x00008000 and the PC longword is
+// 0x00800400. The first fetch is therefore rom_addr 0 and its data must carry
+// 0x8000 in one half.
+//
+// The three cases this separates:
+//   cs_ever=0            the CPU never even requests -- not a memory problem
+//   cs_ever=1, ok_ever=0 the lane never answers: handshake mismatch, since
+//                        sftm_main's read sequence was written for
+//                        jtframe_romrq ("hold cs, settle, sample ok")
+//   ok_ever=1, data 0    the lane answers with nothing: the download did not
+//                        land where the lane looks, or the cache served a
+//                        block filled before the ROM arrived
+// ---------------------------------------------------------------------------
+reg        m_cs_ever, m_ok_ever, m_got, m_data_nz;
+reg [15:0] m_first;
+reg [15:0] m_cnt, m_stall, stall_run;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        m_cs_ever <= 0; m_ok_ever <= 0; m_got <= 0; m_data_nz <= 0;
+        m_first   <= 0; m_cnt <= 0; m_stall <= 0; stall_run <= 0;
+    end else begin
+        if( rom_cs ) m_cs_ever <= 1'b1;
+        if( rom_ok ) m_ok_ever <= 1'b1;
+        if( rom_cs && rom_ok ) begin
+            if( ~&m_cnt ) m_cnt <= m_cnt + 16'd1;
+            if( |rom_data ) m_data_nz <= 1'b1;
+            if( !m_got ) begin
+                m_first <= rom_data[15:0];
+                m_got   <= 1'b1;
+            end
+        end
+        // longest run of cs high without ok -- a hung handshake shows here
+        if( rom_cs && !rom_ok ) begin
+            stall_run <= stall_run + 16'd1;
+            if( stall_run > m_stall ) m_stall <= stall_run;
+        end else
+            stall_run <= 16'd0;
+    end
+end
+
 // JTFRAME renders st_dout as two hex digits over the game image (debug_view,
 // jtframe_debug.v:50; the viewmux defaults to debug_view with sel=0). OSD
 // buttons are not reachable over SSH, so the display AUTO-CYCLES 16 views.
@@ -826,14 +877,14 @@ end
 // ---------------------------------------------------------------------------
 assign st_dout =
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, dbg_gpen[3:0]   } :  // bad pen: pixel byte lo
-    view == 4'h2 ? { 4'h2, dbg_gpen[7:4]   } :  // bad pen: pixel byte hi
-    view == 4'h3 ? { 4'h3, dbg_gpen[11:8]  } :  // bad pen: colour latch [3:0]
-    view == 4'h4 ? { 4'h4, 1'b0, dbg_gpen[14:12] } : // colour latch [6:4]
-    view == 4'h5 ? { 4'h5, dbg_gmulti, dbg_palhit, dbg_gseen, 1'b0 } :
-    view == 4'h6 ? { 4'h6, dbg_gcnt      } :   // control: green px/frame /256
-    view == 4'h7 ? { 4'h7, dbg_palcnt[3:0] } :   // palette writes /256 lo
-    view == 4'h8 ? { 4'h8, dbg_palcnt[7:4] } :   // palette writes /256 hi
+    view == 4'h1 ? { 4'h1, m_cs_ever, m_ok_ever, m_got, m_data_nz } :
+    view == 4'h2 ? { 4'h2, m_cnt[3:0]   } :   // completed fetches, low
+    view == 4'h3 ? { 4'h3, m_cnt[7:4]   } :   // completed fetches, high
+    view == 4'h4 ? { 4'h4, m_first[3:0] } :   // first rom_data[3:0]
+    view == 4'h5 ? { 4'h5, m_first[7:4]  } :
+    view == 4'h6 ? { 4'h6, m_first[11:8] } :
+    view == 4'h7 ? { 4'h7, m_first[15:12] } :  // first rom_data[15:12]
+    view == 4'h8 ? { 4'h8, m_stall[11:8]  } :  // longest cs-without-ok /256
     view == 4'h9 ? { 4'h9, st_nv14[3:0] } :
     view == 4'hA ? { 4'hA, st_nv14[7:4] } :
     view == 4'hB ? { 4'hB, dbg_crp[3:0] } :
