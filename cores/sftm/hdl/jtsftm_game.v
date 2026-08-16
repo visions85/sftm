@@ -55,7 +55,7 @@ wire [ 6:0] dbg_crp;
 wire [ 4:0] dbg_actv;
 wire        dbg_anyrun;
 wire [15:0] dbg_peak;
-wire [7:0] dbg_bbusy, dbg_bwait, dbg_bwr, dbg_bgf, dbg_bstw;
+wire [3:0] dbg_bbusy, dbg_bwait, dbg_bwr, dbg_bgf, dbg_bstw;
 wire [3:0] dbg_bnum;
 wire [14:0] dbg_gpen;
 wire        dbg_gseen, dbg_gmulti, dbg_palhit;

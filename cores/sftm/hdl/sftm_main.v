@@ -125,11 +125,11 @@ module sftm_main #(
     input      [ 7:0] dbg_crv,
     input      [ 6:0] dbg_crp,
     // blitter throughput (see sftm_video.v)
-    input      [ 7:0] dbg_bbusy,
-    input      [ 7:0] dbg_bwait,
-    input      [ 7:0] dbg_bwr,
-    input      [ 7:0] dbg_bgf,
-    input      [ 7:0] dbg_bstw,
+    input      [ 3:0] dbg_bbusy,
+    input      [ 3:0] dbg_bwait,
+    input      [ 3:0] dbg_bwr,
+    input      [ 3:0] dbg_bgf,
+    input      [ 3:0] dbg_bstw,
     input      [ 3:0] dbg_bnum,
     // per-lane liveness, {req_ever, ok_ever, stuck, -} (see jtsftm_game.v)
     input      [ 3:0] dbg_lsnd,
@@ -859,16 +859,23 @@ end
 // Sound is working, so those views are retired. All values are snapshotted
 // once per 16-view cycle (below), so every nibble on screen belongs to one
 // frame. One unit = 4096 clk or 4096 writes.
-//   0   : {pal_wr, snd_wr, nvram_wr, 1'b0} -- the CPU reached those regions
-//   1-2 : VRAM writes this frame       (full background 92,160 = 0x16)
-//   3-4 : blitter busy clk             (a whole frame 871,728 = 0xD4)
-//   5-6 : ...of which stalled on a GROM fetch   (sftm_blit.v:302)
-//   7-8 : ...of which stalled on the write FIFO (sftm_blit.v:359)
-//   9   : blits started this frame
-//   A-C : vram / grom0 / grom1 lane {req_ever, ok_ever, stuck, -}
-//   D   : sound commands read by the 6809
-//   E   : ACTV, the voice count the driver programmed
-//   F   : peak |snd_left| high nibble
+//   0 : {pal_wr, snd_wr, nvram_wr, 1'b0} -- the CPU reached those regions
+//   1 : VRAM writes this frame / 8192   -- one full background = 0xB
+//   2 : blitter busy clk      / 65536   -- a whole frame       = 0xD
+//   3 : ...of which stalled on a GROM fetch   / 65536 (sftm_blit.v:302)
+//   4 : ...of which stalled on the write FIFO / 65536 (sftm_blit.v:359)
+//   5 : blits started this frame
+//   6 : GROM fetch completions / 8192
+//   7-9 : vram / grom0 / grom1 lane {req_ever, ok_ever, stuck, -}
+//   A : sound commands read by the 6809
+//   B : ACTV, the voice count the driver programmed
+//   C : peak |snd_left| high nibble
+//
+// Every view is ONE self-contained number. They were briefly 8-bit across two
+// views each; consecutive views come from different snapshots, so the halves
+// never belonged to the same frame and the pair could read as a write count
+// larger than the busy time containing it. Views 2, 3 and 4 share units, so
+// the two stalls compare directly against busy without any arithmetic.
 //
 // S_PIX advances one pixel per clock exactly when fetch_ok && vw_free, so
 // busy = productive + fetch stall + write stall. Whichever stall dominates is
@@ -889,7 +896,7 @@ end
 // from the same frame. This is the same coherence rule sftm_video.v:160 already
 // states for the counters themselves.
 // ---------------------------------------------------------------------------
-reg [7:0] sn_bwr, sn_bbusy, sn_bwait, sn_bstw;
+reg [3:0] sn_bwr, sn_bbusy, sn_bwait, sn_bstw;
 reg [3:0] sn_bnum;
 reg [3:0] view_d;
 reg [1:0] cyc;
@@ -925,20 +932,20 @@ assign st_dout =
     // dominates is the bottleneck; if neither does, the blitter is issuing
     // pixels as fast as it can and the scene is simply too big for the frame.
     view == 4'h0 ? { 4'h0, sf_pal_wr, sf_snd_wr, sf_nvram_wr, 1'b0 } :
-    view == 4'h1 ? { 4'h1, sn_bwr  [7:4] } :
-    view == 4'h2 ? { 4'h2, sn_bwr  [3:0] } :
-    view == 4'h3 ? { 4'h3, sn_bbusy[7:4] } :
-    view == 4'h4 ? { 4'h4, sn_bbusy[3:0] } :
-    view == 4'h5 ? { 4'h5, sn_bwait[7:4] } :  // GROM fetch stall
-    view == 4'h6 ? { 4'h6, sn_bwait[3:0] } :
-    view == 4'h7 ? { 4'h7, sn_bstw [7:4] } :  // VRAM write-FIFO stall
-    view == 4'h8 ? { 4'h8, sn_bstw [3:0] } :
-    view == 4'h9 ? { 4'h9, sn_bnum        } :  // blits started this frame
-    view == 4'hA ? { 4'hA, dbg_lvram      } :
-    view == 4'hB ? { 4'hB, dbg_lgrom0     } :
-    view == 4'hC ? { 4'hC, dbg_lgrom1     } :
-    view == 4'hD ? { 4'hD, dbg_cmdr[3:0]  } :
-    view == 4'hE ? { 4'hE, dbg_actv[3:0]  } :
+    view == 4'h1 ? { 4'h1, sn_bwr         } :  // writes /8192,  background 0xB
+    view == 4'h2 ? { 4'h2, sn_bbusy       } :  // busy   /65536, frame      0xD
+    view == 4'h3 ? { 4'h3, sn_bwait       } :  // GROM fetch stall, same units
+    view == 4'h4 ? { 4'h4, sn_bstw        } :  // write-FIFO stall, same units
+    view == 4'h5 ? { 4'h5, sn_bnum        } :  // blits started this frame
+    view == 4'h6 ? { 4'h6, dbg_bgf        } :
+    view == 4'h7 ? { 4'h7, dbg_lvram      } :
+    view == 4'h8 ? { 4'h8, dbg_lgrom0     } :
+    view == 4'h9 ? { 4'h9, dbg_lgrom1     } :
+    view == 4'hA ? { 4'hA, dbg_cmdr[3:0]  } :
+    view == 4'hB ? { 4'hB, dbg_actv[3:0]  } :
+    view == 4'hC ? { 4'hC, dbg_lgrm3      } :
+    view == 4'hD ? { 4'hD, dbg_lsrom      } :
+    view == 4'hE ? { 4'hE, dbg_lsnd       } :
                    { 4'hF, dbg_peak[15:12] };
 
 // verilator lint_off UNUSEDSIGNAL

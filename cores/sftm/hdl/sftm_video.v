@@ -98,17 +98,17 @@ module sftm_video(
     // Blitter throughput, for the truncated-background investigation. All
     // three counts are in the SAME units (cycles/65536) so they compare
     // directly; a 384x240 frame is 800k clk, i.e. about 12 units.
-    output reg [ 7:0] st_bbusy,   // cycles the blitter was busy
-    output reg [ 7:0] st_bwait,   // ...of which stalled on a GROM fetch
+    output reg [ 3:0] st_bbusy,   // cycles the blitter was busy
+    output reg [ 3:0] st_bwait,   // ...of which stalled on a GROM fetch
     // RATE meters, not stall flags. A "stalled on the write port" reading
     // (busy && !vw_free) saturates the moment the blitter runs -- it produces
     // pixels faster than any SDRAM absorbs them, so the FIFO is always full
     // and the reading is 12 whether writes drain at 9 clk or 2227. That is
     // why the arbiter rework showed no change on the old counter. These count
     // work COMPLETED instead, in units of 8192 per frame.
-    output reg [ 7:0] st_bwr,     // VRAM writes issued
-    output reg [ 7:0] st_bgf,     // GROM words fetched
-    output reg [ 7:0] st_bstw,    // ...stalled on the VRAM write FIFO
+    output reg [ 3:0] st_bwr,     // VRAM writes issued
+    output reg [ 3:0] st_bgf,     // GROM words fetched
+    output reg [ 3:0] st_bstw,    // ...stalled on the VRAM write FIFO
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
     output reg [14:0] st_gpen,     // pen from the frame with the most green
@@ -193,14 +193,21 @@ always @(posedge clk) begin
             // typical behaviour off it is not possible.
             //
             // Now [19:12], so one unit is 4096 rather than 8192/65536:
-            //   writes for one full background = 92,160 = 0x16 units
-            //   a whole frame of busy          = 871,728 = 0xD4 units
-            st_bbusy <= bc_busy[19:12];
-            st_bwait <= bc_wait[19:12];
-            st_bwr   <= bc_wr  [19:12];
-            st_bgf   <= bc_gf  [19:12];
+            // SINGLE NIBBLE each, deliberately. Widening these to 8 bits meant
+            // showing them as two views, and consecutive views are sampled from
+            // different snapshots, so the halves never belonged to the same
+            // number -- that is what produced a write count larger than the busy
+            // time containing it. One self-contained nibble per view cannot be
+            // mispaired.
+            //   bwr   in units of 8192 : one full background 92,160 = 11 (0xB)
+            //   busy  in units of 65536: a whole frame       871,728 = 13 (0xD)
+            //   wait/stw same units as busy, so they compare directly to it
+            st_bbusy <= bc_busy[19:16];
+            st_bwait <= bc_wait[19:16];
+            st_bwr   <= bc_wr[19:13] > 7'd15 ? 4'd15 : bc_wr[16:13];
+            st_bgf   <= bc_gf[19:13] > 7'd15 ? 4'd15 : bc_gf[16:13];
             st_bnum  <= bc_num;
-            st_bstw  <= bc_stw [19:12];
+            st_bstw  <= bc_stw [19:16];
             bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0; bc_num <= 0;
             bc_stw  <= 0;
         end else begin
