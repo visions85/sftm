@@ -68,7 +68,7 @@ sftm_main u_main(
 
     .rom_addr     ( main_addr     ),
     .rom_data     ( main_data     ),
-    .rom_cs       ( main_rd       ),
+    .rom_cs       ( main_cs       ),
     .rom_ok       ( main_ok       ),
 
     .joystick1    ( joystick1     ),
@@ -164,15 +164,15 @@ sftm_video u_video(
 
     .grom0_addr   ( grom0_addr    ),
     .grom0_data   ( grom0_data    ),
-    .grom0_rd     ( grom0_rd      ),
+    .grom0_cs     ( grom0_cs      ),
     .grom0_ok     ( grom0_ok      ),
     .grom1_addr   ( grom1_addr    ),
     .grom1_data   ( grom1_data    ),
-    .grom1_rd     ( grom1_rd      ),
+    .grom1_cs     ( grom1_cs      ),
     .grom1_ok     ( grom1_ok      ),
     .grm3_addr    ( grm3_addr     ),
     .grm3_data    ( grm3_data     ),
-    .grm3_rd      ( grm3_rd       ),
+    .grm3_cs      ( grm3_cs       ),
     .grm3_ok      ( grm3_ok       ),
 
     // VRAM SDRAM bus (mem.yaml `vram`, bank 3; ports appear in
@@ -182,8 +182,12 @@ sftm_video u_video(
     .vram_din     ( vram_din      ),
     .vram_dsn     ( vram_dsn      ),
     .vram_we      ( vram_we       ),
-    .vram_rd      ( vram_rd       ),
+    .vram_cs      ( vram_cs       ),
     .vram_ok      ( vram_ok       ),
+    .vramrd_addr  ( vramrd_addr   ),
+    .vramrd_data  ( vramrd_data   ),
+    .vramrd_cs    ( vramrd_cs     ),
+    .vramrd_ok    ( vramrd_ok     ),
 
     .vblank_irq   ( vblank_irq    ),
     .blit_irq     ( blit_irq      ),
@@ -220,12 +224,12 @@ sftm_snd u_snd(
 
     .rom_addr     ( snd_addr      ),
     .rom_data     ( snd_data      ),
-    .rom_cs       ( snd_rd        ),
+    .rom_cs       ( snd_cs        ),
     .rom_ok       ( snd_ok        ),
 
     .srom_addr    ( srom_addr     ),
     .srom_data    ( srom_data     ),
-    .srom_rd      ( srom_rd       ),
+    .srom_cs      ( srom_cs       ),
     .srom_ok      ( srom_ok       ),
 
     .snd_latch1   ( snd_latch1    ),

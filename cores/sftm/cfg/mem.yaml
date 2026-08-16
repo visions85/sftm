@@ -41,67 +41,98 @@ clocks:
         - snd
 
 sdram:
-  # cache-lanes, not banks: they are mutually exclusive so the whole map
-  # converts. The reason is the vram lane. A plain rw slot is capped at 16 bits
-  # (jtframe_ram_rq takes read data as din[0+:DW] off the 16-bit data_read bus
-  # and special-cases only DW==8) and data_width: 32 on a plain bus is SILENTLY
-  # DOWNGRADED. A cache lane gives real 32-bit rw with four byte enables, and
-  # more importantly a block cache: the blitter writes pixels sequentially
-  # along a row, so writes to one 256-byte block coalesce instead of paying an
-  # SDRAM transaction per 16-bit pixel.
+  banks:
+    # ---- bank 0: program + sound CPU + ES5506 samples -------------------
+    - buses:
+        - name: main          # 68EC020 program, 32-bit ("prog" is reserved by JTFRAME for the download port)
+          addr_width: 20       # 1 MB -> port [19:2]
+          data_width: 32
+        # NOTE: jtframe_rom_2slots defaults SLOT1_OFFSET to 0, and this
+        # generator cannot express a non-zero offset (see the vramrd comment
+        # below), so every bus in a bank starts at word 0 and they OVERLAP.
+        # The download puts soundcpu at bank-0 byte 0x100000, right after
+        # maindata's 1 MB, so sftm_snd biases its address by that amount and
+        # the bus is widened to 2 MB to make room. Without the bias the 6809
+        # was fetching the 68020's program ROM.
+        - name: snd           # 6809 program, 8-bit
+          addr_width: 21       # 2 MB window -> port [20:0]; data at +0x100000
+          data_width: 8
+        # ES5506 samples, biased by SROM_ORG (0x150000) in sftm5506.v -- the
+        # download puts ensoniq.0 there and bank 0 starts at stream byte 0.
+        # 4 MB window so the bus can reach srom3 at +0x350000.
+        - name: srom
+          addr_width: 22       # 4 MB window -> port [21:1]; data at +0x150000
+          data_width: 16
+    # ---- bank 1: blitter graphics, rm0 half (grom 0x0000000-0x0FFFFFF) --
+    - buses:
+        - name: grom0
+          addr_width: 24       # 16 MB -> port [23:1]; exactly fills the bank
+          data_width: 16
+    # ---- bank 2: blitter graphics, rm1 half (grom 0x1000000-0x1FFFFFF) --
+    - buses:
+        - name: grom1
+          addr_width: 24       # 16 MB -> port [23:1]; exactly fills the bank
+          data_width: 16
+    # ---- bank 3: VRAM + extra graphics plane ----------------------------
+    # VRAM first: the vendored jtframe's ram1_2slots implements the R/W
+    # capability on slot 0, and jtframe mem assigns slots in bus order.
+    - buses:
+        # VRAM: 2 planes x 512x1024 x 16-bit pen (pixel|color, as MAME stores
+        # it -- see doc/PHASE2-DESIGN.md). 2 MB cannot fit in BRAM.
+        # grm3 sits at bank-3 word 0 (that is where the download writes it)
+        # and its slot offset is 0, so VRAM must NOT also start at 0 -- it did,
+        # and the blitter was overwriting the glyph ROM while grm3 reads
+        # returned framebuffer pixels. That was the glyph checkerboard.
+        # sftm_vram biases VRAM by VRAM_ORG (0x40000 words = 512 KB, clear of
+        # grm3) and the bus is widened to 4 MB to make room.
+        - name: vram
+          addr_width: 22       # 4 MB window -> port [21:1]; VRAM at +0x40000
+          data_width: 16
+          rw: true
+        # Second, READ-ONLY 32-bit view of the same 2 MB, for the scanline
+        # prefetch. The prefetch needs 384 words per line and a line is only
+        # 508*6 = 3048 clk, a budget of 7.9 clk/word that a 16-bit single-word
+        # read cannot meet (see doc/PORTING.md "Bug A"). A 32-bit read returns
+        # two pixels per SDRAM access, halving accesses to 192 and doubling the
+        # budget to 15.9 clk/word. `offset: 0` aliases it onto `vram`, so it is
+        # the same memory. Coherence is a non-issue: this slot's cache holds
+        # two entries and the prefetch sweeps linearly, so any address is long
+        # evicted before the next frame reads it again.
+        - name: vramrd
+          addr_width: 22       # 4 MB window -> port [21:2] at 32 bits
+          data_width: 32
+          # offset must be ZERO to alias the vram bus, but `jtframe mem`
+          # renders it as "<offset>[SDRAMW-2:0]", so a literal 0 emits
+          # 0[SDRAMW-2:0] -- a bit-select on a bare literal, which both
+          # Icarus and Quartus reject (Error 10170). The value therefore has
+          # to be a bare identifier, and PROM_START is the one in scope that
+          # is zero: the generated wrapper declares
+          #   localparam [25:0] PROM_START =
+          #       `ifdef JTFRAME_PROM_START `JTFRAME_PROM_START
+          #       `else 26'd0 `endif;
+          # and this core defines no PROM region, so JTFRAME_PROM_START is
+          # undefined and PROM_START is 0. If a PROM region is ever added in
+          # cfg/macros.def this alias silently moves and the screen fills
+          # with garbage -- update this line at the same time.
+          offset: "PROM_START"
+        - name: grm3
+          addr_width: 19       # 512 KB -> port [18:1]
+          data_width: 16
+
+  # Battery-backed NVRAM (0x600000-0x61ffff, 128 KB on the real board).
+  # MiSTer firmware mishandles NVRAM dumps of 64 kB and above (see
+  # modules/jtframe/doc/sdram.md), so only the low 32 KB is persisted. That is
+  # where the operator settings live: a MAME dump diff shows changing the
+  # volume touches just 5 bytes in 0x00014..0x000B4, and the first 64 bytes
+  # hold two 32-byte setting records with their own checksums -- so a partial
+  # restore is self-consistent. The upper 96 KB stays in plain BRAM inside
+  # sftm_main; it holds high-entropy scratch the game refills.
   #
-  # Build 56 measured ~65k writes/frame against 92,160 for one background, so
-  # the blitter never finishes a frame -- which is both the low frame rate and
-  # the background streaks (transient partial-redraw content).
-  #
-  # NOTE: `at.offset` is in 16-bit WORDS, not bytes (mem.go computes
-  # offset_bytes := offset_words << 1). Byte offsets here are half these values.
-  #
-  # Also: jtframe emits this offset verbatim as C hex, which is not Verilog.
-  # docker/entrypoint.sh patches mem.go to convert it. rw lanes must be among
-  # the first four.
-  #
-  # No flush interface: EVERY VRAM access -- prefetch, blitter reads, blitter
-  # writes -- now goes through this one cache, so coherency is automatic and
-  # nothing else ever reads VRAM out of SDRAM behind it.
-  #
-  # vramrd is GONE: it existed only to read two pixels per access through a
-  # read-only 32-bit alias. The vram lane is 32-bit itself and now serves the
-  # prefetch, the blitter reads and the blitter writes through ONE cache, which
-  # also removes the read/write coherency question.
-  cache-lanes:
-    - name: vram          # byte 0x80000 in bank 3, past grm3's 512 kB
-      data_width: 32
-      rw: true
-      blocks: { count: 64, size: 256 }
-      at: { bank: 3, offset: "0x40000", length: 2MB }
-    - name: grm3
-      data_width: 16
-      rw: false
-      blocks: { count: 8, size: 256 }
-      at: { bank: 3, offset: "0x0", length: 512kB }
-    - name: main
-      data_width: 32
-      rw: false
-      blocks: { count: 16, size: 256 }
-      at: { bank: 0, offset: "0x0", length: 1MB }
-    - name: snd           # byte 0x100000
-      data_width: 8
-      rw: false
-      blocks: { count: 8, size: 256 }
-      at: { bank: 0, offset: "0x80000", length: 512kB }
-    - name: srom          # byte 0x150000
-      data_width: 16
-      rw: false
-      blocks: { count: 16, size: 256 }
-      at: { bank: 0, offset: "0xA8000", length: 4MB }
-    - name: grom0
-      data_width: 16
-      rw: false
-      blocks: { count: 32, size: 256 }
-      at: { bank: 1, offset: "0x0", length: 16MB }
-    - name: grom1
-      data_width: 16
-      rw: false
-      blocks: { count: 32, size: 256 }
-      at: { bank: 2, offset: "0x0", length: 16MB }
+  # NOT declared as a `bram` with `ioctl: save` here: this jtframe's generator
+  # emits a broken restore path. It computes the muxed write signals
+  # (nvram_dimx / nvram_wemx) but wires the BRAM's data/we to the RAW game
+  # signals and passes we0 = 2'd0 to the dump module, so the two muxed outputs
+  # are consumed by nothing. Saving would work and restoring would silently do
+  # nothing. sftm_main therefore drives the documented ioctl interface
+  # (JTFRAME_IOCTL_RD + ioctl_ram/ioctl_din/ioctl_dout) against its own BRAM.
+

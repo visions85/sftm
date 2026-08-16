@@ -85,24 +85,21 @@ end
 // ---------------------------------------------------------------------------
 // VRAM model (write side only; the read port returns the stored word)
 // ---------------------------------------------------------------------------
-// 32-bit cache lane. vmem stays 16-bit-per-pen so the checks below are
-// unchanged; the lane addresses PAIRS of pens.
-wire [20:2] vram_addr;
-wire [31:0] vram_data, vram_din;
-wire [ 3:0] vram_dsn;
-wire        vram_we, vram_rd;
-// the lane services a request when EITHER strobe is up; modelling only rd
-// would re-encode the bug that made build 60 render a black screen
-wire        vram_req = vram_rd | vram_we;
+wire [21:1] vram_addr;
+wire [15:0] vram_data, vram_din;
+wire [ 1:0] vram_dsn;
+wire        vram_we, vram_cs;
 reg         vram_ok = 1;
+wire [21:2] vramrd_addr;
+wire        vramrd_cs;
+reg         vramrd_ok = 1;
 
 reg [15:0] vmem[0:1048575];
-assign vram_data = { vmem[{vram_addr,1'b1}], vmem[{vram_addr,1'b0}] };
-always @(posedge clk) if( vram_req && vram_we ) begin
-    if( !vram_dsn[0] ) vmem[{vram_addr,1'b0}][ 7:0] <= vram_din[ 7:0];
-    if( !vram_dsn[1] ) vmem[{vram_addr,1'b0}][15:8] <= vram_din[15:8];
-    if( !vram_dsn[2] ) vmem[{vram_addr,1'b1}][ 7:0] <= vram_din[23:16];
-    if( !vram_dsn[3] ) vmem[{vram_addr,1'b1}][15:8] <= vram_din[31:24];
+assign vram_data   = vmem[vram_addr];
+wire [31:0] vramrd_data = { vmem[{vramrd_addr,1'b1}], vmem[{vramrd_addr,1'b0}] };
+always @(posedge clk) if( vram_cs && vram_we ) begin
+    if( !vram_dsn[0] ) vmem[vram_addr][ 7:0] <= vram_din[ 7:0];
+    if( !vram_dsn[1] ) vmem[vram_addr][15:8] <= vram_din[15:8];
 end
 
 reg  [23:1] cpu_addr = 0;
@@ -126,11 +123,13 @@ sftm_video u_video(
     .vreg_dout(vreg_dout), .pal_dout(pal_dout), .cpu_wait(vid_wait),
     .plane_en(2'b11), .grom_bank(grom_bank),
     .color_latch0(PEN0), .color_latch1(7'h00),
-    .grom0_addr(grom0_addr), .grom0_data(grom0_data), .grom0_rd(grom0_cs), .grom0_ok(grom0_ok),
-    .grom1_addr(grom1_addr), .grom1_data(grom1_data), .grom1_rd(grom1_cs), .grom1_ok(grom1_ok),
-    .grm3_addr(grm3_addr),   .grm3_data(grm3_data),   .grm3_rd(grm3_cs),   .grm3_ok(grm3_ok),
+    .grom0_addr(grom0_addr), .grom0_data(grom0_data), .grom0_cs(grom0_cs), .grom0_ok(grom0_ok),
+    .grom1_addr(grom1_addr), .grom1_data(grom1_data), .grom1_cs(grom1_cs), .grom1_ok(grom1_ok),
+    .grm3_addr(grm3_addr),   .grm3_data(grm3_data),   .grm3_cs(grm3_cs),   .grm3_ok(grm3_ok),
     .vram_addr(vram_addr), .vram_data(vram_data), .vram_din(vram_din),
-    .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_rd(vram_rd), .vram_ok(vram_ok),
+    .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_cs(vram_cs), .vram_ok(vram_ok),
+    .vramrd_addr(vramrd_addr), .vramrd_data(vramrd_data),
+    .vramrd_cs(vramrd_cs), .vramrd_ok(vramrd_ok),
     .vblank_irq(vblank_irq), .blit_irq(blit_irq), .scan_irq(scan_irq),
     .HS(HS), .VS(VS), .LHBL(LHBL), .LVBL(LVBL),
     .red(red), .green(green), .blue(blue),
@@ -182,7 +181,7 @@ task run_case(input [1:0] bank, input integer row, input [7:0] want_pen,
         repeat(200) @(posedge clk);
 
         // top-left pixel of the glyph is always opaque -> carries the pen
-        a   = row*512 + BX;
+        a   = 20'h40000 + row*512 + BX;
         got = vmem[a];
         if( got[7:0] !== want_pen ) begin
             fails = fails + 1;

@@ -79,6 +79,21 @@ if [ -f "${JTMEM}" ] && ! grep -q "sftm: verilog hex" "${JTMEM}"; then
     fi
 fi
 
+# FASTWR=1 on the bank-3 rw slot (vram).
+#
+# jtframe_ram_rq acks a write only when din_ok arrives, i.e. after the full
+# SDRAM round trip, so sftm_vram waits out every write before issuing the next.
+# With FASTWR the ack comes as soon as the slot mux GRANTS the write
+# (`if( FASTWR && !req_rnw ) data_ok <= 1;`) -- the burst still happens, we just
+# stop blocking on it. Measured on build 56: ~65k writes/frame against the
+# 92,160 one background needs.
+#
+# jtframe_ram1_3slots does not expose the parameter and mem.yaml has no field
+# for it, so patch the instantiation. Read-after-write ordering still holds:
+# reads wait for the write FIFO to drain and then travel through the SAME slot,
+# whose req/pending logic serialises them behind the in-flight write.
+sed -i 's/jtframe_ram_rq #(.SDRAMW(SDRAMW),.AW(SLOT0_AW),.DW(SLOT0_DW),.ERASE(SLOT0_ERASE)) u_slot0(/jtframe_ram_rq #(.SDRAMW(SDRAMW),.AW(SLOT0_AW),.DW(SLOT0_DW),.ERASE(SLOT0_ERASE),.FASTWR(1)) u_slot0(/' "${JTFRAME_DIR}/hdl/sdram/jtframe_ram1_3slots.v" 2>/dev/null || true
+
 # GAMMA=0: disable gamma correction LUT tables (~2k ALMs saved; no dedicated macro exists)
 sed -i 's/GAMMA=1/GAMMA=0/' "${JTFRAME_DIR}/target/mister/hdl/sys/arcade_video.v" 2>/dev/null || true
 
