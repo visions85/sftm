@@ -1127,3 +1127,39 @@ view and 11 s per cycle, but the watchdog resets diag_cnt every ~3 s, so views
 Speeding the counter to roughly diag_cnt[24:21] (~0.04 s per view, ~0.7 s per
 cycle) fits a whole cycle inside one watchdog period and makes every view
 readable. Do that before adding more probes, or they cannot be read.
+
+### FASTWR: ~2x the write rate, but it breaks pixel correctness
+
+Build 63 enabled FASTWR on the bank-3 rw slot. Measured on hardware:
+
+| | build 59 | build 63 |
+|---|---|---|
+| VRAM writes/frame | 65,536 | >=122,880 (counter saturated) |
+| clk per write | 12.2 | <=6.5 |
+| frames per background | 1.41 | 0.75 -- fits in one frame |
+
+The speed is real and better than predicted: the model said 1.3x because it
+assumed the port stays occupied for the whole burst after each write, and the
+controller evidently pipelines better than that. Every frame now renders full
+height (22/22, versus partial frames before) and the green streaks are gone.
+
+But the picture is covered in dense per-pixel speckle, and the HUD TEXT is
+corrupted too -- small blits were always perfect before, so this is a global
+correctness failure, not a throughput artifact.
+
+The cause is the risk that was reasoned away when the patch went in: blitter
+reads wait for the write FIFO to be empty, but with FASTWR the ack arrives when
+the slot mux grants the write, so the FIFO drains while writes are still in
+flight. The shiftreg and cmd-3 read-modify-write paths then read stale pixels.
+The argument that "the slot serialises them behind the in-flight write" was
+wrong, and tb_vramthru did not catch it because its ordering check writes ONE
+word and reads it back -- with a single write in flight the early ack still
+lands before the read is issued. A real test needs a burst of writes followed
+immediately by a read of an early address in that burst.
+
+Fix direction: reads must wait for writes to be COMMITTED rather than merely
+issued. With an early ack that is no longer observable from the FIFO, so
+sftm_vram would need to count outstanding writes and hold reads until the count
+reaches zero -- which reclaims some, but not all, of the gain.
+
+Build 59 (no FASTWR) remains the deployed core.
