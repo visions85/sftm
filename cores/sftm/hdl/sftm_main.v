@@ -738,7 +738,7 @@ reg [28:0] diag_cnt;
 // still being read from DIFFERENT snapshots even after the snapshot register
 // made each single cycle self-consistent. A capture must fit inside one
 // snapshot lifetime, which is what the ~22 s hold below guarantees.
-wire [3:0] view = diag_cnt[27:24];
+wire [3:0] view = diag_cnt[26:23];
 
 // exception vector longwords (VBR = 0): 0x60 spurious, 0x64/0x68/0x6C autovec
 wire vec60 = A[23:2] == 22'h000018;
@@ -952,7 +952,7 @@ assign st_dout =
     view == 4'h4 ? { 4'h4, sn_bstw        } :  // write-FIFO stall, same units
     view == 4'h5 ? { 4'h5, sn_bnum        } :  // blits started this frame
     view == 4'h6 ? { 4'h6, sn_fper        } :  // ACTUAL frame period /65536, expect 0xD
-    view == 4'h7 ? { 4'h7, dbg_lvram      } :
+    view == 4'h7 ? { 4'h7, 4'h3 } :  // SELF-TEST: middle-view constant
     view == 4'h8 ? { 4'h8, dbg_lgrom0     } :
     view == 4'h9 ? { 4'h9, dbg_lgrom1     } :
     view == 4'hA ? { 4'hA, dbg_cmdr[3:0]  } :
