@@ -54,6 +54,36 @@ fi
 # cannot express this, so patch the default here.
 sed -i 's/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/' "${JTFRAME_DIR}/hdl/sdram/jtframe_ram1_3slots.v" 2>/dev/null || true
 
+# Pin the debug overlay to the GAME's debug_view.
+#
+# jtframe_debug_viewmux muxes three sources on `sel`: the core's debug_view,
+# jtframe_sys_info, and target_info. `sel` advances on debug_toggle, which
+# jtframe_debug_keys.v:52 derives as `!start_n && joy_n[1:0]!=3` -- START held
+# with a fire button -- and `sel` is NOT cleared by rst, only initialised at
+# configuration. Any toggle edge, including one at boot while the joystick
+# lines are still low, moves the overlay onto jtframe_sys_info permanently.
+#
+# sys_info is a free-running counter. Read as the core's "4-bit view tag +
+# 4-bit payload" panel it is indistinguishable from a working one: the high
+# nibble marches 0..F in order and the low nibble varies plausibly. It cost
+# five builds of throughput work here -- every reading was arithmetically
+# impossible (busy longer than its own frame, writes exceeding busy) because
+# none of them were the core's byte. Views 0 and F carry constants 5 and A in
+# sftm_main.v precisely so this is detectable; they read 0x0E and 0xF5.
+#
+# The core has no use for the other two sources, so all three selections show
+# debug_view and the overlay can no longer be knocked off the game's byte by a
+# controller press.
+sed -i 's/SYS_INFO:    mux <= sys_info;/SYS_INFO:    mux <= debug_view;/' \
+    "${JTFRAME_DIR}/hdl/debug/jtframe_debug_viewmux.v" 2>/dev/null || true
+sed -i 's/TARGET_INFO: mux <= target_info;/TARGET_INFO: mux <= debug_view;/' \
+    "${JTFRAME_DIR}/hdl/debug/jtframe_debug_viewmux.v" 2>/dev/null || true
+if grep -q 'mux <= sys_info' "${JTFRAME_DIR}/hdl/debug/jtframe_debug_viewmux.v" 2>/dev/null; then
+    echo "[sftm] WARNING: debug viewmux pin did not apply" >&2
+else
+    echo "[sftm] debug overlay pinned to the game's debug_view"
+fi
+
 # Cache-lane offsets: emit VERILOG hex, not C hex.
 #
 # jtframe mem validates `sdram.cache-lanes[].at.offset` as an 0x... string and
