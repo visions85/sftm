@@ -57,6 +57,43 @@ docker volume inspect "$VOLUME" &>/dev/null \
 # ---- Run synthesis ----
 # jtcore is called with -mister target.  The --no-dbg flag keeps macros
 # clean; remove it to include OSD debug overlays.
+# ---- Apply SFTM's jtframe patches ----
+# run-synth.sh overrides the image entrypoint below (bash -c 'jtcore ...'), so
+# docker/entrypoint.sh -- which is where the jtframe patches live -- NEVER runs
+# for a synthesis build. The patches present in the volume got there from a
+# previous non-synth container and simply persisted, so any patch added to
+# entrypoint.sh was silently ignored here. That cost a build: the debug-overlay
+# pin looked applied (clean compile, new .rbf) but the volume still had the
+# stock viewmux. Apply them explicitly, in the same container, before jtcore.
+echo "[run-synth.sh] Applying jtframe patches..."
+docker run --rm --platform linux/amd64 \
+    -v "${REPO_DIR}:/workspace" \
+    -v "${VOLUME}:/workspace/modules/jtframe" \
+    --entrypoint /bin/bash \
+    "$IMAGE" -c '
+set -e
+JTFRAME_DIR=/workspace/modules/jtframe
+PATCHES=/workspace/docker/jtframe-patches
+[ -d "$PATCHES" ] && cp -r "$PATCHES/." "$JTFRAME_DIR/"
+# Pin the debug overlay to the game debug_view -- see entrypoint.sh for why.
+sed -i "s/SYS_INFO:    mux <= sys_info;/SYS_INFO:    mux <= debug_view;/" \
+    "$JTFRAME_DIR/hdl/debug/jtframe_debug_viewmux.v" || true
+sed -i "s/TARGET_INFO: mux <= target_info;/TARGET_INFO: mux <= debug_view;/" \
+    "$JTFRAME_DIR/hdl/debug/jtframe_debug_viewmux.v" || true
+if grep -q "mux <= sys_info" "$JTFRAME_DIR/hdl/debug/jtframe_debug_viewmux.v"; then
+    echo "[sftm] ERROR: debug viewmux pin did NOT apply" >&2; exit 1
+fi
+echo "[sftm] debug overlay pinned to the game debug_view"
+# SLOT0_ERASE=0 on the bank-3 rw slot -- see entrypoint.sh for why.
+sed -i "s/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_ram1_3slots.v" || true
+'
+PATCH_RC=$?
+if [[ $PATCH_RC -ne 0 ]]; then
+    echo "[run-synth.sh] jtframe patching FAILED; aborting before synthesis." >&2
+    exit $PATCH_RC
+fi
+
 set +e
 docker run --rm --platform linux/amd64 \
     -v "${REPO_DIR}:/workspace" \
