@@ -1372,3 +1372,42 @@ Worth recording, because each fault looked like a result:
 
 Rule for this core: one view, one self-contained number. Never split a value
 across views -- the display cycles far slower than the data changes.
+
+## The debug overlay silently stops showing the game's byte (2026-08-16)
+
+**START + a fire button switches the on-screen debug byte away from the core's
+`debug_view` to JTFRAME's own system counters, and nothing indicates it.**
+
+    jtframe_debug_keys.v:51   wire key_toggle = ctrl & shift;
+    jtframe_debug_keys.v:52   wire alt_toggle = !start_n && joy_n[1:0]!=3;
+    jtframe_debug_viewmux.v   case(sel) default: mux <= debug_view;
+                                        SYS_INFO:    mux <= sys_info;
+                                        TARGET_INFO: mux <= target_info;
+
+With sel != 0 the overlay shows `jtframe_sys_info` -- a frame counter and
+similar state -- which increments steadily. Decoded as "4-bit view tag + 4-bit
+payload" it looks exactly like a healthy auto-cycling debug panel: the high
+nibble marches 0..F in order and the low nibble varies plausibly. It is
+completely convincing and completely fake.
+
+This invalidated five builds of throughput work. Every impossible reading came
+from it: busy longer than the frame that resets it, a frame period shorter than
+the busy it brackets, a write count larger than the busy containing it. Each
+counter was re-verified in simulation and was correct every time -- the RTL was
+never the problem.
+
+Rules that follow:
+
+1. **Put a known constant on at least one view, permanently.** Views 0 and F
+   carried 5 and A in build 75; they read back 0x0E and 0xF5, which is what
+   exposed this. Without a constant there is no way to tell a real panel from
+   a counter that happens to look like one.
+2. **plain START is safe; START+fire is not.** Clearing the game's
+   "PRESS START 1 TO CONTINUE" screen does not toggle the view. Pressing start
+   with a button held during play does.
+3. `sel` resets to 0 on core load, so a reload always restores the game view.
+4. Ctrl+Shift on an attached keyboard does the same thing.
+
+Anything measured through this overlay while the user was holding a controller
+should be treated as unverified until re-read with the constant confirming
+sel==0.
