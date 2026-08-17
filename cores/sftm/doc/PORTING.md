@@ -1411,3 +1411,60 @@ Rules that follow:
 Anything measured through this overlay while the user was holding a controller
 should be treated as unverified until re-read with the constant confirming
 sel==0.
+
+## The debug overlay does not reflect the deployed core (2026-08-16, unresolved)
+
+**Do not trust any measurement taken through `debug_view` until this is
+resolved.** Quantitative proof, not inference:
+
+MiSTer caps screenshots at exactly 1 per second, so the overlay byte's rate is
+directly measurable. If the byte is `{4-bit view, 4-bit payload}` it advances 16
+counts per view step, so the rate identifies the view period:
+
+    diag_cnt[28:25]  0.699 s/view -> 22.9 /s   (value BEFORE this session)
+    diag_cnt[27:24]  0.349 s/view -> 45.8 /s   (build 78 source)
+    diag_cnt[26:23]  0.175 s/view -> 91.4 /s   (build 79 source)
+
+    build 78 measured 21.4 /s
+    build 79 measured 22.8 /s   <- period halved in source, rate UNCHANGED
+
+Both match the pre-session value. Build 79 deliberately halved the period
+precisely so a rate change would be visible without decoding any payload; it
+did not move.
+
+Then the control: `sftm_b59_working.rbf` -- the BANKS build, a different memory
+architecture with a different debug view map entirely -- was loaded and produced
+the same values at the same rate. Two radically different bitstreams, identical
+overlay behaviour.
+
+Everything else verifies clean, which is what makes this so expensive:
+  - source md5 identical on the Mac and gamingpc after rsync
+  - `files.qip` lists exactly one `sftm_main.v`, no duplicate `module sftm_main`
+    anywhere in the repo or the jtframe volume
+  - Quartus provably read the CURRENT file: its warning line numbers
+    (`st_nv14` at 351, `dbg_fbe` at 676) match the current source exactly
+  - db/incremental_db/output_files wiped; a fully clean rebuild reproduced a
+    bit-identical .rbf
+  - fresh .rbf md5 differs per build and matches byte-for-byte on the device
+  - the viewmux pin verified applied in the volume after the build
+
+Three constants were placed on views 0, 7 and F (5, 3, A). None ever appeared,
+in any build. A hardcoded `4'hA` reading back as `0` cannot happen if the
+running logic matches the source -- that single fact is the anchor, and it holds
+without any timing assumption.
+
+Consequences:
+  - Every throughput figure in this session is void. So is build 56's
+    "~65k writes/frame", which is the number that justified the whole
+    cache-lanes conversion. The conversion still produced a real, independently
+    visible win (the core boots and renders attract mode where the banks build's
+    grom was broken) -- but its stated premise was never measured.
+  - Changes to GENERATED files do reach hardware: cfg/mem.yaml -> big_endian ->
+    the core booting is verified end to end. Only hand-written sftm_main.v
+    changes appear not to.
+
+Next step is SignalTap over the USB Blaster: it reads the fabric directly and
+bypasses debug_view, the viewmux, the screenshot path and the glyph decoding all
+at once. Two .stp files from the August bring-up are in cores/sftm/mister/.
+Probe `view`, `st_dout`, `blit_busy`, `st_wpop` and `frame_end` -- `view`'s
+toggle rate alone settles whether the fabric is running current logic.
