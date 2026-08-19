@@ -1468,3 +1468,50 @@ bypasses debug_view, the viewmux, the screenshot path and the glyph decoding all
 at once. Two .stp files from the August bring-up are in cores/sftm/mister/.
 Probe `view`, `st_dout`, `blit_busy`, `st_wpop` and `frame_end` -- `view`'s
 toggle rate alone settles whether the fabric is running current logic.
+
+## ROOT CAUSE: scp without sync loaded the PREVIOUS build's bitstream (2026-08-18)
+
+**Always `sync` on the MiSTer after copying an .rbf, before `load_core`.**
+
+`scp` leaves the file in the page cache. `md5sum` on the device then reads it
+back from that same cache and reports the NEW checksum -- so every verification
+passes -- while MiSTer's core loader gets stale content off the card and
+configures the FPGA with the PREVIOUS build. The symptom is a core that is
+always exactly one build behind, with a deploy that verifies perfectly.
+
+Proved with the USB Blaster, which reads the fabric directly:
+
+    build 81 rbf deployed + loaded (md5 verified)   -> probe width 32  (build 80)
+    build 81 .sof programmed over JTAG              -> probe width 64  (build 81)
+    build 81 rbf + `sync` + drop_caches + reload    -> probe width 64  (build 81)
+
+This is the explanation for the whole 2026-08-16/18 measurement disaster. Three
+constants placed on debug views 0, 7 and F never appeared, across five builds,
+because the FPGA was never running the build that contained them. Every
+"impossible" reading -- busy longer than the frame that resets it, a frame
+period shorter than the busy it brackets, writes exceeding busy -- was a real
+reading of an OLDER build's view map, decoded against the CURRENT build's
+layout. The RTL was correct throughout, which is why every simulation check
+passed.
+
+Deploy sequence that is actually safe:
+
+    scp sftm.rbf root@<mister>:/media/fat/_Arcade/cores/sftm.rbf
+    ssh root@<mister> 'sync'                    # <-- the missing step
+    ssh root@<mister> 'load_core menu.rbf ...'  # bounce, then load the MRA
+
+and verify the running bitstream over JTAG rather than by md5 of the file:
+
+    get_insystem_source_probe_instance_info   # {index source_w probe_w id}
+
+### Why the earlier "definitive" staleness proof was still wrong
+
+An earlier pass measured the overlay byte's advance rate (21.4/s and 22.8/s
+against a predicted 45.8 and 91.4) and concluded the fabric was stale. The
+conclusion was right by accident; the reasoning was not. The overlay was ALSO
+not showing debug_view, so that rate was never evidence of anything. Two
+independent faults were producing one symptom, and each was capable of
+explaining it alone -- which is why single-cause theories kept collapsing.
+
+The only test that ever discriminated was a hardcoded constant read back
+through the channel under test. Keep one on a debug view permanently.
