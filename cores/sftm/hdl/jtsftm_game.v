@@ -313,6 +313,45 @@ end
 // OSD debug view: main CPU status ({boot_done, vint, blit, scan, state, wdog})
 assign debug_view = st_main;
 
+// ---------------------------------------------------------------------------
+// In-System Sources and Probes -- read the fabric directly over JTAG.
+//
+// The on-screen debug overlay has proven untrustworthy: three hardcoded
+// constants placed on views 0, 7 and F never appeared, in any build, including
+// one loaded directly onto the FPGA over JTAG. Every link in that chain
+// verifies (source md5s, files.qip, Quartus warning line numbers, the pinned
+// viewmux in the compiled volume) yet the byte on screen is a ~24/s counter.
+//
+// This bypasses the overlay entirely. `probe` is read with quartus_stp over
+// the USB Blaster, no display and no screenshot decoding involved:
+//
+//     probe[ 7: 0]  st_main   -- the SAME byte the overlay claims to show
+//     probe[15: 8]  8'hA5     -- signature
+//     probe[23:16]  8'h5C     -- signature
+//     probe[31:24]  8'h3C     -- signature
+//
+// The three signatures are the point. If they read back A5/5C/3C, the fabric
+// is running THIS source and st_main is trustworthy -- which would mean the
+// overlay rendering is at fault. If they read back anything else, the fabric
+// is not running this bitstream and every measurement taken from it, in this
+// session and earlier, is void for that reason.
+// ---------------------------------------------------------------------------
+wire [31:0] issp_probe = { 8'h3C, 8'h5C, 8'hA5, st_main };
+
+altsource_probe u_issp (
+    .probe  ( issp_probe ),
+    .source (            )
+);
+defparam
+    u_issp.enable_metastability    = "NO",
+    u_issp.instance_id             = "SFTM",
+    u_issp.probe_width             = 32,
+    u_issp.sld_auto_instance_index = "YES",
+    u_issp.sld_instance_index      = 0,
+    u_issp.source_initial_value    = "0",
+    u_issp.source_width            = 0;
+
+
 // verilator lint_off UNUSEDSIGNAL
 wire unused = &{ cpu_rnw, 1'b0 };
 // verilator lint_on UNUSEDSIGNAL
