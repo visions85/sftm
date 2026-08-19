@@ -1,51 +1,65 @@
 #!/usr/bin/env python3
-"""Decode SFTM In-System Probe samples (docker/read-probe.sh output).
+"""Decode SFTM In-System Probe samples at FULL resolution.
 
-Layout (see jtsftm_game.v):
-  [63:56] 0x3C sig   [55:52] lgrm3  [51:48] lgrom1 [47:44] lgrom0
-  [43:40] lvram      [39:36] fper   [35:32] bnum   [31:28] bstw
-  [27:24] bwait      [23:20] bbusy  [19:16] bwr    [15:8] st_main  [7:0] 0xA5
+probe0 (128 bit, id SFTM):
+  [127:120] 0x3C sig  [115:108] blits  [107:88] gdone  [87:68] frame period
+  [67:48] wrFIFO stall  [47:28] GROM stall  [27:8] busy clk  [7:0] 0xA5 sig
+probe1 (32 bit, id SFWR):
+  [31:24] 0x5C sig  [19:0] VRAM writes
 
-Units: bwr = writes/8192; bbusy/bwait/bstw/fper = clk/65536.
-Reference points: a full background is 92,160 writes = 0xB; a whole frame is
-508*286*6 = 871,728 clk = 0xD, which is also what fper must read.
+Reference: one full background = 92,160 writes; a frame = 871,728 clk.
 """
-import sys, re, collections
+import sys, re
 
-F = {'bwr':(16,'writes /8192'), 'bbusy':(20,'busy clk /65536'),
-     'bwait':(24,'GROM stall /65536'), 'bstw':(28,'wrFIFO stall /65536'),
-     'bnum':(32,'blits started'), 'fper':(36,'frame period /65536'),
-     'lvram':(40,'vram lane'), 'lgrom0':(44,'grom0 lane'),
-     'lgrom1':(48,'grom1 lane'), 'lgrm3':(52,'grm3 lane')}
+def fld(v, hi, lo): return (v >> lo) & ((1 << (hi-lo+1)) - 1)
 
-vals=[]
-for line in (open(sys.argv[1]) if len(sys.argv)>1 else sys.stdin):
-    m=re.match(r'RAW ([01]{64})\s*$', line.strip())
-    if m: vals.append(int(m.group(1),2))
+p0, p1 = [], []
+for line in (open(sys.argv[1]) if len(sys.argv) > 1 else sys.stdin):
+    m = re.match(r'RAW(\d) ([01]+)\s*$', line.strip())
+    if not m: continue
+    (p0 if m.group(1) == '0' else p1).append(int(m.group(2), 2))
 
-if not vals:
-    sys.exit("no samples decoded")
+if not p0: sys.exit("no probe0 samples")
+bad0 = [v for v in p0 if fld(v,7,0)!=0xA5 or fld(v,127,120)!=0x3C]
+bad1 = [v for v in p1 if fld(v,31,24)!=0x5C]
+print(f"probe0 samples {len(p0)} (sig fail {len(bad0)})   probe1 samples {len(p1)} (sig fail {len(bad1)})")
+if bad0 or bad1:
+    print("  !! signatures wrong -- fabric is not running this bitstream; ignore the numbers.")
+    sys.exit(1)
 
-bad=[v for v in vals if (v & 0xFF)!=0xA5 or ((v>>56)&0xFF)!=0x3C]
-print(f"samples: {len(vals)}   signature failures: {len(bad)}")
-if bad:
-    print("  !! signatures wrong -- the fabric is not running this bitstream;")
-    print("     do not trust anything below.")
+rows=[]
+for v in p0:
+    rows.append(dict(busy=fld(v,27,8), wait=fld(v,47,28), stw=fld(v,67,48),
+                     fper=fld(v,87,68), gf=fld(v,107,88), blits=fld(v,115,108)))
+wr = [fld(v,19,0) for v in p1]
+
+def stat(name, xs, unit=""):
+    xs=[x for x in xs if True]
+    if not xs: return
+    nz=[x for x in xs if x]
+    print(f"  {name:<18} max={max(xs):>7,}{unit}  mean={sum(xs)//len(xs):>7,}  "
+          f"nonzero {len(nz)}/{len(xs)}")
+
+FRAME=871728; BG=92160
 print()
-hist={k:collections.Counter() for k in F}
-for v in vals:
-    for k,(sh,_) in F.items(): hist[k][(v>>sh)&0xF]+=1
-for k,(sh,desc) in F.items():
-    c=hist[k]; mx=max(c); 
-    seen=" ".join(f"{p:X}x{n}" for p,n in sorted(c.items()))
-    print(f"  {k:<7}{desc:<22} max={mx:X}  {seen}")
-print()
-mxwr, mxbusy = max(hist['bwr']), max(hist['bbusy'])
-mxwait, mxstw = max(hist['bwait']), max(hist['bstw'])
-print(f"busiest frame observed: {mxwr*8192:,} writes  (one full background = 92,160 = 0xB)")
-print(f"                        {mxbusy*65536:,} clk busy  (a whole frame = 871,728 = 0xD)")
-print(f"  GROM fetch stall  {mxwait*65536:,} clk")
-print(f"  write-FIFO stall  {mxstw*65536:,} clk")
-if mxwait>mxstw:   print("  -> the blitter waits mainly on GROM fetches")
-elif mxstw>mxwait: print("  -> the blitter waits mainly on the VRAM write port")
-else:              print("  -> neither stall dominates at this resolution")
+stat("frame period clk", [r['fper'] for r in rows])
+print(f"     (a whole frame is {FRAME:,} clk)")
+stat("blitter busy clk", [r['busy'] for r in rows])
+stat("GROM fetch stall", [r['wait'] for r in rows])
+stat("wrFIFO stall",     [r['stw']  for r in rows])
+stat("blits started",    [r['blits'] for r in rows])
+stat("gdone pulses",     [r['gf'] for r in rows])
+if wr: stat("VRAM writes",  wr)
+print(f"     (one full background is {BG:,} writes)")
+
+mb=max(r['busy'] for r in rows)
+if mb:
+    mw=max(r['wait'] for r in rows); ms=max(r['stw'] for r in rows)
+    print()
+    print(f"busiest frame: busy {mb:,} clk = {100*mb/FRAME:.1f}% of a frame")
+    print(f"   GROM stall {mw:,} ({100*mw/mb:.0f}% of busy)   "
+          f"wrFIFO stall {ms:,} ({100*ms/mb:.0f}% of busy)")
+    if wr:
+        mwr=max(wr)
+        print(f"   writes {mwr:,} = {100*mwr/BG:.0f}% of a full background")
+        if mwr: print(f"   -> {mb/mwr:.1f} clk per write")
