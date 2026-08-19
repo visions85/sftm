@@ -336,7 +336,34 @@ assign debug_view = st_main;
 // is not running this bitstream and every measurement taken from it, in this
 // session and earlier, is void for that reason.
 // ---------------------------------------------------------------------------
-wire [31:0] issp_probe = { 8'h3C, 8'h5C, 8'hA5, st_main };
+// Every meter in ONE probe word, read atomically in a single JTAG
+// transaction. No view mux and no snapshot register, so there is nothing to
+// mis-pair and nothing to go stale:
+//
+//   the view mux existed only because the overlay is 8 bits wide -- splitting
+//   a value across views is what produced pairs like "busy longer than the
+//   frame that resets it". The snapshot register existed only because a
+//   screenshot burst spans many view cycles. Over JTAG both are pure downside:
+//   sn_* refreshes once per four view cycles, so sampling for 40 s returned
+//   four stale snapshots and every blitter meter read 0 while attract mode was
+//   visibly rendering.
+//
+// dbg_* are the raw per-frame values latched by sftm_video at each frame_end.
+wire [63:0] issp_probe = {
+    8'h3C,          // [63:56] signature
+    dbg_lgrm3,      // [55:52]
+    dbg_lgrom1,     // [51:48]
+    dbg_lgrom0,     // [47:44]
+    dbg_lvram,      // [43:40]
+    dbg_fper,       // [39:36] frame period /65536, must read D
+    dbg_bnum,       // [35:32] blits started this frame
+    dbg_bstw,       // [31:28] write-FIFO stall /65536
+    dbg_bwait,      // [27:24] GROM fetch stall /65536
+    dbg_bbusy,      // [23:20] blitter busy    /65536
+    dbg_bwr,        // [19:16] VRAM writes     /8192
+    st_main,        // [15: 8] the byte the overlay claims to show
+    8'hA5           // [ 7: 0] signature
+};
 
 altsource_probe u_issp (
     .probe  ( issp_probe ),
@@ -345,7 +372,7 @@ altsource_probe u_issp (
 defparam
     u_issp.enable_metastability    = "NO",
     u_issp.instance_id             = "SFTM",
-    u_issp.probe_width             = 32,
+    u_issp.probe_width             = 64,
     u_issp.sld_auto_instance_index = "YES",
     u_issp.sld_instance_index      = 0,
     u_issp.source_initial_value    = "0",
