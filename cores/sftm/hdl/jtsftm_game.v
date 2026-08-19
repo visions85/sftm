@@ -56,6 +56,8 @@ wire [ 4:0] dbg_actv;
 wire        dbg_anyrun;
 wire [15:0] dbg_peak;
 wire [3:0] dbg_bbusy, dbg_bwait, dbg_bwr, dbg_bgf, dbg_bstw, dbg_fper;
+wire [19:0] stw_wr, stw_busy, stw_wait, stw_stw, stw_fper, stw_gf;
+wire [ 7:0] stw_num;
 wire [3:0] dbg_bnum;
 wire [14:0] dbg_gpen;
 wire        dbg_gseen, dbg_gmulti, dbg_palhit;
@@ -241,6 +243,13 @@ sftm_video u_video(
     .st_bgf       ( dbg_bgf       ),
     .st_bstw      ( dbg_bstw      ),
     .st_fper      ( dbg_fper      ),
+    .stw_wr       ( stw_wr        ),
+    .stw_busy     ( stw_busy      ),
+    .stw_wait     ( stw_wait      ),
+    .stw_stw      ( stw_stw       ),
+    .stw_fper     ( stw_fper      ),
+    .stw_gf       ( stw_gf        ),
+    .stw_num      ( stw_num       ),
     .st_bnum      ( dbg_bnum      ),
     .st_gpen      ( dbg_gpen      ),
     .st_gseen     ( dbg_gseen     ),
@@ -336,34 +345,29 @@ assign debug_view = st_main;
 // is not running this bitstream and every measurement taken from it, in this
 // session and earlier, is void for that reason.
 // ---------------------------------------------------------------------------
-// Every meter in ONE probe word, read atomically in a single JTAG
-// transaction. No view mux and no snapshot register, so there is nothing to
-// mis-pair and nothing to go stale:
+// Every meter in ONE probe word, read atomically over JTAG.
 //
-//   the view mux existed only because the overlay is 8 bits wide -- splitting
-//   a value across views is what produced pairs like "busy longer than the
-//   frame that resets it". The snapshot register existed only because a
-//   screenshot burst spans many view cycles. Over JTAG both are pure downside:
-//   sn_* refreshes once per four view cycles, so sampling for 40 s returned
-//   four stale snapshots and every blitter meter read 0 while attract mode was
-//   visibly rendering.
+// FULL RESOLUTION. The 4-bit meters are quantised (writes/8192, clk/65536)
+// purely to fit the 8-bit on-screen overlay, and at that granularity a screen
+// updating a few thousand pixels a frame reads 0 across the board -- which is
+// exactly what made the blitter look completely idle while the attract demo
+// was visibly animating. These are the raw per-frame counters.
 //
-// dbg_* are the raw per-frame values latched by sftm_video at each frame_end.
-wire [63:0] issp_probe = {
-    8'h3C,          // [63:56] signature
-    dbg_lgrm3,      // [55:52]
-    dbg_lgrom1,     // [51:48]
-    dbg_lgrom0,     // [47:44]
-    dbg_lvram,      // [43:40]
-    dbg_fper,       // [39:36] frame period /65536, must read D
-    dbg_bnum,       // [35:32] blits started this frame
-    dbg_bstw,       // [31:28] write-FIFO stall /65536
-    dbg_bwait,      // [27:24] GROM fetch stall /65536
-    dbg_bbusy,      // [23:20] blitter busy    /65536
-    dbg_bwr,        // [19:16] VRAM writes     /8192
-    st_main,        // [15: 8] the byte the overlay claims to show
-    8'hA5           // [ 7: 0] signature
+// Reference points: one full background = 92,160 writes; a whole frame =
+// 508*286*6 = 871,728 clk, which is also what stw_fper must read.
+wire [127:0] issp_probe = {
+    8'h3C,          // [127:120] signature
+    4'd0,
+    stw_num,        // [115:108] blits started this frame
+    stw_gf,         // [107: 88] blit_gdone pulses
+    stw_fper,       // [ 87: 68] frame period, clk  (expect 871,728)
+    stw_stw,        // [ 67: 48] write-FIFO stall, clk
+    stw_wait,       // [ 47: 28] GROM fetch stall, clk
+    stw_busy,       // [ 27:  8] blitter busy, clk
+    8'hA5           // [  7:  0] signature
 };
+
+wire [31:0] issp_probe2 = { 8'h5C, 4'd0, stw_wr[19:0] };  // writes, exact
 
 altsource_probe u_issp (
     .probe  ( issp_probe ),
@@ -372,11 +376,24 @@ altsource_probe u_issp (
 defparam
     u_issp.enable_metastability    = "NO",
     u_issp.instance_id             = "SFTM",
-    u_issp.probe_width             = 64,
+    u_issp.probe_width             = 128,
     u_issp.sld_auto_instance_index = "YES",
     u_issp.sld_instance_index      = 0,
     u_issp.source_initial_value    = "0",
     u_issp.source_width            = 0;
+
+altsource_probe u_issp2 (
+    .probe  ( issp_probe2 ),
+    .source (             )
+);
+defparam
+    u_issp2.enable_metastability    = "NO",
+    u_issp2.instance_id             = "SFWR",
+    u_issp2.probe_width             = 32,
+    u_issp2.sld_auto_instance_index = "YES",
+    u_issp2.sld_instance_index      = 1,
+    u_issp2.source_initial_value    = "0",
+    u_issp2.source_width            = 0;
 
 
 // verilator lint_off UNUSEDSIGNAL

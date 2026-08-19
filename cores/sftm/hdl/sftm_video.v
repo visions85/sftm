@@ -110,6 +110,18 @@ module sftm_video(
     output reg [ 3:0] st_bgf,     // GROM words fetched
     output reg [ 3:0] st_bstw,    // ...stalled on the VRAM write FIFO
     output reg [ 3:0] st_fper,    // clk between frame_end pulses / 65536
+    // Full-resolution copies of the same per-frame counters, for the JTAG
+    // probe. The 4-bit versions above are quantised (writes/8192, clk/65536)
+    // only because the on-screen overlay is 8 bits wide; a screen updating a
+    // few thousand pixels a frame reads 0 in every one of them, which is
+    // exactly what made the blitter look idle while it was plainly drawing.
+    output reg [19:0] stw_wr,     // VRAM writes this frame, EXACT
+    output reg [19:0] stw_busy,   // blitter busy clk, EXACT
+    output reg [19:0] stw_wait,   // ...of which GROM fetch stall
+    output reg [19:0] stw_stw,    // ...of which write-FIFO stall
+    output reg [19:0] stw_fper,   // frame period in clk
+    output reg [19:0] stw_gf,     // blit_gdone pulses
+    output reg [ 7:0] stw_num,    // blits started this frame (wider, saturating)
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
     output reg [14:0] st_gpen,     // pen from the frame with the most green
@@ -171,6 +183,7 @@ reg [19:0] bc_busy, bc_wait, bc_stw;
 reg [19:0] fp_cnt;   // clocks since the last frame_end
 reg [19:0] bc_wr, bc_gf;
 reg [ 3:0] bc_num;
+reg [ 7:0] bc_num8;
 reg        lvbl_d, busy_d;
 wire       frame_end = lvbl_d && !LVBL;
 wire       blit_rise = blit_busy && !busy_d;
@@ -178,9 +191,11 @@ wire       blit_rise = blit_busy && !busy_d;
 always @(posedge clk) begin
     if( rst ) begin
         bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0;
-        bc_num  <= 0; bc_stw <= 0; fp_cnt <= 0; st_fper <= 0;
+        bc_num  <= 0; bc_num8 <= 0; bc_stw <= 0; fp_cnt <= 0; st_fper <= 0;
         st_bbusy<= 0; st_bwait<= 0; st_bwr <= 0; st_bgf <= 0; st_bnum <= 0;
         st_bstw <= 0;
+        stw_wr <= 0; stw_busy <= 0; stw_wait <= 0; stw_stw <= 0;
+        stw_fper <= 0; stw_gf <= 0; stw_num <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
     end else begin
         lvbl_d <= LVBL;
@@ -211,7 +226,7 @@ always @(posedge clk) begin
             st_bnum  <= bc_num;
             st_bstw  <= bc_stw [19:16];
             bc_busy <= 0; bc_wait <= 0; bc_wr <= 0; bc_gf <= 0; bc_num <= 0;
-            bc_stw  <= 0;
+            bc_stw  <= 0; bc_num8 <= 0;
             // How long a frame ACTUALLY is, measured rather than assumed.
             // 508*286*6 = 871,728 clk at JTFRAME_PXLCLK=8 on a 48 MHz clock,
             // so this must read 13 (0xD). bc_busy is reset here and therefore
@@ -224,6 +239,13 @@ always @(posedge clk) begin
             // larger means the frame itself is longer and busy=0xF is simply a
             // blitter busy the whole of it.
             st_fper <= fp_cnt[19:16];
+            stw_wr   <= bc_wr;
+            stw_busy <= bc_busy;
+            stw_wait <= bc_wait;
+            stw_stw  <= bc_stw;
+            stw_fper <= fp_cnt;
+            stw_gf   <= bc_gf;
+            stw_num  <= bc_num8;
             fp_cnt  <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
@@ -238,6 +260,7 @@ always @(posedge clk) begin
             if( vram_wpop               && ~&bc_wr   ) bc_wr   <= bc_wr   + 20'd1;
             if( blit_gdone              && ~&bc_gf   ) bc_gf   <= bc_gf   + 20'd1;
             if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
+            if( blit_rise               && ~&bc_num8 ) bc_num8 <= bc_num8 + 8'd1;
             if(                            ~&fp_cnt ) fp_cnt  <= fp_cnt  + 20'd1;
         end
     end
