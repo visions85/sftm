@@ -1515,3 +1515,66 @@ explaining it alone -- which is why single-cause theories kept collapsing.
 
 The only test that ever discriminated was a hardcoded constant read back
 through the channel under test. Keep one on a debug view permanently.
+
+## CORRECTION (2026-08-20): the sync theory was wrong, and so was the board
+
+Two earlier entries in this file are WRONG and are retracted here.
+
+**1. "scp without sync loaded the previous build" is NOT the cause.** `sync` and
+`echo 3 > /proc/sys/vm/drop_caches` were both applied and the fabric still did
+not match the deployed rbf. The evidence that produced that theory (probe width
+32 -> 64 after a sync) is better explained by the JTAG programming performed
+moments earlier still being resident in the fabric.
+
+**2. The USB Blaster is on 10.10.10.74, not .98.** Proved by polling the JTAG
+chain across a cold boot: the chain went GONE and returned exactly in step with
+.74 losing power. A warm `reboot` does NOT disambiguate -- it restarts Linux
+while the FPGA stays powered, so its TAP stays alive either way.
+
+This mix-up invalidates a whole class of conclusions from 2026-08-16/18: JTAG
+reads and .sof programming went to **.74** while rbf deploys, screenshots and
+reasoning were about **.98**. Two machines were being cross-referenced as one.
+In particular "the blitter is exactly idle while the picture animates, so the
+fault is upstream of the blitter" is NOT a finding -- the idle blitter was .74
+with no ROM, and the animating picture was .98.
+
+### What IS established, on one board, with a validated channel
+
+Read directly from .74's fabric over JTAG, signatures checked on every sample:
+
+  - `st_main` is CORRECT. The constants placed on debug views 0, 7 and F read
+    back as 5, 3 and A.
+  - frame period = 871,727 clk, i.e. exactly 508*286*6 minus the frame_end
+    clock. The video timing and `frame_end` are right.
+  - With the game held in reset (see below): VRAM read strobes 354,252/frame,
+    every CPU video-register write 0.
+
+  - **The on-screen overlay does NOT display `debug_view`.** Same board, same
+    build: ISSP shows view 0 = 05, while the overlay shows the default arm.
+    Reproduced on both .74 and .98. **Every screenshot-derived measurement in
+    this project is therefore void**, including build 56's "~65k writes/frame"
+    that motivated the cache-lanes conversion.
+
+### The blocker
+
+  HPS-loaded .rbf  -> the game runs, but NO ISSP hub is reachable over JTAG
+  JTAG-loaded .sof -> ISSP works, but MiSTer's ROM download never runs and
+                     JTFRAME holds the game in reset, so the CPU does nothing
+
+Both were verified on .74 after a cold boot. So there is currently no way to
+observe a RUNNING game through a trustworthy channel. Resolving that is the
+next task, and everything else is blocked behind it. Options, cheapest first:
+
+  1. Find why the SLD hub is unreachable when the HPS configures the FPGA.
+     `jtagconfig -n` lists the chain but no SLD nodes; after `quartus_pgm` of
+     the same build's .sof the nodes appear immediately.
+  2. Re-trigger MiSTer's ROM download after a JTAG configure, without
+     reconfiguring the FPGA from the rbf.
+  3. Preload the ROM over JTAG.
+
+### Operational notes
+
+  - The cable name changes with the USB port (`DE-SoC [3-2]` -> `[3-1]`).
+    Discover it, never hardcode it: docker/prog_sof.sh does this.
+  - JTAG-programming while Linux is running can hang the HPS. It did on .98,
+    which then would not boot. Budget a cold boot after each programming.
