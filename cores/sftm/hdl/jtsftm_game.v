@@ -123,18 +123,23 @@ wire [31:0] ld_data   = ld_src[31:0];
 // does the same thing (A_WAIT sets `settle` before testing vram_ok) -- getting
 // this wrong is what made the first loader attempt write nothing while
 // appearing to run at full speed.
-reg       ld_tog_d;
-reg [1:0] ld_st;
-reg       ld_we;
+reg        ld_tog_d;
+reg [1:0]  ld_st;
+reg        ld_we;
+reg [15:0] ld_done;   // writes the lane actually ACCEPTED
+reg [15:0] ld_seen;   // toggle edges seen
 always @(posedge clk) begin
     if( rst ) begin
         ld_tog_d <= 1'b0; ld_st <= 2'd0; ld_we <= 1'b0;
+        ld_done <= 16'd0; ld_seen <= 16'd0;
     end else begin
         ld_tog_d <= ld_toggle;
         case( ld_st )
-            2'd0: if( ld_toggle != ld_tog_d ) begin ld_we <= 1'b1; ld_st <= 2'd1; end
+            2'd0: if( ld_toggle != ld_tog_d ) begin ld_we <= 1'b1; ld_st <= 2'd1;
+                                                     if( ~&ld_seen ) ld_seen <= ld_seen + 16'd1; end
             2'd1: ld_st <= 2'd2;                                   // settle
-            2'd2: if( main_ok ) begin ld_we <= 1'b0; ld_st <= 2'd0; end
+            2'd2: if( main_ok ) begin ld_we <= 1'b0; ld_st <= 2'd0;
+                                       if( ~&ld_done ) ld_done <= ld_done + 16'd1; end
         endcase
     end
 end
@@ -146,7 +151,11 @@ assign main_din  = ld_data;
 assign main_dsn  = 4'd0;          // all four bytes
 
 altsource_probe u_issp_ld (
-    .probe  ( 32'hC0DE5A5A ),     // fixed, so the instance is identifiable
+    // Live handshake state, so a failing write is diagnosable without another
+    // build: seen counts toggle edges the FSM noticed, done counts writes the
+    // LANE ACCEPTED (main_ok). seen>0 with done==0 means the lane never
+    // acknowledges; seen==0 means the source writes are not reaching the FSM.
+    .probe  ( { 4'hD, ld_active, ld_we, ld_st, ld_done, ld_seen[7:0] } ),
     .source ( ld_src       )
 );
 defparam
