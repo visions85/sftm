@@ -177,6 +177,7 @@ wire        cpu_rom_rd;
 wire [63:0] ld_src;
 wire        ld_active = ld_src[51];
 wire        ld_toggle = ld_src[50];
+wire        ld_rdmode = ld_src[52];   // 1: toggle performs a READ, data in probe3
 wire [19:2] ld_addr   = ld_src[49:32];
 wire [31:0] ld_data   = ld_src[31:0];
 
