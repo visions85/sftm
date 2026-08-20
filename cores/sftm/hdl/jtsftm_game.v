@@ -195,7 +195,8 @@ wire [31:0] ld_data   = ld_src[31:0];
 reg        ld_tog_d = 1'b0;
 reg [1:0]  ld_st    = 2'd0;
 reg        ld_we    = 1'b0;
-reg [15:0] ld_done  = 16'd0;   // writes the lane ACCEPTED
+reg [15:0] ld_done  = 16'd0;   // transactions the lane ACCEPTED
+reg [31:0] ld_rdata = 32'd0;   // last readback (ld_rdmode)
 reg [15:0] ld_seen  = 16'd0;   // toggle edges seen
 
 always @(posedge clk) begin
@@ -217,8 +218,8 @@ always @(posedge clk) begin
 end
 
 assign main_addr = ld_active ? ld_addr : cpu_rom_addr;
-assign main_rd   = ld_active ? 1'b0    : cpu_rom_rd;
-assign main_we   = ld_active & ld_we;
+assign main_rd   = ld_active ? (ld_we &  ld_rdmode) : cpu_rom_rd;
+assign main_we   = ld_active & ld_we & ~ld_rdmode;
 assign main_din  = ld_data;
 assign main_dsn  = 4'd0;          // all four bytes
 
@@ -227,13 +228,13 @@ altsource_probe u_issp_ld (
     // build: seen counts toggle edges the FSM noticed, done counts writes the
     // LANE ACCEPTED (main_ok). seen>0 with done==0 means the lane never
     // acknowledges; seen==0 means the source writes are not reaching the FSM.
-    .probe  ( { 4'hD, ld_active, ld_we, ld_st, ld_done, ld_seen[7:0] } ),
+    .probe  ( { 8'hC5, ld_seen[7:0], ld_done, ld_rdata } ),
     .source ( ld_src       )
 );
 defparam
     u_issp_ld.enable_metastability    = "NO",
     u_issp_ld.instance_id             = "SFLD",
-    u_issp_ld.probe_width             = 32,
+    u_issp_ld.probe_width             = 64,
     u_issp_ld.sld_auto_instance_index = "YES",
     u_issp_ld.sld_instance_index      = 3,
     u_issp_ld.source_initial_value    = "0",
@@ -259,7 +260,13 @@ defparam
 // ---------------------------------------------------------------------------
 wire [7:0] issp_src;
 wire       force_run = issp_src[0];
-wire       rst_g     = rst & ~force_run;
+// src[1]: assert a game reset over JTAG. Toggling 1 -> 0 gives a clean reset
+// pulse that re-runs sftm_main's boot vector copy WITHOUT reconfiguring the
+// FPGA or re-downloading the ROM -- the only way to make the CPU consume
+// content placed by the JTAG loader, since the watchdog cannot be relied on
+// and every other reset path destroys SDRAM or re-shifts the download.
+wire       force_rst = issp_src[1];
+wire       rst_g     = (rst & ~force_run) | force_rst;
 
 reg [31:0] m_first;
 reg        m_got;
