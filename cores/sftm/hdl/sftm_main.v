@@ -157,6 +157,7 @@ module sftm_main #(
     output     [ 7:0] st_dout,
     // JTAG hang-hunt: live PC and interrupt state (see jtsftm_game u_issp4)
     output     [23:0] st_pc,
+    output     [15:0] st_op,
     output     [ 3:0] st_int
 );
 
@@ -663,6 +664,8 @@ TG68KdotC_Kernel #(
 // ---------------------------------------------------------------------------
 reg [23:0] pc_live, pc_vec, pc_stuck;
 assign st_pc  = pc_live;
+assign st_op  = op_live;
+reg [15:0] op_live;
 assign st_int = { vint, cpu_ipl };
 reg [23:0] pc_now;           // re-latched each view cycle (coherent nibbles)
 
@@ -779,7 +782,7 @@ always @(posedge clk) begin
         sf_nvram_wr <= 1'b0;
     end else begin
         diag_cnt <= diag_cnt + 29'd1;
-        if( grant && busstate == 2'b00 ) pc_live <= A;
+        if( grant && busstate == 2'b00 ) begin pc_live <= A; op_live <= cpu_din; end
         // INTSTATE is video register index 1 (byte offsets 0x500004-7)
         if( grant && bus_write && vreg_sel && A[7:2] == 6'h01 )
             pc_at_ack <= pc_live;

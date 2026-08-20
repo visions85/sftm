@@ -103,16 +103,18 @@ wire [3:0] dbg_lsnd, dbg_lsrom, dbg_lgrm3, dbg_lgrom0, dbg_lgrom1, dbg_lvram;
 // are distinguishable at a glance.
 // ---------------------------------------------------------------------------
 wire [23:0] main_pc;
+wire [15:0] main_op;
 wire [ 3:0] main_int;
 
 reg  [11:0] pcs_div = 12'd0;
 reg  [23:0] pc_samp = 24'd0;
+reg  [15:0] op_samp = 16'd0;
 reg  [ 7:0] vbl_cnt = 8'd0, xint_cnt = 8'd0, qint_cnt = 8'd0;
 reg         blit_irq_d = 1'b0, scan_irq_d = 1'b0;
 
 always @(posedge clk) begin
     pcs_div <= pcs_div + 12'd1;
-    if( pcs_div == 12'd0 ) pc_samp <= main_pc;
+    if( pcs_div == 12'd0 ) begin pc_samp <= main_pc; op_samp <= main_op; end
     blit_irq_d <= blit_irq;
     scan_irq_d <= scan_irq;
     if( vblank_irq )              vbl_cnt  <= vbl_cnt  + 8'd1;
@@ -120,14 +122,19 @@ always @(posedge clk) begin
     if( scan_irq && !scan_irq_d ) qint_cnt <= qint_cnt + 8'd1;
 end
 
-wire [63:0] issp_probe4 = {
-    8'hE7,          // [63:56] signature
-    pc_samp,        // [55:32] PC, sampled every ~85 us
-    main_int,       // [31:28] {vint, cpu_ipl}
-    vbl_cnt,        // [27:20] vblank_irq pulses (VINT source)
-    xint_cnt,       // [19:12] blit_irq rising edges (XINT source)
-    qint_cnt,       // [11: 4] scan_irq rising edges (QINT source)
-    4'h5            // [ 3: 0] signature nibble
+// (pc, opcode) latched TOGETHER at the same instruction fetch, so each sample
+// pairs an address with the 16-bit word the CPU actually consumed there --
+// comparable directly against the program image to detect fetch-path skew.
+wire [127:0] issp_probe4 = {
+    8'hE7,          // [127:120] signature
+    pc_samp,        // [119: 96] PC
+    op_samp,        // [ 95: 80] opcode fetched at that PC
+    main_int,       // [ 79: 76] {vint, cpu_ipl}
+    vbl_cnt,        // [ 75: 68] vblank_irq pulses
+    xint_cnt,       // [ 67: 60] blit_irq rising edges
+    qint_cnt,       // [ 59: 52] scan_irq rising edges
+    48'd0,          // [ 51:  4] pad
+    4'h5            // [  3:  0] signature nibble
 };
 
 altsource_probe u_issp4 (
@@ -137,7 +144,7 @@ altsource_probe u_issp4 (
 defparam
     u_issp4.enable_metastability    = "NO",
     u_issp4.instance_id             = "SFPC",
-    u_issp4.probe_width             = 64,
+    u_issp4.probe_width             = 128,
     u_issp4.sld_auto_instance_index = "YES",
     u_issp4.sld_instance_index      = 4,
     u_issp4.source_initial_value    = "0",
@@ -360,6 +367,7 @@ sftm_main u_main(
 
     .st_dout      ( st_main       ),
     .st_pc        ( main_pc       ),
+    .st_op        ( main_op       ),
     .st_int       ( main_int      )
 );
 
