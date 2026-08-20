@@ -122,6 +122,15 @@ module sftm_video(
     output reg [19:0] stw_fper,   // frame period in clk
     output reg [19:0] stw_gf,     // blit_gdone pulses
     output reg [ 7:0] stw_num,    // blits started this frame (wider, saturating)
+    // Is the CPU talking to the video hardware at ALL? The blitter starts on
+    // cmd_stb = vreg_wr && ridx==R_COMMAND (:286), so if the CPU never writes
+    // COMMAND no blit can ever run -- which is what a flat-zero blit_busy over
+    // 90 s means. These separate "the CPU never asks" from "the blitter is
+    // asked and does not start".
+    output reg [19:0] stw_vreg,   // CPU video-register writes this frame
+    output reg [19:0] stw_cmd,    // ...of which COMMAND (blit starts)
+    output reg [19:0] stw_xfer,   // ...of which TRANSFER (cmd-3 pixel pushes)
+    output reg [19:0] stw_rd,     // VRAM read strobes (scanout/prefetch)
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
     output reg [14:0] st_gpen,     // pen from the frame with the most green
@@ -182,7 +191,6 @@ wire        blit_stallw, blit_waiting, blit_gdone, vram_wpop;
 reg [19:0] bc_busy, bc_wait, bc_stw;
 reg [19:0] fp_cnt;   // clocks since the last frame_end
 reg [19:0] bc_wr, bc_gf;
-reg [19:0] bc_vreg, bc_cmd, bc_xfer, bc_rd;
 reg [ 3:0] bc_num;
 reg [ 7:0] bc_num8;
 reg        lvbl_d, busy_d;
@@ -197,8 +205,6 @@ always @(posedge clk) begin
         st_bstw <= 0;
         stw_wr <= 0; stw_busy <= 0; stw_wait <= 0; stw_stw <= 0;
         stw_fper <= 0; stw_gf <= 0; stw_num <= 0;
-        bc_vreg <= 0; bc_cmd <= 0; bc_xfer <= 0; bc_rd <= 0;
-        stw_vreg <= 0; stw_cmd <= 0; stw_xfer <= 0; stw_rd <= 0; stw_base <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
     end else begin
         lvbl_d <= LVBL;
@@ -249,10 +255,6 @@ always @(posedge clk) begin
             stw_fper <= fp_cnt;
             stw_gf   <= bc_gf;
             stw_num  <= bc_num8;
-            stw_vreg <= bc_vreg;  stw_cmd  <= bc_cmd;
-            stw_xfer <= bc_xfer;  stw_rd   <= bc_rd;
-            stw_base <= line_base;
-            bc_vreg <= 0; bc_cmd <= 0; bc_xfer <= 0; bc_rd <= 0;
             fp_cnt  <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
@@ -268,10 +270,6 @@ always @(posedge clk) begin
             if( blit_gdone              && ~&bc_gf   ) bc_gf   <= bc_gf   + 20'd1;
             if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
             if( blit_rise               && ~&bc_num8 ) bc_num8 <= bc_num8 + 8'd1;
-            if( vreg_wr                 && ~&bc_vreg ) bc_vreg <= bc_vreg + 20'd1;
-            if( cmd_stb                 && ~&bc_cmd  ) bc_cmd  <= bc_cmd  + 20'd1;
-            if( xfer_stb                && ~&bc_xfer ) bc_xfer <= bc_xfer + 20'd1;
-            if( vram_rd                 && ~&bc_rd   ) bc_rd   <= bc_rd   + 20'd1;
             if(                            ~&fp_cnt ) fp_cnt  <= fp_cnt  + 20'd1;
         end
     end
@@ -296,6 +294,37 @@ assign cpu_wait = vreg_cs && (ridx == R_COMMAND || ridx == R_TRANSFER)
 // command / transfer strobes into the blitter
 wire cmd_stb  = vreg_wr && ridx == R_COMMAND;
 wire xfer_stb = vreg_wr && ridx == R_TRANSFER;
+
+// ---------------------------------------------------------------------------
+// CPU-side video traffic, counted per frame.
+//
+// Separate block, placed here deliberately: cmd_stb, xfer_stb and line_base are
+// all declared below the main counter block, and Verilog will not let that
+// block reference them.
+//
+// blit_busy read EXACTLY zero for 90 s while the attract demo was animating.
+// sftm_vram is the only VRAM writer and only the blitter drives its write port,
+// so nothing else can be drawing. These say which half is at fault:
+//   stw_cmd == 0 -> the CPU never asks for a blit
+//   stw_cmd  > 0 -> it asks and the blitter refuses to start
+// ---------------------------------------------------------------------------
+reg [19:0] bc_vreg, bc_cmd, bc_xfer, bc_rd;
+
+always @(posedge clk) begin
+    if( rst ) begin
+        bc_vreg  <= 0; bc_cmd  <= 0; bc_xfer  <= 0; bc_rd  <= 0;
+        stw_vreg <= 0; stw_cmd <= 0; stw_xfer <= 0; stw_rd <= 0;
+    end else if( frame_end ) begin
+        stw_vreg <= bc_vreg;  stw_cmd  <= bc_cmd;
+        stw_xfer <= bc_xfer;  stw_rd   <= bc_rd;
+        bc_vreg  <= 0; bc_cmd <= 0; bc_xfer <= 0; bc_rd <= 0;
+    end else begin
+        if( vreg_wr  && ~&bc_vreg ) bc_vreg <= bc_vreg + 20'd1;
+        if( cmd_stb  && ~&bc_cmd  ) bc_cmd  <= bc_cmd  + 20'd1;
+        if( xfer_stb && ~&bc_xfer ) bc_xfer <= bc_xfer + 20'd1;
+        if( vram_rd  && ~&bc_rd   ) bc_rd   <= bc_rd   + 20'd1;
+    end
+end
 
 // ---------------------------------------------------------------------------
 // CRT counters: fixed 508 x 286, visible 384 x 256

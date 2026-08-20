@@ -59,7 +59,6 @@ wire [3:0] dbg_bbusy, dbg_bwait, dbg_bwr, dbg_bgf, dbg_bstw, dbg_fper;
 wire [19:0] stw_wr, stw_busy, stw_wait, stw_stw, stw_fper, stw_gf;
 wire [ 7:0] stw_num;
 wire [19:0] stw_vreg, stw_cmd, stw_xfer, stw_rd;
-wire [18:0] stw_base;
 wire [3:0] dbg_bnum;
 wire [14:0] dbg_gpen;
 wire        dbg_gseen, dbg_gmulti, dbg_palhit;
@@ -256,7 +255,6 @@ sftm_video u_video(
     .stw_cmd      ( stw_cmd       ),
     .stw_xfer     ( stw_xfer      ),
     .stw_rd       ( stw_rd        ),
-    .stw_base     ( stw_base      ),
     .st_bnum      ( dbg_bnum      ),
     .st_gpen      ( dbg_gpen      ),
     .st_gseen     ( dbg_gseen     ),
@@ -377,8 +375,8 @@ wire [127:0] issp_probe = {
 // probe1: the CPU's side of the video interface, plus the display base.
 wire [127:0] issp_probe2 = {
     8'h5C,          // [127:120] signature
-    9'd0,
-    stw_base,       // [110: 92] scanout base address this frame
+    8'd0,
+    stw_wr,         // [111: 92] VRAM writes this frame, EXACT
     stw_rd,         // [ 91: 72] VRAM read strobes
     stw_xfer,       // [ 71: 52] TRANSFER writes (cmd-3 pixel pushes)
     stw_cmd,        // [ 51: 32] COMMAND writes (blit starts)
