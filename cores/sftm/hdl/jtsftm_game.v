@@ -88,6 +88,66 @@ wire [3:0] dbg_lsnd, dbg_lsrom, dbg_lgrm3, dbg_lgrom0, dbg_lgrom1, dbg_lvram;
 // Quartus rejects the NM``_sig token-pasting idiom that iverilog accepts, so
 // this is a small module instantiated once per lane rather than a macro.
 // ---------------------------------------------------------------------------
+// JTAG ROM loader.
+//
+// The SLD hub is reachable only when the FPGA is configured from the .sof over
+// JTAG, and that path skips MiSTer's ROM download. SDRAM does not survive the
+// ~3 s configure -- measured, the first longword read back 0x00808000 against
+// 0x00008000: one bit out, identical across every sample, i.e. retention decay
+// rather than noise. So the program ROM is pushed in over JTAG instead.
+//
+// It writes through the SAME cache lane the CPU reads (mem.yaml main is now
+// rw), so the CPU cannot see a stale line -- a separate write lane over the
+// same region would need an explicit flush.
+//
+// Measured ISSP throughput is 8,620 source writes/s, so 1 MB at 4 bytes per
+// write is about 30 s.
+//
+//   src[31: 0]  data (32-bit word)
+//   src[49:32]  word address (main_addr is [19:2], so 18 bits = 1 MB)
+//   src[50]     toggle: any change performs one write
+//   src[51]     loader active -- holds the CPU off the lane
+// ---------------------------------------------------------------------------
+wire [19:2] cpu_rom_addr;
+wire        cpu_rom_rd;
+
+wire [63:0] ld_src;
+wire        ld_active = ld_src[51];
+wire        ld_toggle = ld_src[50];
+wire [19:2] ld_addr   = ld_src[49:32];
+wire [31:0] ld_data   = ld_src[31:0];
+
+reg  ld_tog_d, ld_busy;
+always @(posedge clk) begin
+    if( rst ) begin
+        ld_tog_d <= 1'b0; ld_busy <= 1'b0;
+    end else begin
+        ld_tog_d <= ld_toggle;
+        if( ld_toggle != ld_tog_d ) ld_busy <= 1'b1;   // new word to write
+        else if( ld_busy && main_ok ) ld_busy <= 1'b0; // lane took it
+    end
+end
+
+assign main_addr = ld_active ? ld_addr : cpu_rom_addr;
+assign main_rd   = ld_active ? 1'b0    : cpu_rom_rd;
+assign main_we   = ld_active & ld_busy;
+assign main_din  = ld_data;
+assign main_dsn  = 4'd0;          // all four bytes
+
+altsource_probe u_issp_ld (
+    .probe  ( 32'hC0DE5A5A ),     // fixed, so the instance is identifiable
+    .source ( ld_src       )
+);
+defparam
+    u_issp_ld.enable_metastability    = "NO",
+    u_issp_ld.instance_id             = "SFLD",
+    u_issp_ld.probe_width             = 32,
+    u_issp_ld.sld_auto_instance_index = "YES",
+    u_issp_ld.sld_instance_index      = 3,
+    u_issp_ld.source_initial_value    = "0",
+    u_issp_ld.source_width            = 64;
+
+// ---------------------------------------------------------------------------
 // JTAG-controlled reset release, and a ROM-survival check.
 //
 // The SLD hub is only reachable when the FPGA is configured over JTAG from the
@@ -133,9 +193,9 @@ sftm_main u_main(
     .clk          ( clk           ),
     .cen          ( e020_cen      ),
 
-    .rom_addr     ( main_addr     ),
+    .rom_addr     ( cpu_rom_addr  ),
     .rom_data     ( main_data     ),
-    .rom_cs       ( main_rd       ),
+    .rom_cs       ( cpu_rom_rd    ),
     .rom_ok       ( main_ok       ),
 
     .joystick1    ( joystick1     ),

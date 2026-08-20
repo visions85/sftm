@@ -109,9 +109,20 @@ sdram:
       rw: false
       blocks: { count: 8, size: 256 }
       at: { bank: 3, offset: "0x0", length: 512kB }
+    # rw so the program ROM can be written over JTAG.
+    #
+    # The SLD hub is only reachable when the FPGA is configured from the .sof
+    # over JTAG, and that skips MiSTer's ROM download; SDRAM does not survive
+    # the ~3 s configure (measured: the first longword came back 0x00808000
+    # against 0x00008000, one bit out and stable, i.e. retention decay). So the
+    # ROM has to be pushed in over JTAG afterwards.
+    #
+    # Writing through the SAME lane the CPU reads makes it coherent for free --
+    # a separate write lane over the same region would leave main's cache
+    # holding stale lines. rw lanes must be among the first four; main is third.
     - name: main
       data_width: 32
-      rw: false
+      rw: true
       blocks: { count: 16, size: 256 }
       at: { bank: 0, offset: "0x0", length: 1MB }
     - name: snd           # byte 0x100000
