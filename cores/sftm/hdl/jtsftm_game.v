@@ -58,6 +58,8 @@ wire [15:0] dbg_peak;
 wire [3:0] dbg_bbusy, dbg_bwait, dbg_bwr, dbg_bgf, dbg_bstw, dbg_fper;
 wire [19:0] stw_wr, stw_busy, stw_wait, stw_stw, stw_fper, stw_gf;
 wire [ 7:0] stw_num;
+wire [19:0] stw_vreg, stw_cmd, stw_xfer, stw_rd;
+wire [18:0] stw_base;
 wire [3:0] dbg_bnum;
 wire [14:0] dbg_gpen;
 wire        dbg_gseen, dbg_gmulti, dbg_palhit;
@@ -250,6 +252,11 @@ sftm_video u_video(
     .stw_fper     ( stw_fper      ),
     .stw_gf       ( stw_gf        ),
     .stw_num      ( stw_num       ),
+    .stw_vreg     ( stw_vreg      ),
+    .stw_cmd      ( stw_cmd       ),
+    .stw_xfer     ( stw_xfer      ),
+    .stw_rd       ( stw_rd        ),
+    .stw_base     ( stw_base      ),
     .st_bnum      ( dbg_bnum      ),
     .st_gpen      ( dbg_gpen      ),
     .st_gseen     ( dbg_gseen     ),
@@ -367,7 +374,17 @@ wire [127:0] issp_probe = {
     8'hA5           // [  7:  0] signature
 };
 
-wire [31:0] issp_probe2 = { 8'h5C, 4'd0, stw_wr[19:0] };  // writes, exact
+// probe1: the CPU's side of the video interface, plus the display base.
+wire [127:0] issp_probe2 = {
+    8'h5C,          // [127:120] signature
+    9'd0,
+    stw_base,       // [110: 92] scanout base address this frame
+    stw_rd,         // [ 91: 72] VRAM read strobes
+    stw_xfer,       // [ 71: 52] TRANSFER writes (cmd-3 pixel pushes)
+    stw_cmd,        // [ 51: 32] COMMAND writes (blit starts)
+    stw_vreg,       // [ 31: 12] all CPU video-register writes
+    12'h5A5         // [ 11:  0] signature
+};
 
 altsource_probe u_issp (
     .probe  ( issp_probe ),
@@ -389,7 +406,7 @@ altsource_probe u_issp2 (
 defparam
     u_issp2.enable_metastability    = "NO",
     u_issp2.instance_id             = "SFWR",
-    u_issp2.probe_width             = 32,
+    u_issp2.probe_width             = 128,
     u_issp2.sld_auto_instance_index = "YES",
     u_issp2.sld_instance_index      = 1,
     u_issp2.source_initial_value    = "0",

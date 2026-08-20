@@ -182,6 +182,7 @@ wire        blit_stallw, blit_waiting, blit_gdone, vram_wpop;
 reg [19:0] bc_busy, bc_wait, bc_stw;
 reg [19:0] fp_cnt;   // clocks since the last frame_end
 reg [19:0] bc_wr, bc_gf;
+reg [19:0] bc_vreg, bc_cmd, bc_xfer, bc_rd;
 reg [ 3:0] bc_num;
 reg [ 7:0] bc_num8;
 reg        lvbl_d, busy_d;
@@ -196,6 +197,8 @@ always @(posedge clk) begin
         st_bstw <= 0;
         stw_wr <= 0; stw_busy <= 0; stw_wait <= 0; stw_stw <= 0;
         stw_fper <= 0; stw_gf <= 0; stw_num <= 0;
+        bc_vreg <= 0; bc_cmd <= 0; bc_xfer <= 0; bc_rd <= 0;
+        stw_vreg <= 0; stw_cmd <= 0; stw_xfer <= 0; stw_rd <= 0; stw_base <= 0;
         lvbl_d  <= 0; busy_d  <= 0;
     end else begin
         lvbl_d <= LVBL;
@@ -246,6 +249,10 @@ always @(posedge clk) begin
             stw_fper <= fp_cnt;
             stw_gf   <= bc_gf;
             stw_num  <= bc_num8;
+            stw_vreg <= bc_vreg;  stw_cmd  <= bc_cmd;
+            stw_xfer <= bc_xfer;  stw_rd   <= bc_rd;
+            stw_base <= line_base;
+            bc_vreg <= 0; bc_cmd <= 0; bc_xfer <= 0; bc_rd <= 0;
             fp_cnt  <= 0;
         end else begin
             if( blit_busy               && ~&bc_busy ) bc_busy <= bc_busy + 20'd1;
@@ -261,6 +268,10 @@ always @(posedge clk) begin
             if( blit_gdone              && ~&bc_gf   ) bc_gf   <= bc_gf   + 20'd1;
             if( blit_rise               && ~&bc_num  ) bc_num  <= bc_num  + 4'd1;
             if( blit_rise               && ~&bc_num8 ) bc_num8 <= bc_num8 + 8'd1;
+            if( vreg_wr                 && ~&bc_vreg ) bc_vreg <= bc_vreg + 20'd1;
+            if( cmd_stb                 && ~&bc_cmd  ) bc_cmd  <= bc_cmd  + 20'd1;
+            if( xfer_stb                && ~&bc_xfer ) bc_xfer <= bc_xfer + 20'd1;
+            if( vram_rd                 && ~&bc_rd   ) bc_rd   <= bc_rd   + 20'd1;
             if(                            ~&fp_cnt ) fp_cnt  <= fp_cnt  + 20'd1;
         end
     end
