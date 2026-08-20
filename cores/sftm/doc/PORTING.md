@@ -1684,3 +1684,55 @@ between `start_insystem_source_probe` and `end_insystem_source_probe` fails with
 which reads like stuck global state and is not -- read-probe.sh kept working
 throughout. Query instance info in a separate invocation, never inside a
 session.
+
+## JTAG ROM loader: working parts and the remaining bug (2026-08-20)
+
+**Working and verified:**
+  - USB Blaster on .74, `DE-SoC [3-1]` (the cable name changes with the USB
+    port -- discover it, never hardcode).
+  - Four ISSP instances enumerate: {0 SFTM} {1 SFWR} {2 SFRN} {3 SFLD}.
+  - 64-bit ISSP source writes work: bit 51 (ld_active) and bit 50 (toggle) both
+    reach the fabric, confirmed by reading probe3 back.
+  - Writes are NOT coalesced. 50 writes with no delay complete in 6 ms and 49
+    of 50 are seen by the fabric, so ~8,300 effective writes/s -- 1 MB in ~30 s.
+  - The `main` lane is rw and the loader can drive it; spaced single writes
+    increment BOTH seen and done (the lane acknowledges).
+  - The ROM image is correct: interleaving the four PROMs with prom0 in the MSB
+    byte gives first longword 0x00008000, matching ground truth. My first
+    ordering gave 0x00800000 and was wrong.
+
+**The remaining bug is in the loader FSM.** Pushing 64 words in one session:
+
+    BEFORE  seen=0 done=0
+    AFTER   seen=1 done=0
+
+One toggle edge taken, zero writes completed. The FSM asserts ld_we, enters
+state 2, waits for main_ok, and never gets it -- and since the toggle is only
+sampled in state 0, every later write is ignored. It is a stall, not a lost
+edge.
+
+Why main_ok arrives for spaced single writes (done went 1,2,3) but not in the
+burst is NOT yet understood, and that gap is the next thing to establish rather
+than patch around.
+
+Fix directions, in order:
+  1. Make the FSM unable to wedge: a timeout in state 2, and a pending-write
+     latch so a toggle arriving mid-transaction is not dropped.
+  2. Probe main_ok itself alongside ld_st, to see whether it is absent or
+     merely missed.
+
+### Bugs already fixed here, each of which mimicked a different fault
+
+  1. FSM reset by `rst` -- the GAME reset, asserted the whole time force_run is
+     low, i.e. exactly while the loader runs. seen stayed 0 and every write was
+     discarded. The loader now takes no reset.
+  2. No settle cycle before sampling main_ok, so a stale ok cleared the request
+     (sftm_vram's arbiter has the same settle for the same reason).
+  3. `write_source_data -value 0` does NOT clear a source; it needs
+     `-value_in_hex` like the writes. ld_active stayed high, forcing main_rd
+     low, so the CPU could never fetch -- which reads exactly like a dead CPU.
+
+Lesson: every one of these presented as a *different* subsystem failing. The
+handshake probe (seen/done) is what made the third one findable in a single
+build instead of by guesswork; add that kind of counter before debugging, not
+after.
