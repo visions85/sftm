@@ -87,6 +87,40 @@ wire [3:0] dbg_lsnd, dbg_lsrom, dbg_lgrm3, dbg_lgrom0, dbg_lgrom1, dbg_lvram;
 
 // Quartus rejects the NM``_sig token-pasting idiom that iverilog accepts, so
 // this is a small module instantiated once per lane rather than a macro.
+// ---------------------------------------------------------------------------
+// JTAG-controlled reset release, and a ROM-survival check.
+//
+// The SLD hub is only reachable when the FPGA is configured over JTAG from the
+// .sof (see doc/PORTING.md). But JTAG configuration skips MiSTer's ROM
+// download, so JTFRAME holds the game in reset and the CPU does nothing --
+// which is why every blitter meter read exactly zero.
+//
+// force_run (ISSP source bit 0) releases the game from reset so it runs with
+// whatever is already in SDRAM. The open question is whether the ROM survives
+// reconfiguration: the SDRAM controller stops refreshing for the ~3 s a
+// configure takes, which is far longer than DRAM retention, so it probably
+// does NOT. m_first answers that directly rather than by assumption -- it
+// latches the first longword the CPU fetches:
+//
+//   0x00008000 -> SDRAM kept the ROM; the game should run and be measurable
+//   anything else -> the ROM decayed, and this route cannot work
+// ---------------------------------------------------------------------------
+wire [7:0] issp_src;
+wire       force_run = issp_src[0];
+wire       rst_g     = rst & ~force_run;
+
+reg [31:0] m_first;
+reg        m_got;
+reg [15:0] m_cnt;
+always @(posedge clk) begin
+    if( rst ) begin
+        m_first <= 32'd0; m_got <= 1'b0; m_cnt <= 16'd0;
+    end else if( main_rd && main_ok ) begin
+        if( !m_got ) begin m_first <= main_data; m_got <= 1'b1; end
+        if( ~&m_cnt ) m_cnt <= m_cnt + 16'd1;
+    end
+end
+
 sftm_laneprobe u_lp_snd  (.rst(rst),.clk(clk),.req(snd_rd  ),.ok(snd_ok  ),.st(dbg_lsnd  ));
 sftm_laneprobe u_lp_srom (.rst(rst),.clk(clk),.req(srom_rd ),.ok(srom_ok ),.st(dbg_lsrom ));
 sftm_laneprobe u_lp_grm3 (.rst(rst),.clk(clk),.req(grm3_rd ),.ok(grm3_ok ),.st(dbg_lgrm3 ));
@@ -95,7 +129,7 @@ sftm_laneprobe u_lp_grom1(.rst(rst),.clk(clk),.req(grom1_rd),.ok(grom1_ok),.st(d
 sftm_laneprobe u_lp_vram (.rst(rst),.clk(clk),.req(vram_rd|vram_we),.ok(vram_ok),.st(dbg_lvram));
 
 sftm_main u_main(
-    .rst          ( rst           ),
+    .rst          ( rst_g         ),
     .clk          ( clk           ),
     .cen          ( e020_cen      ),
 
@@ -183,7 +217,7 @@ sftm_main u_main(
 );
 
 sftm_video u_video(
-    .rst          ( rst           ),
+    .rst          ( rst_g         ),
     .clk          ( clk           ),
     .pxl_cen      ( pxl_cen       ),
 
@@ -267,7 +301,7 @@ sftm_video u_video(
 );
 
 sftm_snd u_snd(
-    .rst          ( rst           ),
+    .rst          ( rst_g         ),
     .clk          ( clk           ),
     .cen          ( snd_cen       ),
     .es_cen       ( es_cen        ),
@@ -409,6 +443,30 @@ defparam
     u_issp2.sld_instance_index      = 1,
     u_issp2.source_initial_value    = "0",
     u_issp2.source_width            = 0;
+
+// ROM-survival probe + the source that releases reset.
+wire [63:0] issp_probe3 = {
+    8'h7E,          // [63:56] signature
+    7'd0,
+    force_run,      // [   48] echo of the source bit
+    m_got,          // [   47] a main fetch has completed
+    m_cnt[14:0],    // [46:32] completed main fetches (saturating)
+    m_first         // [31: 0] FIRST longword the CPU fetched (want 0x00008000)
+};
+
+altsource_probe u_issp3 (
+    .probe  ( issp_probe3 ),
+    .source ( issp_src    )
+);
+defparam
+    u_issp3.enable_metastability    = "NO",
+    u_issp3.instance_id             = "SFRN",
+    u_issp3.probe_width             = 64,
+    u_issp3.sld_auto_instance_index = "YES",
+    u_issp3.sld_instance_index      = 2,
+    u_issp3.source_initial_value    = "0",
+    u_issp3.source_width            = 8;
+
 
 
 // verilator lint_off UNUSEDSIGNAL
