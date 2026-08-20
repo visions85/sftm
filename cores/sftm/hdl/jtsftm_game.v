@@ -88,6 +88,62 @@ wire [3:0] dbg_lsnd, dbg_lsrom, dbg_lgrm3, dbg_lgrom0, dbg_lgrom1, dbg_lvram;
 // Quartus rejects the NM``_sig token-pasting idiom that iverilog accepts, so
 // this is a small module instantiated once per lane rather than a macro.
 // ---------------------------------------------------------------------------
+// Hang hunt. The CPU does its init burst (~102 vreg writes, 2 blits) and then
+// nothing, on a ~watchdog cadence -- it is stuck waiting for something. This
+// samples WHERE.
+//
+// pc_live changes every instruction, far too fast for an asynchronous ISSP
+// read, so it is latched every 2^12 clk (~85 us): stable between latches, so
+// a JTAG read almost never tears, and successive reads (~1 ms apart) give an
+// unbiased sample of where the CPU spends its time. The modal addresses ARE
+// the wait loop.
+//
+// Also: edge counts of the three video interrupts, and the live IPL/vint, so
+// "interrupt never fires" and "interrupt fires but the CPU never takes it"
+// are distinguishable at a glance.
+// ---------------------------------------------------------------------------
+wire [23:0] main_pc;
+wire [ 3:0] main_int;
+
+reg  [11:0] pcs_div = 12'd0;
+reg  [23:0] pc_samp = 24'd0;
+reg  [ 7:0] vbl_cnt = 8'd0, xint_cnt = 8'd0, qint_cnt = 8'd0;
+reg         blit_irq_d = 1'b0, scan_irq_d = 1'b0;
+
+always @(posedge clk) begin
+    pcs_div <= pcs_div + 12'd1;
+    if( pcs_div == 12'd0 ) pc_samp <= main_pc;
+    blit_irq_d <= blit_irq;
+    scan_irq_d <= scan_irq;
+    if( vblank_irq )              vbl_cnt  <= vbl_cnt  + 8'd1;
+    if( blit_irq && !blit_irq_d ) xint_cnt <= xint_cnt + 8'd1;
+    if( scan_irq && !scan_irq_d ) qint_cnt <= qint_cnt + 8'd1;
+end
+
+wire [63:0] issp_probe4 = {
+    8'hE7,          // [63:56] signature
+    pc_samp,        // [55:32] PC, sampled every ~85 us
+    main_int,       // [31:28] {vint, cpu_ipl}
+    vbl_cnt,        // [27:20] vblank_irq pulses (VINT source)
+    xint_cnt,       // [19:12] blit_irq rising edges (XINT source)
+    qint_cnt,       // [11: 4] scan_irq rising edges (QINT source)
+    4'h5            // [ 3: 0] signature nibble
+};
+
+altsource_probe u_issp4 (
+    .probe  ( issp_probe4 ),
+    .source (             )
+);
+defparam
+    u_issp4.enable_metastability    = "NO",
+    u_issp4.instance_id             = "SFPC",
+    u_issp4.probe_width             = 64,
+    u_issp4.sld_auto_instance_index = "YES",
+    u_issp4.sld_instance_index      = 4,
+    u_issp4.source_initial_value    = "0",
+    u_issp4.source_width            = 0;
+
+// ---------------------------------------------------------------------------
 // JTAG ROM loader.
 //
 // The SLD hub is reachable only when the FPGA is configured from the .sof over
@@ -302,7 +358,9 @@ sftm_main u_main(
     .ioctl_dout   ( ioctl_dout    ),
     .ioctl_din    ( ioctl_din     ),
 
-    .st_dout      ( st_main       )
+    .st_dout      ( st_main       ),
+    .st_pc        ( main_pc       ),
+    .st_int       ( main_int      )
 );
 
 sftm_video u_video(

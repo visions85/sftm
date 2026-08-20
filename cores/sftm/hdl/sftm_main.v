@@ -154,7 +154,10 @@ module sftm_main #(
     input      [ 7:0] ioctl_dout,
     output reg [ 7:0] ioctl_din,
        // count of INTSTATE bit2 rising edges
-    output     [ 7:0] st_dout
+    output     [ 7:0] st_dout,
+    // JTAG hang-hunt: live PC and interrupt state (see jtsftm_game u_issp4)
+    output     [23:0] st_pc,
+    output     [ 3:0] st_int
 );
 
 // ---------------------------------------------------------------------------
@@ -659,6 +662,8 @@ TG68KdotC_Kernel #(
 // re-snapshotted per cycle and produced mixed nibbles).
 // ---------------------------------------------------------------------------
 reg [23:0] pc_live, pc_vec, pc_stuck;
+assign st_pc  = pc_live;
+assign st_int = { vint, cpu_ipl };
 reg [23:0] pc_now;           // re-latched each view cycle (coherent nibbles)
 
 // ---------------------------------------------------------------------------
