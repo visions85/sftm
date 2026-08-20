@@ -1736,3 +1736,59 @@ Lesson: every one of these presented as a *different* subsystem failing. The
 handshake probe (seen/done) is what made the third one findable in a single
 build instead of by guesswork; add that kind of counter before debugging, not
 after.
+
+## THE ROOT CAUSE OF EVERYTHING: backup rbf names match MiSTer's core glob (2026-08-20)
+
+**MiSTer resolves `<rbf>sftm</rbf>` by globbing `sftm*.rbf` in _Arcade/cores
+and picking the "newest" (date-suffixed) match. Backup files named
+`sftm_prev_0814.rbf` and `sftm_b59_working.rbf` MATCH THAT GLOB AND WIN.**
+Every "deploy" overwrote `sftm.rbf` while the loader kept running the backup.
+
+Proved on .74: the overlay's view tag advanced at 0.699 s/step -- the Aug-14
+core's diag_cnt[28:25], not the deployed build's [26:23] -- and the moment
+`sftm_prev_0814.rbf` was moved out of cores/ and the MRA reloaded, the SAME
+HPS-loaded sftm.rbf exposed all four ISSP nodes and put the debug constants on
+screen.
+
+This retracts, in one stroke:
+  - "The SLD hub is not activated when the HPS configures the FPGA" -- WRONG.
+    The running rbf simply predated the probes.
+  - "The on-screen overlay does not display debug_view" -- WRONG. The overlay
+    has worked all along; it was showing a different core's debug_view.
+    (Views 0/7/F constants 05/73/FA are now visible on screen.)
+  - The .98 stale-bitstream mystery: `sftm_b59_working.rbf` sat in its cores
+    dir (and on Zaparoo's command line). sync/page-cache had nothing to do
+    with it.
+  - The force_run/JTAG-loader route exists only because of this; it is no
+    longer needed for measurement (kept: it is still useful tooling).
+
+**RULE: never leave a file matching `sftm*.rbf` in _Arcade/cores. Backups go
+in /media/fat/rbf_backups/.** (.98 still has sftm_b59_working.rbf to remove.)
+
+**Consequence for past results:** the backup on .98 was created during the
+build-68 deploy, so every .98 observation from build 68 onward -- including
+"the cache-lanes core boots and renders attract mode" -- may have been of the
+b59 BANKS build. The big_endian conclusion needs re-verification on the now-
+trustworthy .74 channel.
+
+## First genuine measurement (build 88, real ROM, HPS-loaded, 2026-08-20)
+
+1,900 probe samples across two runs, zero signature failures, overlay constants
+verified on screen simultaneously:
+
+    frame period      871,727 clk every sample
+    busiest frame     busy 173,682 clk = 19.9% of a frame
+                      GROM fetch stall 171,867 = 99% OF BUSY
+                      write-FIFO stall 4,596 = 3%
+    COMMAND writes    max 2/frame; most frames zero blits
+    VRAM writes       max 147/frame (a background needs 92,160)
+    screen            full-frame noise; almost nothing is ever drawn
+
+Two findings:
+  1. **The blitter's bottleneck is the GROM fetch path, 99:3 over the write
+     FIFO.** The cache-lanes conversion optimised the wrong side.
+  2. The game barely blits at all and the screen is uniform garbage -- the
+     first trustworthy look at this core running real ROM. Whether that is the
+     cache-lanes design misbehaving or a build-88-specific regression (main
+     lane rw + loader mux) is THE next question, now answerable with working
+     instruments: screenshot + overlay + ISSP all agree on one machine.
