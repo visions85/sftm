@@ -1578,3 +1578,56 @@ next task, and everything else is blocked behind it. Options, cheapest first:
     Discover it, never hardcode it: docker/prog_sof.sh does this.
   - JTAG-programming while Linux is running can hang the HPS. It did on .98,
     which then would not boot. Budget a cold boot after each programming.
+
+## Why the SLD hub is invisible with an HPS-loaded rbf (2026-08-20)
+
+**Answer: the JTAG-to-fabric SLD hub is not activated when MiSTer's HPS
+configures the FPGA. It is a configuration-path property, not anything in our
+RTL or build.** Ruled out, each by direct test:
+
+  - **Not a file or build mismatch.** cores/sftm/mister/output_files/sftm.rbf
+    and sftm.sof come from the same assembly (same timestamp), the promoted
+    release/mister copy has the same md5, and the device has exactly one
+    sftm.rbf which matches it.
+  - **Not compression.** The assembler emits a COMPRESSED rbf (4,245,988 B)
+    while `quartus_cpf -c sftm.sof out.rbf` gives 7,007,204 B uncompressed --
+    a real difference, since stock MiSTer Cyclone V cores are the uncompressed
+    kind. Loading the uncompressed rbf changes nothing: still no hub.
+  - **Not the JTAG TAP or cable.** `Captured IR after reset = (0555) [14]` is
+    byte-identical in both states, so the chain is in the same state either way.
+  - **Not a half-configured FPGA.** /sys/class/fpga_manager reports `operating`
+    and all three fpga_bridges are `enabled`.
+  - **Not the debug-overlay patch.** The viewmux pin applied in build 83 and
+    jtframe_debug_viewmux was elaborated into it.
+
+The discriminator is `jtagconfig --debug`:
+
+    HPS-loaded rbf : chain lists SOCVHPS + 5CSEBA6, and NOTHING else
+    JTAG .sof      : adds `Design hash 4E429CD5C53699F31C61`
+                     + Node 00486E00 Source/Probe #0
+                     + Node 00486E01 Source/Probe #1
+
+`Design hash` is itself read out of the hub, so its absence means the hub is not
+responding at all -- the fabric is configured and running, but its JTAG debug
+path is inert.
+
+### Consequence, and what to do about it
+
+    HPS-loaded .rbf  -> game runs (ROM downloaded), NO ISSP
+    JTAG-loaded .sof -> ISSP works, but the ROM download never runs and JTFRAME
+                        holds the game in reset, so the CPU does nothing
+
+So a RUNNING game cannot currently be observed through a trustworthy channel.
+Options, cheapest first:
+
+  1. Add an ISSP **source** bit that releases the game from reset after a JTAG
+     configure, and test whether SDRAM still holds the ROM across
+     reconfiguration. One build; settles it either way.
+  2. Preload the ROM over JTAG.
+  3. Repair the on-screen overlay instead -- but it is independently suspect:
+     with the rbf loaded, the overlay's TAG nibble is correct while the PAYLOAD
+     is not (view F shows F0 where the build hardcodes FA), which is its own
+     unexplained fault.
+
+Operational: JTAG-programming while Linux runs can hang the HPS -- it did on
+.98, which then would not boot. Budget a cold boot after each programming.
