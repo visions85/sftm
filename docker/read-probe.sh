@@ -26,6 +26,7 @@ printf '%s\n' \
 'set dev \"\"' \
 'foreach d [get_device_names -hardware_name \$hw] { if { [string match \"*5CSEBA6*\" \$d] } { set dev \$d } }' \
 'if { \$dev eq \"\" } { puts \"ERROR: no Cyclone V\"; exit 1 }' \
+'catch { end_insystem_source_probe }' \
 'start_insystem_source_probe -hardware_name \$hw -device_name \$dev' \
 'for { set i 0 } { \$i < ${N} } { incr i } { puts \"RAW0 [read_probe_data -instance_index 0]\"; puts \"RAW1 [read_probe_data -instance_index 1]\"; after ${D} }' \
 'end_insystem_source_probe' > /tmp/raw.tcl

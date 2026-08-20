@@ -1631,3 +1631,56 @@ Options, cheapest first:
 
 Operational: JTAG-programming while Linux runs can hang the HPS -- it did on
 .98, which then would not boot. Budget a cold boot after each programming.
+
+## ISSP source bit: the JTAG route cannot measure the real game (2026-08-20)
+
+The `force_run` source bit works exactly as designed, and it answers the
+question with a clean negative.
+
+Sequence: MRA load (ROM downloaded to SDRAM) -> JTAG configure from the .sof
+(hub appears, game held in reset) -> `write_source_data -instance_index 2
+-value 1` -> read probe2.
+
+    31 samples, 0 signature failures
+    force_run echo   0 on the first sample, then 1        <- the write took
+    m_got            1 in every sample
+    main fetches     saturated at 32767                   <- CPU running hard
+    FIRST longword   0x00808000 in all 31 samples, want 0x00008000
+
+**SDRAM does not survive reconfiguration cleanly.** The first longword is wrong
+by exactly one bit (0x00800000) and is *stable* across every sample, so this is
+retention decay during the ~3 s configure, not random noise -- the controller
+stops refreshing for far longer than DRAM holds charge. Longword 0 is the
+68020's initial SP and longword 1 its initial PC, so the CPU starts on a bad
+vector table.
+
+With the game released, the meters then read:
+
+    main fetches      saturated      CPU is executing something
+    CPU vreg writes   0              ...but never touches the video hardware
+    COMMAND / TRANSFER 0
+    blitter busy      0
+    VRAM read strobes 354,204/frame  scanout healthy
+    frame period      871,727 clk    timing exact
+
+A CPU fetching hard while writing no video register is what executing garbage
+looks like. So the "the CPU never asks for a blit" verdict this produces is NOT
+a statement about the real game -- it is a statement about a CPU running a
+decayed ROM. **This route is dead for measuring real behaviour.**
+
+What remains, then:
+  1. Preload the program ROM over JTAG after configuring. Only ~1 MB is needed
+     to get the CPU running real code, though GROM matters for blitting.
+  2. Repair the on-screen overlay, whose own fault is still unexplained: with
+     an HPS-loaded rbf the TAG nibble is correct while the PAYLOAD is not
+     (view F shows F0 where the build hardcodes FA).
+  3. Keep digging on why HPS configuration leaves the SLD hub inert.
+
+### Tooling gotcha worth keeping
+
+`get_insystem_source_probe_instance_info` opens its OWN session. Calling it
+between `start_insystem_source_probe` and `end_insystem_source_probe` fails with
+"There is already an active In-System Sources and Probes session started",
+which reads like stuck global state and is not -- read-probe.sh kept working
+throughout. Query instance info in a separate invocation, never inside a
+session.
