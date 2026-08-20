@@ -123,25 +123,34 @@ wire [31:0] ld_data   = ld_src[31:0];
 // does the same thing (A_WAIT sets `settle` before testing vram_ok) -- getting
 // this wrong is what made the first loader attempt write nothing while
 // appearing to run at full speed.
-reg        ld_tog_d;
-reg [1:0]  ld_st;
-reg        ld_we;
-reg [15:0] ld_done;   // writes the lane actually ACCEPTED
-reg [15:0] ld_seen;   // toggle edges seen
+// NOT reset by `rst`. rst is the GAME reset and is asserted the whole time
+// force_run is low -- which is exactly when the loader runs. Holding the FSM in
+// reset during loading meant it never saw a single toggle edge: probe3 read
+// seen=0 after pushing 64 words, and every write was silently discarded.
+// FPGA registers come up at their declared value after configuration, so the
+// loader simply does not take a reset.
+reg        ld_tog_d = 1'b0;
+reg [1:0]  ld_st    = 2'd0;
+reg        ld_we    = 1'b0;
+reg [15:0] ld_done  = 16'd0;   // writes the lane ACCEPTED
+reg [15:0] ld_seen  = 16'd0;   // toggle edges seen
+
 always @(posedge clk) begin
-    if( rst ) begin
-        ld_tog_d <= 1'b0; ld_st <= 2'd0; ld_we <= 1'b0;
-        ld_done <= 16'd0; ld_seen <= 16'd0;
-    end else begin
-        ld_tog_d <= ld_toggle;
-        case( ld_st )
-            2'd0: if( ld_toggle != ld_tog_d ) begin ld_we <= 1'b1; ld_st <= 2'd1;
-                                                     if( ~&ld_seen ) ld_seen <= ld_seen + 16'd1; end
-            2'd1: ld_st <= 2'd2;                                   // settle
-            2'd2: if( main_ok ) begin ld_we <= 1'b0; ld_st <= 2'd0;
-                                       if( ~&ld_done ) ld_done <= ld_done + 16'd1; end
-        endcase
-    end
+    ld_tog_d <= ld_toggle;
+    case( ld_st )
+        2'd0: if( ld_toggle != ld_tog_d ) begin
+                  ld_we <= 1'b1; ld_st <= 2'd1;
+                  if( ~&ld_seen ) ld_seen <= ld_seen + 16'd1;
+              end
+        // settle: main_ok can still be high from the previous transaction, so
+        // sampling it immediately clears the request on a stale ok and the
+        // write is dropped (sftm_vram's arbiter does the same settle).
+        2'd1: ld_st <= 2'd2;
+        2'd2: if( main_ok ) begin
+                  ld_we <= 1'b0; ld_st <= 2'd0;
+                  if( ~&ld_done ) ld_done <= ld_done + 16'd1;
+              end
+    endcase
 end
 
 assign main_addr = ld_active ? ld_addr : cpu_rom_addr;
