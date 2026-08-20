@@ -45,8 +45,11 @@ for i, v in enumerate(w):
     print('write_source_data -instance_index 3 -value 0x%016X -value_in_hex' % val)
 print('puts \"LOADED %d words in [expr {[clock milliseconds]-\$t0}] ms\"' % len(w))
 # drop loader_active so the CPU owns the lane again, then release reset
-print('write_source_data -instance_index 3 -value 0')
-print('write_source_data -instance_index 2 -value 1')
+# MUST be -value_in_hex like the loads: a bare '-value 0' does NOT clear the
+# source, leaving ld_active high, which forces main_rd low so the CPU can never
+# fetch. That looked exactly like 'the CPU is dead'.
+print('write_source_data -instance_index 3 -value 0x0000000000000000 -value_in_hex')
+print('write_source_data -instance_index 2 -value 0x01 -value_in_hex')
 print('after 500')
 print('for { set i 0 } { \$i < 20 } { incr i } { puts \"P3 [read_probe_data -instance_index 2]\"; after 60 }')
 print('end_insystem_source_probe')

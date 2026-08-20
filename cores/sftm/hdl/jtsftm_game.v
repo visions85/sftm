@@ -117,20 +117,31 @@ wire        ld_toggle = ld_src[50];
 wire [19:2] ld_addr   = ld_src[49:32];
 wire [31:0] ld_data   = ld_src[31:0];
 
-reg  ld_tog_d, ld_busy;
+// The lane needs a SETTLE cycle before ok is meaningful: main_ok can still be
+// high from the previous transaction, and sampling it immediately clears the
+// request on a stale ok so the write is silently dropped. sftm_vram's arbiter
+// does the same thing (A_WAIT sets `settle` before testing vram_ok) -- getting
+// this wrong is what made the first loader attempt write nothing while
+// appearing to run at full speed.
+reg       ld_tog_d;
+reg [1:0] ld_st;
+reg       ld_we;
 always @(posedge clk) begin
     if( rst ) begin
-        ld_tog_d <= 1'b0; ld_busy <= 1'b0;
+        ld_tog_d <= 1'b0; ld_st <= 2'd0; ld_we <= 1'b0;
     end else begin
         ld_tog_d <= ld_toggle;
-        if( ld_toggle != ld_tog_d ) ld_busy <= 1'b1;   // new word to write
-        else if( ld_busy && main_ok ) ld_busy <= 1'b0; // lane took it
+        case( ld_st )
+            2'd0: if( ld_toggle != ld_tog_d ) begin ld_we <= 1'b1; ld_st <= 2'd1; end
+            2'd1: ld_st <= 2'd2;                                   // settle
+            2'd2: if( main_ok ) begin ld_we <= 1'b0; ld_st <= 2'd0; end
+        endcase
     end
 end
 
 assign main_addr = ld_active ? ld_addr : cpu_rom_addr;
 assign main_rd   = ld_active ? 1'b0    : cpu_rom_rd;
-assign main_we   = ld_active & ld_busy;
+assign main_we   = ld_active & ld_we;
 assign main_din  = ld_data;
 assign main_dsn  = 4'd0;          // all four bytes
 
