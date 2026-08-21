@@ -106,7 +106,9 @@ sdram:
       # forces little-endian for non-32-bit lanes) and does not matter: vram
       # is pure RAM, never downloaded, so sftm_vram defines the slot layout
       # on both the write and the read side.
-      data_width: 64
+      # 128-bit from build 112: 8 pens per transaction, words assembled at
+      # push time in sftm_vram's open-entry combiner.
+      data_width: 128
       rw: true
       # Flushed once per frame at vblank; the flush also invalidates the
       # vscan lane (below), which is how the split stays coherent.
@@ -168,7 +170,7 @@ sdram:
     # scanout shows content at most one frame old -- the banks-era `vramrd`
     # alias pattern, now with the cache generation doing the invalidation.
     - name: vscan
-      data_width: 64
+      data_width: 128
       rw: false
       blocks: { count: 8, size: 256 }
       at: { bank: 3, offset: "0x40000", length: 2MB }

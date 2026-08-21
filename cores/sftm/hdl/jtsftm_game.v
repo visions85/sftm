@@ -109,59 +109,12 @@ wire [31:0] main_vec_sp, main_vec_pc;
 wire        main_derail;
 wire [ 3:0] main_int;
 
-reg  [11:0] pcs_div = 12'd0;
-reg  [23:0] pc_samp = 24'd0;
-reg  [15:0] op_samp = 16'd0;
-reg  [ 7:0] vbl_cnt = 8'd0, xint_cnt = 8'd0, qint_cnt = 8'd0;
-reg         blit_irq_d = 1'b0, scan_irq_d = 1'b0;
+// SFPC/SFDR probes RETIRED (build 112): the boot-era pc/opcode sampler and
+// derail flight recorder earned their keep through b100 and stay in git for
+// revival; their area buys the 128-bit vram lane. The meters (SFTM/SFWR),
+// JTAG inputs/reset (SFRN), loader (SFLD) and sound triage (SFSN) remain.
 
-always @(posedge clk) begin
-    pcs_div <= pcs_div + 12'd1;
-    if( pcs_div == 12'd0 ) begin pc_samp <= main_pc; op_samp <= main_op; end
-    blit_irq_d <= blit_irq;
-    scan_irq_d <= scan_irq;
-    if( vblank_irq )              vbl_cnt  <= vbl_cnt  + 8'd1;
-    if( blit_irq && !blit_irq_d ) xint_cnt <= xint_cnt + 8'd1;
-    if( scan_irq && !scan_irq_d ) qint_cnt <= qint_cnt + 8'd1;
-end
 
-// (pc, opcode) latched TOGETHER at the same instruction fetch, so each sample
-// pairs an address with the 16-bit word the CPU actually consumed there --
-// comparable directly against the program image to detect fetch-path skew.
-wire [127:0] issp_probe4 = {
-    8'hE7,          // [127:120] signature
-    pc_samp,        // [119: 96] PC
-    op_samp,        // [ 95: 80] opcode fetched at that PC
-    main_int,       // [ 79: 76] {vint, cpu_ipl}
-    vbl_cnt,        // [ 75: 68] vblank_irq pulses
-    xint_cnt,       // [ 67: 60] blit_irq rising edges
-    qint_cnt,       // [ 59: 52] scan_irq rising edges
-    48'd0,          // [ 51:  4] pad
-    4'h5            // [  3:  0] signature nibble
-};
-
-wire [127:0] issp_probe5 = {
-    8'hD7,              // [127:120] signature
-    3'd0,
-    main_derail,        // [116] recorder fired since last reset
-    main_lastrom,       // [115:92] last ROM-region fetch address
-    main_firstbad,      // [91:68]  first unmapped fetch address
-    main_vec_sp,        // [67:36]  SSP longword as the CPU read it
-    main_vec_pc,        // [35:4]   PC  longword as the CPU read it
-    4'h9                // [3:0] signature
-};
-altsource_probe u_issp5 (
-    .probe  ( issp_probe5 ),
-    .source (             )
-);
-defparam
-    u_issp5.enable_metastability    = "NO",
-    u_issp5.instance_id             = "SFDR",
-    u_issp5.probe_width             = 128,
-    u_issp5.sld_auto_instance_index = "YES",
-    u_issp5.sld_instance_index      = 5,
-    u_issp5.source_initial_value    = "0",
-    u_issp5.source_width            = 0;
 
 // ---------------------------------------------------------------------------
 // Sound triage (build 106). The cache core routes both the battery-screen
@@ -206,18 +159,6 @@ defparam
     u_issp6.source_initial_value    = "0",
     u_issp6.source_width            = 0;
 
-altsource_probe u_issp4 (
-    .probe  ( issp_probe4 ),
-    .source (             )
-);
-defparam
-    u_issp4.enable_metastability    = "NO",
-    u_issp4.instance_id             = "SFPC",
-    u_issp4.probe_width             = 128,
-    u_issp4.sld_auto_instance_index = "YES",
-    u_issp4.sld_instance_index      = 4,
-    u_issp4.source_initial_value    = "0",
-    u_issp4.source_width            = 0;
 
 // ---------------------------------------------------------------------------
 // JTAG ROM loader.

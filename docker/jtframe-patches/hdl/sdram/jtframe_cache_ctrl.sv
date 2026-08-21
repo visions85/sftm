@@ -168,8 +168,8 @@ localparam [4:0] S_INIT_CLEAR    = 5'd0,
 // vram lane is the only 64-bit lane with 64 blocks, so this selects exactly
 // the lane that writes. (The clean form is a parameter plumbed through
 // jtframe_cache and the mux; do that when upstreaming.)
-localparam integer WNF    = DW == 64 && BLOCKS == 64 ? 1 : 0;
-localparam integer NFWRDS = WNF != 0 ? WORDS/4 : 1;   // 64-bit words per block
+localparam integer WNF    = (DW == 64 || DW == 128) && BLOCKS == 64 ? 1 : 0;
+localparam integer NFWRDS = WNF != 0 ? WORDS/HALF_PER_WORD : 1;  // DW-words per block
 reg  [NFWRDS-1:0] wvalid [0:BLOCKS-1];
 reg  [NFWRDS-1:0] merge_wvalid_l;
 reg               claim_pend, merge_same, merge_victim;
@@ -238,7 +238,7 @@ wire        nf_vic_part = WNF != 0 && !(&wvalid[victim_blk_now]);
 wire        nf_scan_part= WNF != 0 && !(&wvalid[scan_blk_now]);
 wire        nf_merge    = merge_same || merge_victim;
 wire        nf_skip0    = nf_merge && merge_wvalid_l[0];
-wire        nf_skipw    = nf_merge && merge_wvalid_l[(integer'(stream_word)/4) % NFWRDS];
+wire        nf_skipw    = nf_merge && merge_wvalid_l[(integer'(stream_word)/HALF_PER_WORD) % NFWRDS];
 
 assign miss_busy = st != S_IDLE;
 assign fill_done = fill_tail_seen;

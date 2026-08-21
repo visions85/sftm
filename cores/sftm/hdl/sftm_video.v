@@ -70,11 +70,11 @@ module sftm_video(
     output            grm3_rd,
     input             grm3_ok,
 
-    // VRAM SDRAM bus (64-bit rw cache lane, 4 pens per word, vblank flush)
-    output     [20:3] vram_addr,
-    input      [63:0] vram_data,
-    output     [63:0] vram_din,
-    output     [ 7:0] vram_dsn,
+    // VRAM SDRAM bus (128-bit rw cache lane, 8 pens per word, vblank flush)
+    output     [20:4] vram_addr,
+    input      [127:0] vram_data,
+    output     [127:0] vram_din,
+    output     [15:0] vram_dsn,
     output            vram_we,
     output            vram_rd,
     input             vram_ok,
@@ -82,9 +82,9 @@ module sftm_video(
     input             vram_flushing,
     input             vram_flush_done,
 
-    // scanout's read-only vscan lane (build 109)
-    output     [20:3] vscan_addr,
-    input      [63:0] vscan_data,
+    // scanout's read-only vscan lane (128-bit from build 112)
+    output     [20:4] vscan_addr,
+    input      [127:0] vscan_data,
     output            vscan_rd,
     input             vscan_ok,
 

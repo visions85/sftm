@@ -8,27 +8,34 @@
     Street Fighter: The Movie -- VRAM in SDRAM (see doc/PHASE2-DESIGN.md).
 
     2 MB (2 planes x 512x1024 x 16-bit pen) reached through TWO jtframe cache
-    lanes over the same bank-3 window (build 109):
+    lanes over the same bank-3 window:
 
-      vram  (rw, 64-bit): blitter writes (run-coalesced) and blitter reads.
-      vscan (ro, 64-bit): the scanline prefetch, on its own port.
+      vram  (rw, 128-bit): blitter writes and blitter reads.
+      vscan (ro, 128-bit): the scanline prefetch, on its own port.
 
-    b107/b108 metering showed the single shared port serialising ~2.5k
-    prefetch transactions per frame against the write drain; with the split,
-    the write path owns its port and the prefetch runs concurrently.
+    128-bit from build 112: EIGHT pens per transaction. The write side no
+    longer peeks runs at the pop side (an 8-deep async peek was too much mux
+    for a 99%-full device); instead an OPEN-ENTRY COMBINER assembles words
+    at push time: incoming pens merge into an open {word, data, dsn} register
+    while they target the same 128-bit word, and the FIFO stores only closed
+    words, one transaction each. A short linger (CLOSE_LINGER clk) before an
+    idle entry self-closes lets sequential runs batch even when the port is
+    keeping up; under backpressure entries fill to 8 pens naturally. Merging
+    only ever touches the newest, not-yet-issued entry, and entries issue in
+    order, so write ordering is exact; a later entry to the same word simply
+    wins on its slots, as the pen stream did.
 
-    Coherency is a once-per-frame contract instead of per-access: sftm_video
-    pulses frame_flush at vblank, the vram lane writes back every dirty
-    block, and the flush INVALIDATES the vscan lane (mem.yaml
-    flush.invalidates), so scanout content is at most one frame old --
-    uniformly, which reads as latency, not corruption. The prefetch is idle
-    during vblank (line_go fires only for visible lines), so the
-    invalidation never races a fill. Blitter READS stay on the rw lane:
-    shiftreg source rows and cmd-3 read-modify-write need the queued writes,
-    so reads still wait for the FIFO to drain (wf_empty).
+    Coherency is a once-per-frame contract: sftm_video pulses frame_flush at
+    vblank, the vram lane writes back every dirty block, and the flush
+    INVALIDATES the vscan lane (mem.yaml flush.invalidates), so scanout
+    content is at most one frame old -- uniformly, which reads as latency,
+    not corruption. The prefetch is idle during vblank, so the invalidation
+    never races a fill. Blitter READS stay on the rw lane and wait for the
+    write side to drain completely (wf_empty covers the open entry), so
+    shiftreg source rows and cmd-3 read-modify-write see every queued write.
 
     Slot layout (both lanes ENDIAN=0, vram never downloaded, ours to
-    define): pen p lives in word[16*p[1:0] +: 16], ascending pens in
+    define): pen p lives in word[16*p[2:0] +: 16], ascending pens in
     ascending slots.
 */
 
@@ -36,11 +43,11 @@ module sftm_vram(
     input             rst,
     input             clk,
 
-    // jtframe cache lane `vram`, bank 3, 64-bit, rw + flush
-    output reg [20:3] vram_addr,     // 64-bit word index within the lane
-    input      [63:0] vram_data,     // read data
-    output reg [63:0] vram_din,      // write data
-    output reg [ 7:0] vram_dsn,      // byte disables, active low
+    // jtframe cache lane `vram`, bank 3, 128-bit, rw + flush
+    output reg [20:4] vram_addr,     // 128-bit word index within the lane
+    input      [127:0] vram_data,
+    output reg [127:0] vram_din,
+    output reg [15:0] vram_dsn,      // byte disables, active low
     output reg        vram_we,
     output reg        vram_rd,
     input             vram_ok,
@@ -48,9 +55,9 @@ module sftm_vram(
     input             vram_flushing,
     input             vram_flush_done,
 
-    // jtframe cache lane `vscan`, bank 3, 64-bit, read-only (scanout)
-    output reg [20:3] vscan_addr,
-    input      [63:0] vscan_data,
+    // jtframe cache lane `vscan`, bank 3, 128-bit, read-only (scanout)
+    output reg [20:4] vscan_addr,
+    input      [127:0] vscan_data,
     output reg        vscan_rd,
     input             vscan_ok,
 
@@ -84,88 +91,77 @@ module sftm_vram(
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
+localparam [ 2:0] CLOSE_LINGER = 3'd6;   // clk an idle open entry waits
 
 // The lanes are placed by `at: offset` in cfg/mem.yaml (word 0x40000 of
 // bank 3, byte 0x80000, clear of grm3's 512 kB). No bias here.
 
 // ---------------------------------------------------------------------------
-// write FIFO (16 deep)
+// Open-entry combiner + word FIFO (16 closed entries)
 // ---------------------------------------------------------------------------
-reg [35:0] wfifo[0:15];              // {plane, addr[18:0], data[15:0]}
-reg [ 3:0] wf_wr, wf_rd;
-reg [ 4:0] wf_cnt;
+reg [160:0] wfifo[0:15];             // {word[16:0], dsn[15:0], data[127:0]}
+reg [ 3:0]  wf_wr, wf_rd;
+reg [ 4:0]  wf_cnt;                  // CLOSED entries only
+
+reg         open_vld;
+reg [16:0]  open_word;               // {plane, pen[18:3]}
+reg [127:0] open_data;
+reg [15:0]  open_dsn;
+reg [ 2:0]  open_age;                // counts down to the idle self-close
 
 wire wf_full  = wf_cnt == 5'd16;
-wire wf_empty = wf_cnt == 5'd0;
+wire wf_empty = wf_cnt == 5'd0 && !open_vld;
 assign vw_rdy = !wf_full;
 
-wire wf_push = vw_req && !wf_full;
-wire wf_pop;        // driven by the sequencer below (pop at issue)
-wire [2:0] wrun;    // entries consumed by this pop (1..4)
+wire [16:0] pen_word = { vw_plane, vw_addr[18:3] };
+wire [ 2:0] pen_slot = vw_addr[2:0];
+
+wire wf_pop;                          // pop at issue (sequencer below)
+wire push       = vw_req && !wf_full;
+wire push_merge = push &&  open_vld && open_word == pen_word;
+wire push_new   = push && !push_merge;
+// close the open entry: displaced by a new word, or idle long enough --
+// never into a full FIFO (the displaced case is already gated by vw_rdy)
+wire close_out  = open_vld && !wf_full && ( push_new ||
+                                (open_age == 3'd0 && !push_merge) );
 
 always @(posedge clk) begin
     if( rst ) begin
-        wf_wr  <= 0;
-        wf_rd  <= 0;
-        wf_cnt <= 0;
+        wf_wr    <= 0;
+        wf_rd    <= 0;
+        wf_cnt   <= 0;
+        open_vld <= 0;
+        open_dsn <= 16'hFFFF;
     end else begin
-        if( wf_push ) begin
-            wfifo[wf_wr] <= { vw_plane, vw_addr, vw_data };
-            wf_wr <= wf_wr + 4'd1;
+        if( close_out ) begin
+            wfifo[wf_wr] <= { open_word, open_dsn, open_data };
+            wf_wr        <= wf_wr + 4'd1;
+            if( !push_new ) open_vld <= 1'b0;
         end
+        if( push_new ) begin
+            open_vld  <= 1'b1;
+            open_word <= pen_word;
+            open_data <= {8{vw_data}};
+            open_dsn  <= 16'hFFFF & ~(16'h0003 << {pen_slot, 1'b0});
+            open_age  <= CLOSE_LINGER;
+        end else if( push_merge ) begin
+            open_data[16*pen_slot +: 16] <= vw_data;
+            open_dsn [ 2*pen_slot +:  2] <= 2'b00;
+            open_age  <= CLOSE_LINGER;
+        end else if( open_vld && open_age != 3'd0 )
+            open_age <= open_age - 3'd1;
+
         if( wf_pop )
-            wf_rd <= wf_rd + {1'b0, wrun};
-        case( {wf_push, wf_pop} )
+            wf_rd <= wf_rd + 4'd1;
+        case( {close_out, wf_pop} )
             2'b10: wf_cnt <= wf_cnt + 5'd1;
-            2'b01: wf_cnt <= wf_cnt - {2'd0, wrun};
-            2'b11: wf_cnt <= wf_cnt - {2'd0, wrun} + 5'd1;
+            2'b01: wf_cnt <= wf_cnt - 5'd1;
             default: ;
         endcase
     end
 end
 
-// ---------------------------------------------------------------------------
-// Run coalescing: up to FOUR FIFO entries that continue head's pen sequence
-// inside one 64-bit lane word issue as a single write. A push cannot alias
-// the peeked entries: wf_wr = wf_rd + wf_cnt and the peeks are guarded by
-// wf_cnt.
-// ---------------------------------------------------------------------------
-wire [35:0] e0 = wfifo[wf_rd];
-wire [35:0] e1 = wfifo[wf_rd + 4'd1];
-wire [35:0] e2 = wfifo[wf_rd + 4'd2];
-wire [35:0] e3 = wfifo[wf_rd + 4'd3];
-wire [19:0] p0 = { e0[35], e0[34:16] };   // {plane, pen}
-
-wire run1 = wf_cnt >= 5'd2 && {e1[35],e1[34:16]} == p0 + 20'd1 && p0[1:0] != 2'd3;
-wire run2 = wf_cnt >= 5'd3 && {e2[35],e2[34:16]} == p0 + 20'd2 && !p0[1]   && run1;
-wire run3 = wf_cnt >= 5'd4 && {e3[35],e3[34:16]} == p0 + 20'd3 && p0[1:0] == 2'd0 && run2;
-assign wrun = run3 ? 3'd4 : run2 ? 3'd3 : run1 ? 3'd2 : 3'd1;
-
-wire [1:0] q0 = p0[1:0];
-wire [1:0] q1 = q0 + 2'd1;
-wire [1:0] q2 = q0 + 2'd2;
-wire [1:0] q3 = q0 + 2'd3;
-
-reg [63:0] wdin;
-reg [ 7:0] wdsn;
-always @* begin
-    wdin = 64'd0;
-    wdsn = 8'hFF;
-    wdin[16*q0 +: 16] = e0[15:0];
-    wdsn[ 2*q0 +:  2] = 2'b00;
-    if( wrun >= 3'd2 ) begin
-        wdin[16*q1 +: 16] = e1[15:0];
-        wdsn[ 2*q1 +:  2] = 2'b00;
-    end
-    if( wrun >= 3'd3 ) begin
-        wdin[16*q2 +: 16] = e2[15:0];
-        wdsn[ 2*q2 +:  2] = 2'b00;
-    end
-    if( wrun == 3'd4 ) begin
-        wdin[16*q3 +: 16] = e3[15:0];
-        wdsn[ 2*q3 +:  2] = 2'b00;
-    end
-end
+wire [160:0] head = wfifo[wf_rd];
 
 // ---------------------------------------------------------------------------
 // line buffers (2 x 512 x 16)
@@ -192,15 +188,14 @@ end
 assign scan_pen = line_sel ? lb_q0 : lb_q1;
 
 // ---------------------------------------------------------------------------
-// Scanline prefetch: its own sequencer on the read-only vscan lane. 96-97
-// word fetches per line against a 3048-clk line budget -- no arbitration
-// with the blitter at all any more.
+// Scanline prefetch: its own sequencer on the read-only vscan lane. 48-49
+// word fetches per line against a 3048-clk line budget.
 // ---------------------------------------------------------------------------
 reg        pf_active;
-reg [18:2] pf_j;        // 64-bit word index being fetched (pen index >> 2)
+reg [18:3] pf_j;        // 128-bit word index being fetched (pen index >> 3)
 reg [ 9:0] pf_w;        // pens delivered to the line buffer (0..384)
-reg [ 1:0] pf_slot;     // next slot of pf_data to unpack
-reg [63:0] pf_data;
+reg [ 2:0] pf_slot;     // next slot of pf_data to unpack
+reg [127:0] pf_data;
 reg        psettle;
 
 localparam [1:0] P_IDLE=2'd0, P_WAIT=2'd1, P_UNPK=2'd2;
@@ -221,9 +216,9 @@ always @(posedge clk) begin
 
         if( line_go ) begin
             pf_active <= 1;
-            pf_j      <= line_base[18:2];   // word containing the first pen
+            pf_j      <= line_base[18:3];   // word containing the first pen
             pf_w      <= 0;
-            pf_slot   <= line_base[1:0];    // first pen's slot
+            pf_slot   <= line_base[2:0];    // first pen's slot
         end
 
         case( pstate )
@@ -242,7 +237,7 @@ always @(posedge clk) begin
             else if( vscan_ok ) begin
                 vscan_rd <= 0;
                 pf_data  <= vscan_data;
-                pf_j     <= pf_j + 17'd1;
+                pf_j     <= pf_j + 16'd1;
                 pstate   <= P_UNPK;
             end
         end
@@ -253,12 +248,12 @@ always @(posedge clk) begin
                 lb_wdata <= pf_data[16*pf_slot +: 16];
                 pf_w     <= pf_w + 10'd1;
             end
-            if( pf_slot == 2'd3 || pf_w + 10'd1 >= 10'd384 ) begin
-                pf_slot <= 2'd0;
+            if( pf_slot == 3'd7 || pf_w + 10'd1 >= 10'd384 ) begin
+                pf_slot <= 3'd0;
                 if( pf_w + 10'd1 >= 10'd384 ) pf_active <= 0;
                 pstate  <= P_IDLE;
             end else
-                pf_slot <= pf_slot + 2'd1;
+                pf_slot <= pf_slot + 3'd1;
         end
         default: pstate <= P_IDLE;
         endcase
@@ -267,16 +262,13 @@ end
 
 // ---------------------------------------------------------------------------
 // Write-lane sequencer: blitter reads and writes only. A blitter READ waits
-// for the write FIFO to drain (wf_empty), because the shiftreg and cmd-3
-// paths read back pens this same blit just wrote -- reads and writes stay
-// mutually exclusive by construction. The FIFO is popped at ISSUE, once the
-// head run is latched. rd and wr are SEPARATE request strobes on a cache
-// lane (req = rd|wr); asserting rd alongside we makes the lane service a
-// READ and silently drop the write -- build 60's black screen.
-//
-// The once-per-frame flush runs on this lane; while it runs the lane defers
-// normal requests internally, so an in-flight write simply waits longer for
-// ok -- no special handling here beyond passing the pulse through.
+// for the write side to drain completely (wf_empty includes the open
+// entry), because the shiftreg and cmd-3 paths read back pens this same
+// blit just wrote. The FIFO is popped at ISSUE. rd and wr are SEPARATE
+// request strobes on a cache lane (req = rd|wr); asserting rd alongside we
+// makes the lane service a READ and silently drop the write -- build 60's
+// black screen. The once-per-frame flush runs on this lane; while it runs
+// the lane defers normal requests internally.
 // ---------------------------------------------------------------------------
 localparam [1:0] A_IDLE=2'd0, A_WAIT=2'd1;
 localparam       OWN_RD=1'b0, OWN_WR=1'b1;
@@ -287,7 +279,7 @@ reg       settle, vr_busy;
 wire [19:0] rd_pen  = { vr_plane, vr_addr };
 
 wire b_do_rd = astate==A_IDLE && vr_req && !vr_busy && wf_empty;
-wire b_do_wr = astate==A_IDLE && !wf_empty;
+wire b_do_wr = astate==A_IDLE && wf_cnt != 5'd0;
 assign wf_pop = b_do_wr;          // pop at issue
 assign st_wpop = wf_pop;
 
@@ -296,7 +288,7 @@ always @(posedge clk) begin
         astate    <= A_IDLE;
         vram_rd   <= 0;
         vram_we   <= 0;
-        vram_dsn  <= 8'hFF;
+        vram_dsn  <= 16'hFFFF;
         vram_flush<= 0;
         vr_ack    <= 0;
         vr_busy   <= 0;
@@ -312,15 +304,15 @@ always @(posedge clk) begin
             vram_rd <= 0;
             vram_we <= 0;
             if( b_do_rd ) begin
-                vram_addr <= rd_pen[19:2];
+                vram_addr <= rd_pen[19:3];
                 vram_rd   <= 1;
                 owner     <= OWN_RD;
                 settle    <= 0;
                 astate    <= A_WAIT;
             end else if( b_do_wr ) begin
-                vram_addr <= p0[19:2];
-                vram_din  <= wdin;
-                vram_dsn  <= wdsn;
+                vram_addr <= head[160:144];
+                vram_dsn  <= head[143:128];
+                vram_din  <= head[127:0];
                 vram_we   <= 1;
                 owner     <= OWN_WR;
                 settle    <= 0;
@@ -336,7 +328,7 @@ always @(posedge clk) begin
                 if( owner == OWN_RD ) begin
                     vr_ack  <= 1;
                     vr_busy <= 1;
-                    vr_data <= vram_data[16*rd_pen[1:0] +: 16];
+                    vr_data <= vram_data[16*rd_pen[2:0] +: 16];
                 end
                 astate <= A_IDLE;
             end

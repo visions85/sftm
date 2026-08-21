@@ -25,13 +25,13 @@ always #10.4 clk = ~clk;    // 48 MHz
 // lane 0 = vram, build-107 params: DW=64, ENDIAN=0, AW=21, 64 x 256B blocks,
 // BA=3, OFFSET=0x40000. Other lanes idle.
 // ---------------------------------------------------------------------------
-wire [20:3] vram_addr;
-wire [63:0] vram_din, vram_data;
-wire [ 7:0] vram_dsn;
+wire [20:4] vram_addr;
+wire [127:0] vram_din, vram_data;
+wire [15:0] vram_dsn;
 wire        vram_we, vram_rd, vram_ok;
 wire        vram_flush, vram_flushing, vram_flush_done;
-wire [20:3] vscan_addr;
-wire [63:0] vscan_data;
+wire [20:4] vscan_addr;
+wire [127:0] vscan_data;
 wire        vscan_rd, vscan_ok;
 reg         frame_flush = 0;
 
@@ -45,11 +45,11 @@ jtframe_cache_mux #(
     .SDRAM_AW ( SDRAM_AW ),
     .ENDIAN   ( 0 ),
     .ENDIAN0 ( 0 ), .FULL0 ( 0 ), .AW0 ( 21 ), .BLOCKS0 ( 64 ),
-    .BLKSIZE0 ( 256 ), .DW0 ( 64 ), .BA0 ( 3 ), .CHIP0 ( 0 ),
+    .BLKSIZE0 ( 256 ), .DW0 ( 128 ), .BA0 ( 3 ), .CHIP0 ( 0 ),
     .OFFSET0 ( 'h40000 ), .INVAL_MASK0 ( 8'b00000010 ),
     // lane 1 = vscan: scanout's read-only view of the same window
     .ENDIAN1 ( 0 ), .FULL1 ( 0 ), .AW1 ( 21 ), .BLOCKS1 ( 8 ),
-    .BLKSIZE1 ( 256 ), .DW1 ( 64 ), .BA1 ( 3 ), .CHIP1 ( 0 ),
+    .BLKSIZE1 ( 256 ), .DW1 ( 128 ), .BA1 ( 3 ), .CHIP1 ( 0 ),
     .OFFSET1 ( 'h40000 ), .INVAL_MASK1 ( 8'b0 )
 ) u_mux (
     .rst(rst), .clk(clk),
@@ -58,8 +58,8 @@ jtframe_cache_mux #(
     .flush0( vram_flush ), .flushing0( vram_flushing ),
     .flush_done0( vram_flush_done ),
     .addr1( vscan_addr ), .dout1( vscan_data ), .rd1( vscan_rd ),
-    .wr1(1'b0), .din1(64'd0),
-    .wdsn1(8'd0), .ok1( vscan_ok ), .flush1(1'b0), .flushing1(), .flush_done1(),
+    .wr1(1'b0), .din1(128'd0),
+    .wdsn1(16'd0), .ok1( vscan_ok ), .flush1(1'b0), .flushing1(), .flush_done1(),
     .addr2( 20'd0 ), .dout2(), .rd2(1'b0), .wr2(1'b0), .din2(32'd0),
     .wdsn2(4'd0), .ok2(), .flush2(1'b0), .flushing2(), .flush_done2(),
     .addr3( 23'd0 ), .dout3(), .rd3(1'b0), .wr3(1'b0), .din3(8'd0),
@@ -159,7 +159,7 @@ begin
     // before the machinery has even started)
     repeat(3) @(posedge clk);
     guard = 0;
-    while( (uut.wf_cnt != 0 || uut.astate != 2'd0) && guard < 100000 ) begin
+    while( (uut.wf_cnt != 0 || uut.open_vld || uut.astate != 2'd0) && guard < 100000 ) begin
         @(posedge clk); guard = guard + 1;
     end
     if( guard >= 100000 ) begin $display("FAIL: drain timeout"); errors = errors + 1; end
