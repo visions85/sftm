@@ -243,6 +243,7 @@ assign bus_wstb = grant && bus_write;
 // ---------------------------------------------------------------------------
 reg  [4:0] boot_lw;      // longword index 0..31
 reg        boot_phase;   // 0: wait rom_ok, write high word; 1: write low word
+reg        boot_gap;     // force one rom_cs-low cycle between longwords
 reg  [1:0] boot_settle;
 
 // ---------------------------------------------------------------------------
@@ -501,6 +502,7 @@ always @(posedge clk) begin
         boot_done   <= 1'b0;
         boot_lw     <= 5'd0;
         boot_phase  <= 1'b0;
+        boot_gap    <= 1'b0;
         boot_settle <= 2'd0;
         rom_settle  <= 2'd0;
         rom_cs      <= 1'b0;
@@ -509,8 +511,17 @@ always @(posedge clk) begin
 
         S_BOOT: begin
             rom_addr <= { 13'd0, boot_lw };
-            rom_cs   <= 1'b1;
-            if( boot_settle != 2'd3 )
+            // cs must DROP for a cycle between longwords. Held high across the
+            // address change, the cache lane answered the second read (a hit in
+            // the just-filled block) with dout still in transition: measured on
+            // hardware as the PC vector slot copied as 0x00000000 while the SP
+            // slot (the first read, a fill) copied correctly -- the CPU reset
+            // to PC=0 and marched through RAM into unmapped space. The CPU bus
+            // FSM never hits this because S_DECODE deasserts rom_cs between
+            // requests; the boot FSM held it. boot_settle==0 is the gap cycle.
+            rom_cs   <= boot_settle != 2'd0 || !boot_gap ? 1'b1 : 1'b0;
+            if( boot_gap ) boot_gap <= 1'b0;
+            else if( boot_settle != 2'd3 )
                 boot_settle <= boot_settle + 2'd1;
             else if( rom_ok ) begin
                 // boot_we writes this cycle (see RAM block)
@@ -519,6 +530,7 @@ always @(posedge clk) begin
                 else begin
                     boot_phase  <= 1'b0;
                     boot_settle <= 2'd0;         // new address -> resettle
+                    boot_gap    <= 1'b1;         // one cs-low cycle first
                     if( boot_lw == 5'd31 ) begin
                         boot_done <= 1'b1;
                         rom_cs    <= 1'b0;
