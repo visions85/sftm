@@ -118,13 +118,13 @@ echo "[sftm] SHIFTED plumbed through jtframe_burst_sdram"
 grep -q "parameter SHIFTED" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
 sed -i "s/module jtframe_burst_ctrl #(/module jtframe_burst_ctrl #(\n    parameter SHIFTED = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || true
-grep -q "SHIFTED==1 ? B_RDATA" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
+grep -q "SHIFTED==1" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
 sed -i "s/            B_CL1:       burst_st <= B_CL2;/            B_CL1:       burst_st <= (SHIFTED==1 \&\& !post_write_read_wait) ? B_RDATA : B_CL2;/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || true
 grep -q "SHIFTED( SHIFTED )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || \
 sed -i "s/jtframe_burst_ctrl #(/jtframe_burst_ctrl #(\n    .SHIFTED( SHIFTED ),/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
-if ! grep -q "SHIFTED==1 ? B_RDATA" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v"; then
+if ! grep -q "SHIFTED==1" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v"; then
     echo "[sftm] ERROR: burst_ctrl CL patch did NOT apply" >&2; exit 1
 fi
 echo "[sftm] burst_ctrl read latency compensated (SHIFTED skips B_CL2)"
