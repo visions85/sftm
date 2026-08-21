@@ -163,6 +163,49 @@ defparam
     u_issp5.source_initial_value    = "0",
     u_issp5.source_width            = 0;
 
+// ---------------------------------------------------------------------------
+// Sound triage (build 106). The cache core routes both the battery-screen
+// timeout and a START press into the service menu -- MAME goes to attract --
+// and the two menu actions that no-op (main EXIT, TEST ALL SOUND ROMS) are
+// exactly the ones that need the sound CPU. This probe answers, in one read:
+// is the 6809 fetching (lane probe), do latch commands flow both ways
+// (cmd_wcnt/cmd_rcnt), did the ES5506 init (actv/cr counters), and does
+// anything ever play (anyrun/peak).
+// ---------------------------------------------------------------------------
+wire [127:0] issp_probe6 = {
+    8'h6E,              // [127:120] signature
+    cmd_wcnt,           // [119:112] 68020 latch1 writes (pending edges)
+    cmd_rcnt,           // [111:104] 6809 latch1 reads
+    dbg_lsnd,           // [103:100] snd lane probe {req/ok sticky state}
+    dbg_lsrom,          // [ 99: 96] srom lane probe
+    dbg_eswr,           // [ 95: 88] ES5506 register writes
+    dbg_actv,           // [ 87: 83] ES5506 ACTV value
+    dbg_anyrun,         // [ 82]     any voice with STOP bits clear
+    snd_pending1,       // [ 81]
+    snd_pending2,       // [ 80]
+    dbg_cr0,            // [ 79: 72] voice-0 CR low byte
+    dbg_crn,            // [ 71: 64] CR write count
+    dbg_sromn,          // [ 63: 56] ES5506 sample fetches
+    dbg_sromd,          // [ 55: 48] last sample byte
+    dbg_crv,            // [ 47: 40] last CR value written
+    dbg_crp,            // [ 39: 33] page of that write
+    dbg_peak,           // [ 32: 17] output peak
+    9'd0,               // [ 16:  8] pad
+    8'hA5               // [  7:  0] signature tail
+};
+altsource_probe u_issp6 (
+    .probe  ( issp_probe6 ),
+    .source (             )
+);
+defparam
+    u_issp6.enable_metastability    = "NO",
+    u_issp6.instance_id             = "SFSN",
+    u_issp6.probe_width             = 128,
+    u_issp6.sld_auto_instance_index = "YES",
+    u_issp6.sld_instance_index      = 6,
+    u_issp6.source_initial_value    = "0",
+    u_issp6.source_width            = 0;
+
 altsource_probe u_issp4 (
     .probe  ( issp_probe4 ),
     .source (             )
@@ -334,7 +377,8 @@ wire       rst_g     = (rst & ~force_run) | force_rst;
 // is unsynchronised but harmless here: the game samples these continuously
 // and a scripted press holds them for hundreds of milliseconds.
 wire [15:0] joystick1_g = joystick1 & ~{12'd0, issp_src[4], issp_src[5], 2'b00};
-wire [ 3:0] cab_1p_g    = cab_1p    & ~{ 3'd0, issp_src[2]};
+// src[6] = P2 start: the PLAYER CONTROL TEST screen exits only on START1+START2
+wire [ 3:0] cab_1p_g    = cab_1p    & ~{ 2'd0, issp_src[6], issp_src[2]};
 wire [ 3:0] coin_g      = coin      & ~{ 3'd0, issp_src[3]};
 
 reg [31:0] m_first;
