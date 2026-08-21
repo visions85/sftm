@@ -146,7 +146,26 @@ localparam [4:0] S_INIT_CLEAR    = 5'd0,
                  S_FLUSH_ADVANCE = 5'd16,
                  S_INVAL_CLEAR   = 5'd17,
                  S_LOOKUP_DECIDE = 5'd18,
-                 S_WB_LOAD       = 5'd19;
+                 S_WB_LOAD       = 5'd19,
+                 S_WR_CLAIM_NF   = 5'd20;
+
+// ---------------------------------------------------------------------------
+// Write-no-fetch (DW=64 lanes): a full-word write miss CLAIMS a block
+// without streaming BLKSIZE bytes in from SDRAM first -- for a blitter
+// overwriting whole framebuffer blocks, that fill is pure wasted bandwidth
+// (measured: the dominant remaining cost once transaction counts were cut).
+// Validity is tracked per 64-bit word; anything that touches a
+// not-yet-written word of a claimed block falls back to a MERGE FILL: the
+// normal fill burst with stream writes masked on the words that already
+// hold newer data. Merges preserve dirty (invalid words only ever exist in
+// dirty blocks). A partially valid victim merges before it writes back, on
+// both the eviction and the flush paths, so memory never receives garbage.
+// ---------------------------------------------------------------------------
+localparam integer WNF    = DW == 64 ? 1 : 0;
+localparam integer NFWRDS = DW == 64 ? WORDS/4 : 1;   // 64-bit words per block
+reg  [NFWRDS-1:0] wvalid [0:BLOCKS-1];
+reg  [NFWRDS-1:0] merge_wvalid_l;
+reg               claim_pend, merge_same, merge_victim;
 
 reg              fill_after_wb, fill_wb_prime_wait;
 reg              req_wr_l;
@@ -195,12 +214,24 @@ wire [SETW-1:0] wb_set_l = flushing ? flush_set_l : req_set_l;
 
 wire [AW-1:0]   fill_base_byte   = { line_base_uaddr(req_tag_l, req_set_l),    {AW0{1'b0}} };
 wire [AW-1:0]   victim_base_byte = { line_base_uaddr(victim_tag_l, wb_set_l),  {AW0{1'b0}} };
-wire [AW-1:0]   ext_base_byte    = st==S_WB_REQ || st==S_WB_STREAM ?
+// a victim merge fills at the VICTIM's address (its own old content)
+wire [AW-1:0]   ext_base_byte    = st==S_WB_REQ || st==S_WB_STREAM || merge_victim ?
                                    victim_base_byte : fill_base_byte;
 wire [WW-1:0]   wb_half_idx      = DW >= 32 && st == S_WB_STREAM && stream_word != LAST_WORD ?
                                    stream_word + WW'(1) : stream_word;
 wire [127:0]    rd_resp_word     = pack_data(req_q, req_off_l);
 wire [127:0]    flush_rd_resp_word = pack_data(req_q, flush_rd_off_l);
+
+// write-no-fetch helpers. For DW=64, req_off_l IS the 64-bit-word index
+// within the block (AW0=3, OFFW=log2(BLKSIZE/8)), so it indexes wvalid
+// directly; a fill halfword h belongs to word h>>2.
+wire        nf_full_wr  = WNF != 0 && req_wdsn_l == {MW{1'b0}};
+wire        nf_hit_inv  = WNF != 0 && !wvalid[hit_blk_now][integer'(req_off_l) % NFWRDS];
+wire        nf_vic_part = WNF != 0 && !(&wvalid[victim_blk_now]);
+wire        nf_scan_part= WNF != 0 && !(&wvalid[scan_blk_now]);
+wire        nf_merge    = merge_same || merge_victim;
+wire        nf_skip0    = nf_merge && merge_wvalid_l[0];
+wire        nf_skipw    = nf_merge && merge_wvalid_l[(integer'(stream_word)/4) % NFWRDS];
 
 assign miss_busy = st != S_IDLE;
 assign fill_done = fill_tail_seen;
@@ -533,14 +564,18 @@ always @* begin
         end
         S_FILL_WB_PRIME: begin
             if( !fill_wb_prime_wait ) begin
-                stream_we    = fill_write_mask({WW{1'b0}});
+                stream_we    = nf_skip0 ? 16'd0 : fill_write_mask({WW{1'b0}});
                 stream_wdata = fill_write_data(ext_din, {WW{1'b0}});
             end
-            if( !fill_wb_prime_wait && (ext_rdy || LAST_WORD == {WW{1'b0}}) ) begin
+            // a victim merge belongs to the OLD tag: no tag update; a
+            // same-tag merge keeps the block dirty (its valid words hold
+            // writes that have not reached SDRAM)
+            if( !fill_wb_prime_wait && (ext_rdy || LAST_WORD == {WW{1'b0}})
+                && !merge_victim ) begin
                 tag_update_en      = 1'b1;
                 tag_update_way_n   = way_l;
                 tag_update_valid_n = 1'b1;
-                tag_update_dirty_n = 1'b0;
+                tag_update_dirty_n = merge_same ? 1'b1 : 1'b0;
                 tag_update_tag_n   = req_tag_l;
             end
         end
@@ -559,16 +594,29 @@ always @* begin
         end
         S_FILL_STREAM: begin
             if( fill_stream_dok && !fill_tail_seen ) begin
-                stream_we    = fill_write_mask(stream_word);
+                stream_we    = nf_skipw ? 16'd0 : fill_write_mask(stream_word);
                 stream_wdata = fill_write_data(ext_din, stream_word);
             end
-            if( fill_stream_dok && ext_rdy ) begin
+            if( fill_stream_dok && ext_rdy && !merge_victim ) begin
                 tag_update_en      = 1'b1;
                 tag_update_way_n   = way_l;
                 tag_update_valid_n = 1'b1;
-                tag_update_dirty_n = 1'b0;
+                tag_update_dirty_n = merge_same ? 1'b1 : 1'b0;
                 tag_update_tag_n   = req_tag_l;
             end
+        end
+        S_WR_CLAIM_NF: begin
+            // like S_WR_COMMIT, plus the block changes identity: the write
+            // lands, the tag is claimed dirty, and no fill ever happens
+            req_we    = req_write_mask(req_wdsn_l, req_off_l);
+            req_wdata = req_write_data(req_din_l, req_off_l);
+            tag_update_en      = 1'b1;
+            tag_update_way_n   = way_l;
+            tag_update_valid_n = 1'b1;
+            tag_update_dirty_n = 1'b1;
+            tag_update_tag_n   = req_tag_l;
+            req_load_addr = 1'b1;
+            req_addr_n    = req_baddr(blk_l, req_off_l);
         end
         default: begin
         end
@@ -617,6 +665,10 @@ always @(posedge clk) begin
         flush_done        <= 1'b0;
         invalidating      <= 1'b0;
         invalidate_done   <= 1'b0;
+        claim_pend        <= 1'b0;
+        merge_same        <= 1'b0;
+        merge_victim      <= 1'b0;
+        merge_wvalid_l    <= {NFWRDS{1'b0}};
 `ifdef SIMULATION
         ext_total_read_kb = 0.0;
 `endif
@@ -671,7 +723,16 @@ always @(posedge clk) begin
                 if( hit_now ) begin
                     blk_l <= hit_blk_now;
                     way_l <= hit_way_now;
-                    if( req_wr_l )
+                    if( nf_hit_inv && !(req_wr_l && nf_full_wr) ) begin
+                        // the target word of a claimed block was never
+                        // written: merge-fill it (masked on valid words,
+                        // dirty preserved), then serve the request
+                        merge_same     <= 1'b1;
+                        merge_wvalid_l <= wvalid[hit_blk_now];
+                        stream_word    <= {WW{1'b0}};
+                        fill_tail_seen <= 1'b0;
+                        st             <= S_FILL_REQ;
+                    end else if( req_wr_l )
                         st <= S_WR_COMMIT;
                     else
                         st <= S_RD_RESP;
@@ -681,8 +742,18 @@ always @(posedge clk) begin
                     victim_tag_l   <= victim_tag_now;
                     stream_word    <= {WW{1'b0}};
                     fill_tail_seen <= 1'b0;
-                    if( victim_dirty_now )
-                        st <= S_WB_LOAD;
+                    claim_pend     <= req_wr_l && nf_full_wr;
+                    if( victim_dirty_now ) begin
+                        if( nf_vic_part ) begin
+                            // partially valid dirty victim: read its gaps
+                            // from SDRAM before writing it back
+                            merge_victim   <= 1'b1;
+                            merge_wvalid_l <= wvalid[victim_blk_now];
+                            st             <= S_FILL_REQ;
+                        end else
+                            st <= S_WB_LOAD;
+                    end else if( req_wr_l && nf_full_wr && WNF != 0 )
+                        st <= S_WR_CLAIM_NF;
                     else
                         st <= S_FILL_REQ;
                 end
@@ -697,6 +768,12 @@ always @(posedge clk) begin
             S_WR_COMMIT: begin
                 ok <= 1'b1;
                 st <= S_IDLE;
+                if( WNF != 0 ) wvalid[blk_l][integer'(req_off_l) % NFWRDS] <= 1'b1;
+            end
+            S_WR_CLAIM_NF: begin
+                ok <= 1'b1;
+                st <= S_IDLE;
+                wvalid[blk_l] <= NFWRDS'(1) << (integer'(req_off_l) % NFWRDS);
             end
             S_WB_LOAD: begin
                 st <= S_WB_PRIME;
@@ -734,6 +811,9 @@ always @(posedge clk) begin
             S_WB_GAP: begin
                 if( flushing ) begin
                     st <= S_FLUSH_ADVANCE;
+                end else if( claim_pend && WNF != 0 ) begin
+                    claim_pend <= 1'b0;
+                    st <= S_WR_CLAIM_NF;
                 end else begin
                     fill_after_wb <= 1'b1;
                     st <= S_FILL_REQ;
@@ -748,7 +828,12 @@ always @(posedge clk) begin
                     victim_tag_l   <= scan_tag_now;
                     stream_word    <= {WW{1'b0}};
                     fill_tail_seen <= 1'b0;
-                    st             <= S_WB_LOAD;
+                    if( nf_scan_part ) begin
+                        merge_victim   <= 1'b1;
+                        merge_wvalid_l <= wvalid[scan_blk_now];
+                        st             <= S_FILL_REQ;
+                    end else
+                        st <= S_WB_LOAD;
                 end else begin
                     st <= S_FLUSH_ADVANCE;
                 end
@@ -796,7 +881,13 @@ always @(posedge clk) begin
                     if( ext_rdy || LAST_WORD == {WW{1'b0}} ) begin
                         stream_word       <= {WW{1'b0}};
                         fill_tail_seen    <= 1'b0;
-                        st                <= S_POSTFILL_WAIT;
+                        if( WNF != 0 ) wvalid[blk_l] <= {NFWRDS{1'b1}};
+                        merge_same        <= 1'b0;
+                        if( merge_victim ) begin
+                            merge_victim <= 1'b0;
+                            st           <= S_WB_LOAD;
+                        end else
+                            st <= S_POSTFILL_WAIT;
                     end else begin
                         stream_word <= WW'(1);
                         st          <= S_FILL_STREAM;
@@ -809,7 +900,13 @@ always @(posedge clk) begin
                         stream_word       <= {WW{1'b0}};
                         fill_tail_seen    <= 1'b0;
                         fill_after_wb     <= 1'b0;
-                        st                <= S_POSTFILL_WAIT;
+                        if( WNF != 0 ) wvalid[blk_l] <= {NFWRDS{1'b1}};
+                        merge_same        <= 1'b0;
+                        if( merge_victim ) begin
+                            merge_victim <= 1'b0;
+                            st           <= S_WB_LOAD;
+                        end else
+                            st <= S_POSTFILL_WAIT;
                     end else if( stream_word != LAST_WORD ) begin
                         stream_word <= stream_word + 1'd1;
                     end else begin

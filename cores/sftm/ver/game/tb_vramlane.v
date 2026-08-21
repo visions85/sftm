@@ -314,6 +314,39 @@ initial begin
     scanchk( 9'd8, 16'h1008, 1'b0 );   // unwritten pen keeps phase-2 data
     $display("  post-flush prefetch sees the new pens");
 
+    // ---- 6. write-no-fetch: claim, read-merge, eviction-merge ------------
+    $display("6: write-no-fetch claim and merge paths");
+    fflush;   // everything dirty reaches SDRAM; wvalid state settles
+    // one full word (pens 2052..2055) CLAIMS the block holding pens 2048+
+    for( i = 0; i < 4; i = i + 1 ) wpush( 19'd2052 + i[18:0], 16'h3000 + i[15:0] );
+    wdrain;
+    // reading an unwritten pen of the claimed block forces a merge fill;
+    // it must return the phase-2 value that the flush put in SDRAM
+    bread( 19'd2060 );
+    if( rgot !== 16'h100C ) begin
+        $display("FAIL: merge read got %04X, want 100C (old SDRAM content)", rgot);
+        errors = errors + 1;
+    end
+    bread( 19'd2052 );
+    if( rgot !== 16'h3000 ) begin
+        $display("FAIL: claimed pen got %04X, want 3000", rgot);
+        errors = errors + 1;
+    end
+    // evict everything, then re-read: the merged block's writeback must
+    // carry BOTH the new pens and the preserved old ones
+    for( i = 0; i < 70; i = i + 1 ) bread( 19'd65536 + i[18:0]*128 );
+    bread( 19'd2052 );
+    if( rgot !== 16'h3000 ) begin
+        $display("FAIL: post-evict claimed pen %04X, want 3000", rgot);
+        errors = errors + 1;
+    end
+    bread( 19'd2060 );
+    if( rgot !== 16'h100C ) begin
+        $display("FAIL: post-evict merged pen %04X, want 100C", rgot);
+        errors = errors + 1;
+    end
+    $display("  claim + read-merge + eviction writeback verified");
+
     $display("");
     if( errors == 0 ) $display("PASS: sftm_vram on the real 64-bit lane");
     else              $display("FAIL: %0d problem(s)", errors);
