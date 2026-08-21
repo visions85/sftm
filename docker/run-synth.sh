@@ -84,50 +84,23 @@ if grep -q "mux <= sys_info" "$JTFRAME_DIR/hdl/debug/jtframe_debug_viewmux.v"; t
     echo "[sftm] ERROR: debug viewmux pin did NOT apply" >&2; exit 1
 fi
 echo "[sftm] debug overlay pinned to the game debug_view"
-# Plumb SHIFTED through jtframe_burst_sdram. The banks controller path passes
-# .SHIFTED(SDRAM_SHIFT) to jtframe_sdram64 -- compensation for the MiSTer PLL
-# phase-shifted SDRAM clock -- but jtframe_burst_sdram.v:215 HARDCODES
-# .SHIFTED(0). On real hardware every cache-lane burst READ is then captured
-# one 16-bit word off, so all fills return shifted content: the instruction
-# stream corruption, the wrong initial SP, the interrupt storm and the
-# watchdog loop that kept every cache-lanes build from booting. Simulation
-# never sees it because there is no clock phase to compensate. The banks build
-# (b59) works on the same board because its path passes SHIFTED properly.
-grep -q "parameter SHIFTED" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || \
-sed -i "s/module jtframe_burst_sdram #(/module jtframe_burst_sdram #(\n    parameter SHIFTED = 0,/" \
-    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
-sed -i "s/    .SHIFTED       ( 0        ),/    .SHIFTED       ( SHIFTED  ),/" \
-    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
-grep -q "SHIFTED    ( SDRAM_SHIFT   )" "$JTFRAME_DIR/hdl/jtframe_board_sdram.v" || \
-sed -i "s/    jtframe_burst_sdram #(/    jtframe_burst_sdram #(\n\`ifdef JTFRAME_SDRAM96\n        .SHIFTED    ( 0             ),\n\`else\n        .SHIFTED    ( SDRAM_SHIFT   ),\n\`endif/" \
-    "$JTFRAME_DIR/hdl/jtframe_board_sdram.v" || true
-if grep -q "SHIFTED       ( 0        )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v"; then
-    echo "[sftm] ERROR: SHIFTED plumb did NOT apply" >&2; exit 1
+# SDRAM DQ input capture must be in the IO cell, not the fabric. The stock
+# mister.qsf template sets FAST_INPUT_REGISTER only on the BANKS controller
+# register by hierarchical path (jtframe_sdram_bank...dq_ff) -- a path that
+# does not exist in a JTFRAME_SDRAM_CACHE build, so the assignment silently
+# applies to nothing, the capture register is placed in fabric after long
+# routing, and every burst-read word arrives one position early ON SILICON
+# ONLY. Measured over JTAG as D = {m[2n+1], m[2n+2]} on every lane; invisible
+# in simulation (no placement); and the reason the banks build works on the
+# same board while every cache build failed to boot. the header of jtframe_burst_io.v describes the intended two-stage pad pipeline and names sys.tcl's
+# FAST_OUTPUT_REGISTER; the matching input-side assignment is what is missing.
+grep -q "FAST_INPUT_REGISTER ON -to SDRAM_DQ" "$JTFRAME_DIR/target/mister/mister.qsf" || \
+sed -i "s|set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to SDRAM_DQ\[\*\]|set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to SDRAM_DQ[*]\nset_instance_assignment -name FAST_INPUT_REGISTER ON -to SDRAM_DQ[*]\nset_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_*|" \
+    "$JTFRAME_DIR/target/mister/mister.qsf" || true
+if ! grep -q "FAST_INPUT_REGISTER ON -to SDRAM_DQ" "$JTFRAME_DIR/target/mister/mister.qsf"; then
+    echo "[sftm] ERROR: SDRAM_DQ pad-register patch did NOT apply" >&2; exit 1
 fi
-echo "[sftm] SHIFTED plumbed through jtframe_burst_sdram"
-# The cache-path bursts are NOT handled by jtframe_sdram64 at all: burst_sdram
-# contains its own command FSM, jtframe_burst_ctrl, whose read pipeline is a
-# HARDCODED two-wait (B_READ_CMD -> B_CL1 -> B_CL2 -> B_RDATA) with no HF or
-# SHIFTED compensation -- while the banks controller carefully derives
-# DST = READ + (SHIFTED ? 1 : 2). On real MiSTer (SDRAM clock phase-shifted,
-# JTFRAME_SHIFT=1) B_RDATA therefore lands one cycle late and every fill word
-# is attributed one position early: measured over JTAG as D = {m[2n+1],
-# m[2n+2]} on every lane, which corrupted the instruction stream and kept
-# every cache-lanes build from booting. Mirror the banks controller: skip
-# B_CL2 when SHIFTED=1.
-grep -q "parameter SHIFTED" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
-sed -i "s/module jtframe_burst_ctrl #(/module jtframe_burst_ctrl #(\n    parameter SHIFTED = 0,/" \
-    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || true
-grep -q "SHIFTED==1" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
-sed -i "s/            B_CL1:       burst_st <= B_CL2;/            B_CL1:       burst_st <= (SHIFTED==1 \&\& !post_write_read_wait) ? B_RDATA : B_CL2;/" \
-    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || true
-grep -q "SHIFTED( SHIFTED )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || \
-sed -i "s/jtframe_burst_ctrl #(/jtframe_burst_ctrl #(\n    .SHIFTED( SHIFTED ),/" \
-    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
-if ! grep -q "SHIFTED==1" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v"; then
-    echo "[sftm] ERROR: burst_ctrl CL patch did NOT apply" >&2; exit 1
-fi
-echo "[sftm] burst_ctrl read latency compensated (SHIFTED skips B_CL2)"
+echo "[sftm] SDRAM_DQ pad input register enabled (cache-path capture fix)"
 # SLOT0_ERASE=0 on the bank-3 rw slot -- see entrypoint.sh for why.
 sed -i "s/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_ram1_3slots.v" || true
