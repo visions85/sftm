@@ -104,24 +104,30 @@ if ! grep -q "FAST_INPUT_REGISTER ON -to SDRAM_DQ" "$JTFRAME_DIR/target/mister/m
     echo "[sftm] ERROR: SDRAM_DQ pad-register patch did NOT apply" >&2; exit 1
 fi
 echo "[sftm] SDRAM_DQ pad input register enabled (cache-path capture fix)"
-# Compensate the deterministic one-halfword read-capture slip on MiSTer.
-# Measured over JTAG across five independent fits: every cache-lane fill
-# attributes stream word i+1 to position i, byte-identical each build, on
-# every lane, hardware only. Three mechanism-level fixes (sdram64 SHIFTED,
-# burst_ctrl CL timing, pad input register -- the last verified honored in the
-# fit report) changed nothing, so the slip is compensated at the fill request:
-# start each fill burst one halfword EARLIER, so the discarded first word
-# absorbs the slip and every position receives its intended word. Fills only:
-# ext_rd gates the subtraction, writebacks untouched (downloads go through the
-# banks-style prog engine, proven exact by the working b59 build). The zero
-# bit is built as (x and not x) to keep this block free of apostrophes.
-grep -q "sftm slip compensation" "$JTFRAME_DIR/hdl/sdram/jtframe_cache_ctrl.sv" || \
-sed -i "s|ext_base_byte\[AW-1:1\] };|ext_base_byte[AW-1:1] } - { {(EW-2){ext_wr\&~ext_wr}}, ext_rd }; // sftm slip compensation|" \
-    "$JTFRAME_DIR/hdl/sdram/jtframe_cache_ctrl.sv" || true
-if ! grep -q "sftm slip compensation" "$JTFRAME_DIR/hdl/sdram/jtframe_cache_ctrl.sv"; then
-    echo "[sftm] ERROR: slip compensation did NOT apply" >&2; exit 1
+# Compensate the deterministic one-halfword read slip on MiSTer: re-register
+# ext_din inside jtframe_cache so the data stream is delayed one clock
+# relative to dok. Measured across five independent fits, every fill
+# attributes stream word i+1 to position i -- data leads dok by exactly one
+# cycle. A one-clock data re-register makes each dok pair with its intended
+# word, uniformly and row-safely (an earlier attempt that moved the burst
+# START address minus one wrapped within the SDRAM row and destroyed every
+# block whose base sits at column zero, vector block included -- readback
+# went all-zero). This is the extra data pipeline stage the banks controller
+# has and the burst path lacks; sim (which has no slip) intentionally does
+# not get this patch.
+grep -q "sftm slip reg" "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv" || \
+sed -i "s|( ext_din  *)|( ext_din_r )|" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv" || true
+grep -q "sftm slip reg" "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv" || \
+sed -i "s|module jtframe_cache #(|// sftm slip reg: ext_din_r declared below the port list\nmodule jtframe_cache #(|" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv" || true
+grep -q "ext_din_r <= ext_din" "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv" || \
+sed -i "0,/^wire /s//reg [15:0] ext_din_r;\nalways @(posedge clk) ext_din_r <= ext_din;\nwire /" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv" || true
+if ! grep -q "ext_din_r <= ext_din" "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv"; then
+    echo "[sftm] ERROR: ext_din re-register did NOT apply" >&2; exit 1
 fi
-echo "[sftm] fill-address slip compensation applied"
+echo "[sftm] ext_din one-clock re-register applied (slip compensation v2)"
 # SLOT0_ERASE=0 on the bank-3 rw slot -- see entrypoint.sh for why.
 sed -i "s/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_ram1_3slots.v" || true
