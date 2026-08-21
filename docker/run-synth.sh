@@ -105,6 +105,29 @@ if grep -q "SHIFTED       ( 0        )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sd
     echo "[sftm] ERROR: SHIFTED plumb did NOT apply" >&2; exit 1
 fi
 echo "[sftm] SHIFTED plumbed through jtframe_burst_sdram"
+# The cache-path bursts are NOT handled by jtframe_sdram64 at all: burst_sdram
+# contains its own command FSM, jtframe_burst_ctrl, whose read pipeline is a
+# HARDCODED two-wait (B_READ_CMD -> B_CL1 -> B_CL2 -> B_RDATA) with no HF or
+# SHIFTED compensation -- while the banks controller carefully derives
+# DST = READ + (SHIFTED ? 1 : 2). On real MiSTer (SDRAM clock phase-shifted,
+# JTFRAME_SHIFT=1) B_RDATA therefore lands one cycle late and every fill word
+# is attributed one position early: measured over JTAG as D = {m[2n+1],
+# m[2n+2]} on every lane, which corrupted the instruction stream and kept
+# every cache-lanes build from booting. Mirror the banks controller: skip
+# B_CL2 when SHIFTED=1.
+grep -q "parameter SHIFTED" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
+sed -i "s/module jtframe_burst_ctrl #(/module jtframe_burst_ctrl #(\n    parameter SHIFTED = 0,/" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || true
+grep -q "SHIFTED==1 ? B_RDATA" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || \
+sed -i "s/            B_CL1:       burst_st <= B_CL2;/            B_CL1:       burst_st <= (SHIFTED==1 \&\& !post_write_read_wait) ? B_RDATA : B_CL2;/" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v" || true
+grep -q "SHIFTED( SHIFTED )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || \
+sed -i "s/jtframe_burst_ctrl #(/jtframe_burst_ctrl #(\n    .SHIFTED( SHIFTED ),/" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
+if ! grep -q "SHIFTED==1 ? B_RDATA" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_ctrl.v"; then
+    echo "[sftm] ERROR: burst_ctrl CL patch did NOT apply" >&2; exit 1
+fi
+echo "[sftm] burst_ctrl read latency compensated (SHIFTED skips B_CL2)"
 # SLOT0_ERASE=0 on the bank-3 rw slot -- see entrypoint.sh for why.
 sed -i "s/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_ram1_3slots.v" || true
