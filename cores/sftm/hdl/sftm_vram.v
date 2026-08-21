@@ -112,6 +112,7 @@ assign vw_rdy = !wf_full;
 
 wire wf_push = vw_req && !wf_full;
 wire wf_pop;   // driven by the blitter sequencer below (pop at issue)
+wire wf_pop_pair;   // this pop consumes TWO entries (coalesced 32-bit write)
 
 always @(posedge clk) begin
     if( rst ) begin
@@ -124,16 +125,34 @@ always @(posedge clk) begin
             wf_wr <= wf_wr + 4'd1;
         end
         if( wf_pop )
-            wf_rd <= wf_rd + 4'd1;
+            wf_rd <= wf_rd + (wf_pop_pair ? 4'd2 : 4'd1);
         case( {wf_push, wf_pop} )
             2'b10: wf_cnt <= wf_cnt + 5'd1;
-            2'b01: wf_cnt <= wf_cnt - 5'd1;
+            2'b01: wf_cnt <= wf_cnt - (wf_pop_pair ? 5'd2 : 5'd1);
+            2'b11: wf_cnt <= wf_cnt - (wf_pop_pair ? 5'd1 : 5'd0);
             default: ;
         endcase
     end
 end
 
 wire [35:0] wf_head = wfifo[wf_rd];
+wire [35:0] wf_next = wfifo[wf_rd + 4'd1];
+
+// ---------------------------------------------------------------------------
+// Pixel-pair coalescing. The blitter draws rows left to right, so the FIFO is
+// full of even/odd halfword pairs of the same 32-bit lane word. Measured on
+// hardware (b100): the busiest frame reached only 45k of the 92,160 writes a
+// full background needs at 19.2 clk/write, with 95% of blitter busy time
+// stalled on this FIFO -- the visible background corruption is the redraw
+// running out of frame. Issuing one 32-bit write for an (even, odd) pair
+// halves the transaction count on exactly the traffic that dominates.
+// Pair condition: two entries available, same plane, next is the odd half of
+// the head's word (head even). st_wpop still counts TRANSACTIONS.
+// ---------------------------------------------------------------------------
+wire wf_pair = wf_cnt >= 5'd2
+            && wf_head[16] == 1'b0                       // head addr bit0 even
+            && wf_next[34:16] == { wf_head[34:17], 1'b1 } // next = odd of same word
+            && wf_next[35] == wf_head[35];               // same plane
 
 
 // ---------------------------------------------------------------------------
@@ -212,6 +231,7 @@ wire [19:0] wr_pen  = { wf_head[35], wf_head[34:16] };
 wire b_do_rd = astate==A_IDLE && !pf_active && vr_req && !vr_busy && wf_empty;
 wire b_do_wr = astate==A_IDLE && !pf_active && !wf_empty;
 assign wf_pop = b_do_wr;          // pop at issue
+assign wf_pop_pair = b_do_wr && wf_pair;
 assign st_wpop = wf_pop;
 
 always @(posedge clk) begin
@@ -263,9 +283,11 @@ always @(posedge clk) begin
             end else if( b_do_wr ) begin
                 vram_addr <= wr_pen[19:1];
                 // place the pen in its half and enable only those two bytes
-                vram_din  <= wr_pen[0] ? { wf_head[15:0], 16'd0 }
-                                       : { 16'd0, wf_head[15:0] };
-                vram_dsn  <= wr_pen[0] ? 4'b0011 : 4'b1100;
+                vram_din  <= wf_pair       ? { wf_next[15:0], wf_head[15:0] }
+                           : wr_pen[0]     ? { wf_head[15:0], 16'd0 }
+                                           : { 16'd0, wf_head[15:0] };
+                vram_dsn  <= wf_pair ? 4'b0000
+                           : wr_pen[0] ? 4'b0011 : 4'b1100;
                 // rd and wr are SEPARATE request strobes on a cache lane
                 // (jtframe_cache_mux: wire req0 = rd0 | wr0). Asserting rd
                 // alongside we makes the lane service a READ, so the write is
