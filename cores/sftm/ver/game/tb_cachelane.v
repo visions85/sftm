@@ -274,6 +274,11 @@ initial for( i=0; i<16384; i=i+1 ) u_chip.Bank0[i] = 16'h1000 + i[15:0];
 integer errors = 0;
 reg [31:0] got;
 
+// free-running cycle counter for the Phase J throughput measurement
+reg [31:0] cycles = 0;
+always @(posedge clk) cycles <= cycles + 32'd1;
+integer phj_c0, phj_cyc;
+
 task fetch(input [19:2] lw);
 integer guard;
 begin
@@ -622,6 +627,40 @@ initial begin
     l0_xact(1, 19'd101, 32'd0, 4'hF);
     if( l0_got === 32'hDEF0_9ABC ) $display("  I rd101 refill: %08X CORRECT", l0_got);
     else begin $display("  I rd101 refill: %08X WRONG (want DEF09ABC)", l0_got); errors=errors+1; end
+    l0_mode = 0;
+
+    // -----------------------------------------------------------------------
+    // Phase J: the vram-lane thrash, reproduced and measured. Hardware (b106)
+    // shows 24.4 clk per write transaction where a cache hit costs ~4: the
+    // scanout stream and the blitter's write stream share the lane's 16 sets
+    // x 4 ways, and the round-robin replacement pointer advances only on
+    // fills, so a streaming reader evicts the writer's hot block within a few
+    // fills no matter how recently it was written. Model: a writer streams
+    // 256 sequential full-word writes through sets 0..3 while a reader
+    // interleaves reads from FOUR aliasing regions (same sets, distinct
+    // tags) -- 5 tags competing for 4 ways. Measure clk per write.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase J: writer + 4-way aliasing reader on the ENDIAN=1 lane");
+    l0_mode = 1;
+    phj_c0 = cycles;
+    for( i = 0; i < 256; i = i + 1 ) begin
+        l0_xact(0, 19'd32768 + i[15:0], 32'hAB00_0000 + i[15:0], 4'b0000);
+        if( i[0] )
+            l0_xact(1, 19'd32768 + 19'd1024 + {7'd0, i[3:2], 10'd0} + i[15:0], 32'd0, 4'hF);
+    end
+    phj_cyc = cycles - phj_c0;
+    $display("  J: 256 writes + 128 aliasing reads in %0d clk = %0d clk/write",
+             phj_cyc, phj_cyc/256);
+    for( i = 0; i < 8; i = i + 1 ) begin
+        l0_xact(1, 19'd32768 + i[15:0]*31, 32'd0, 4'hF);
+        if( l0_got !== 32'hAB00_0000 + i[15:0]*31 ) begin
+            $display("  J integrity FAIL @+%0d: %08X (want %08X)",
+                     i*31, l0_got, 32'hAB00_0000 + i[15:0]*31);
+            errors = errors + 1;
+        end
+    end
+    $display("  J integrity: 8 spot readbacks checked");
     l0_mode = 0;
 
     $display("");

@@ -70,14 +70,14 @@ module sftm_video(
     output            grm3_rd,
     input             grm3_ok,
 
-    // VRAM SDRAM bus
-    output     [20:2] vram_addr,
-    input      [31:0] vram_data,
-    output     [31:0] vram_din,
-    output     [ 3:0] vram_dsn,
+    // VRAM SDRAM bus (64-bit cache lane, 4 pens per word)
+    output     [20:3] vram_addr,
+    input      [63:0] vram_data,
+    output     [63:0] vram_din,
+    output     [ 7:0] vram_dsn,
     output            vram_we,
     output            vram_rd,
-    input             vram_ok,   // 32-bit read alias for the prefetch
+    input             vram_ok,
 
     // interrupts to sftm_main
     output reg        vblank_irq,  // 1-clk pulse (generate_int1 hook)

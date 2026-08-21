@@ -75,6 +75,13 @@ set -e
 JTFRAME_DIR=/workspace/modules/jtframe
 PATCHES=/workspace/docker/jtframe-patches
 [ -d "$PATCHES" ] && cp -r "$PATCHES/." "$JTFRAME_DIR/"
+# Hit-skip replacement policy arrives as a whole-file overlay from
+# jtframe-patches (the insertion contains tick constants, which cannot live
+# inside this single-quoted block). Verify it landed.
+if ! grep -q "hit-skip replacement" "$JTFRAME_DIR/hdl/sdram/jtframe_cache_ctrl.sv"; then
+    echo "[sftm] ERROR: cache hit-skip overlay did NOT apply" >&2; exit 1
+fi
+echo "[sftm] cache replacement hit-skip applied (jtframe_cache_ctrl overlay)"
 # Pin the debug overlay to the game debug_view -- see entrypoint.sh for why.
 sed -i "s/SYS_INFO:    mux <= sys_info;/SYS_INFO:    mux <= debug_view;/" \
     "$JTFRAME_DIR/hdl/debug/jtframe_debug_viewmux.v" || true

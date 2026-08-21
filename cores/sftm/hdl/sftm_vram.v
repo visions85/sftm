@@ -9,39 +9,41 @@
 
     2 MB (2 planes x 512x1024 x 16-bit pen) on the jtframe CACHE LANE `vram`
     in bank 3. Pen address = {plane, offs[18:0]}, a 16-bit-word index; the
-    lane is 32 bits wide, so the SDRAM address is that index >> 1 and bit 0
-    picks the half.
+    lane is 64 bits wide, so the SDRAM address is that index >> 2 and the low
+    two bits pick the slot. Slot layout is ours to define (the lane is
+    ENDIAN=0 and vram is never downloaded): pen p lives in
+    vram word [16*p[1:0] +: 16], ascending pens in ascending slots.
 
-    A cache lane, not a plain slot, because a plain rw slot is capped at 16
-    bits (jtframe_ram_rq reads din[0+:DW] off the 16-bit data_read bus) and
-    data_width: 32 on one is silently downgraded. The lane matters less for
-    its width than for its BLOCK CACHE: the blitter writes pixels sequentially
-    along a row, so a 256-byte block absorbs 128 pens before any SDRAM traffic,
-    and the prefetch reads a line in ~3 block fills instead of 192 accesses.
-    Build 56 measured ~65k writes/frame against the 92,160 one background
-    needs; that shortfall is both the frame rate and the background streaks.
+    Why 64-bit (build 107): hardware metering on b106 showed the lane
+    saturated for the whole busiest frame -- ~80k hit transactions at ~5 clk
+    each plus ~2k block fills/writebacks at ~140-280 clk. Four pens per
+    transaction halves the hit-transaction budget on both the write stream
+    (run coalescing below) and the scanline prefetch (96 fetches per line
+    instead of 192).
 
     Clients, priority order:
-      1. scanline prefetch: on `line_go`, burst-reads 384 words of plane 0
+      1. scanline prefetch: on `line_go`, reads 96-97 lane words of plane 0
          starting at line_base (with vram_mask wrap) into the ping-pong line
          buffer selected by line_sel.
-      2. blitter read port (vr_*): single-word reads. Reads WAIT until the
+      2. blitter read port (vr_*): single-pen reads. Reads WAIT until the
          write FIFO is empty, so a read can never overtake a queued write to
          the same address (shiftreg source rows, cmd-3 read-modify-write).
-      3. blitter write FIFO (vw_*): depth 16.
+      3. blitter write FIFO (vw_*): depth 16, with RUN COALESCING: up to four
+         FIFO entries that form consecutive pens within one lane word issue as
+         a single write with the byte disables of the covered slots.
+
+    The prefetch no longer monopolises the port: it has a whole line
+    (508 px x 6 clk = 3048 clk) to move 384 pens, so whenever it is ahead of
+    a 6-clk-per-pen pace it yields one arbitration slot to the blitter
+    between word fetches. A yielded write can cost a miss (fill+writeback,
+    ~300 clk); the pace check self-corrects by withholding further yields
+    until the prefetch is ahead of schedule again, and the end-of-line margin
+    (3048 - 384*6 = 744 clk) covers the worst single yielded transaction.
 
     The scanout side reads the OTHER line buffer (the one filled during the
     previous line) at pixel rate.
 
-    All three clients share the ONE cache port, which looks like a step back
-    from the two independent sequencers the plain-slot version needed -- but
-    that version's problem was the prefetch consuming most of every line at
-    ~13 clk per 2 pixels. Through the cache the prefetch costs a block fill per
-    128 pixels, so the port is idle most of the time and there is nothing left
-    to starve the writes.
-
-    Sharing one cache also removes the read/write coherency question: the
-    prefetch, the blitter reads and the blitter writes all see the same data,
+    Sharing one cache keeps reads, writes and the prefetch coherent for free,
     so no flush interface is needed and none is declared in mem.yaml.
 */
 
@@ -49,11 +51,11 @@ module sftm_vram(
     input             rst,
     input             clk,
 
-    // jtframe cache lane `vram`, bank 3, 32-bit
-    output reg [20:2] vram_addr,     // 32-bit word index within the lane
-    input      [31:0] vram_data,     // read data
-    output reg [31:0] vram_din,      // write data
-    output reg [ 3:0] vram_dsn,      // byte disables, active low
+    // jtframe cache lane `vram`, bank 3, 64-bit
+    output reg [20:3] vram_addr,     // 64-bit word index within the lane
+    input      [63:0] vram_data,     // read data
+    output reg [63:0] vram_din,      // write data
+    output reg [ 7:0] vram_dsn,      // byte disables, active low
     output reg        vram_we,
     output reg        vram_rd,
     input             vram_ok,
@@ -80,24 +82,14 @@ module sftm_vram(
     input      [ 8:0] scan_x,
     output     [15:0] scan_pen,
 
-    // one pulse per VRAM write issued -- the throughput meter. `!vw_free`
-    // only says the FIFO is full, which it always is once the blitter runs,
-    // so it cannot show whether the drain RATE improved. This can.
+    // one pulse per VRAM write TRANSACTION issued -- the throughput meter
     output            st_wpop
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
 
-// Bank 3 holds grm3 (the blitter's extra graphics ROM) at word 0, because
-// that is where the ROM download writes it and its slot offset is 0. This
-// generator cannot express a non-zero slot offset, so VRAM cannot also live
-// at 0 -- it did, and the blitter was overwriting the glyph ROM in place
-// while grm3 reads returned framebuffer pixels. That was the checkerboard.
-// VRAM is therefore biased clear of grm3's 512 KB.
-// No VRAM_ORG bias: the cache lane is placed by `at: offset` in cfg/mem.yaml
-// (word 0x40000 of bank 3, i.e. byte 0x80000, clear of grm3's 512 kB). Adding
-// a bias here would double-count that offset.
-
+// The lane is placed by `at: offset` in cfg/mem.yaml (word 0x40000 of bank 3,
+// byte 0x80000, clear of grm3's 512 kB). No bias here.
 
 // ---------------------------------------------------------------------------
 // write FIFO (16 deep)
@@ -111,8 +103,8 @@ wire wf_empty = wf_cnt == 5'd0;
 assign vw_rdy = !wf_full;
 
 wire wf_push = vw_req && !wf_full;
-wire wf_pop;   // driven by the blitter sequencer below (pop at issue)
-wire wf_pop_pair;   // this pop consumes TWO entries (coalesced 32-bit write)
+wire wf_pop;        // driven by the sequencer below (pop at issue)
+wire [2:0] wrun;    // entries consumed by this pop (1..4)
 
 always @(posedge clk) begin
     if( rst ) begin
@@ -125,35 +117,60 @@ always @(posedge clk) begin
             wf_wr <= wf_wr + 4'd1;
         end
         if( wf_pop )
-            wf_rd <= wf_rd + (wf_pop_pair ? 4'd2 : 4'd1);
+            wf_rd <= wf_rd + {1'b0, wrun};
         case( {wf_push, wf_pop} )
             2'b10: wf_cnt <= wf_cnt + 5'd1;
-            2'b01: wf_cnt <= wf_cnt - (wf_pop_pair ? 5'd2 : 5'd1);
-            2'b11: wf_cnt <= wf_cnt - (wf_pop_pair ? 5'd1 : 5'd0);
+            2'b01: wf_cnt <= wf_cnt - {2'd0, wrun};
+            2'b11: wf_cnt <= wf_cnt - {2'd0, wrun} + 5'd1;
             default: ;
         endcase
     end
 end
 
-wire [35:0] wf_head = wfifo[wf_rd];
-wire [35:0] wf_next = wfifo[wf_rd + 4'd1];
-
 // ---------------------------------------------------------------------------
-// Pixel-pair coalescing. The blitter draws rows left to right, so the FIFO is
-// full of even/odd halfword pairs of the same 32-bit lane word. Measured on
-// hardware (b100): the busiest frame reached only 45k of the 92,160 writes a
-// full background needs at 19.2 clk/write, with 95% of blitter busy time
-// stalled on this FIFO -- the visible background corruption is the redraw
-// running out of frame. Issuing one 32-bit write for an (even, odd) pair
-// halves the transaction count on exactly the traffic that dominates.
-// Pair condition: two entries available, same plane, next is the odd half of
-// the head's word (head even). st_wpop still counts TRANSACTIONS.
+// Run coalescing. The blitter draws rows left to right, so the FIFO holds
+// consecutive pens. Up to FOUR entries that continue head's pen sequence
+// inside one 64-bit lane word issue as a single write. b104's pixel-PAIR
+// version measured a ~1.6x pixel-throughput gain on hardware; the 64-bit
+// lane doubles the ceiling. A push cannot alias the peeked entries: wf_wr =
+// wf_rd + wf_cnt and the peeks are guarded by wf_cnt.
 // ---------------------------------------------------------------------------
-wire wf_pair = wf_cnt >= 5'd2
-            && wf_head[16] == 1'b0                       // head addr bit0 even
-            && wf_next[34:16] == { wf_head[34:17], 1'b1 } // next = odd of same word
-            && wf_next[35] == wf_head[35];               // same plane
+wire [35:0] e0 = wfifo[wf_rd];
+wire [35:0] e1 = wfifo[wf_rd + 4'd1];
+wire [35:0] e2 = wfifo[wf_rd + 4'd2];
+wire [35:0] e3 = wfifo[wf_rd + 4'd3];
+wire [19:0] p0 = { e0[35], e0[34:16] };   // {plane, pen}
 
+wire run1 = wf_cnt >= 5'd2 && {e1[35],e1[34:16]} == p0 + 20'd1 && p0[1:0] != 2'd3;
+wire run2 = wf_cnt >= 5'd3 && {e2[35],e2[34:16]} == p0 + 20'd2 && !p0[1]   && run1;
+wire run3 = wf_cnt >= 5'd4 && {e3[35],e3[34:16]} == p0 + 20'd3 && p0[1:0] == 2'd0 && run2;
+assign wrun = run3 ? 3'd4 : run2 ? 3'd3 : run1 ? 3'd2 : 3'd1;
+
+wire [1:0] q0 = p0[1:0];
+wire [1:0] q1 = q0 + 2'd1;
+wire [1:0] q2 = q0 + 2'd2;
+wire [1:0] q3 = q0 + 2'd3;
+
+reg [63:0] wdin;
+reg [ 7:0] wdsn;
+always @* begin
+    wdin = 64'd0;
+    wdsn = 8'hFF;
+    wdin[16*q0 +: 16] = e0[15:0];
+    wdsn[ 2*q0 +:  2] = 2'b00;
+    if( wrun >= 3'd2 ) begin
+        wdin[16*q1 +: 16] = e1[15:0];
+        wdsn[ 2*q1 +:  2] = 2'b00;
+    end
+    if( wrun >= 3'd3 ) begin
+        wdin[16*q2 +: 16] = e2[15:0];
+        wdsn[ 2*q2 +:  2] = 2'b00;
+    end
+    if( wrun == 3'd4 ) begin
+        wdin[16*q3 +: 16] = e3[15:0];
+        wdsn[ 2*q3 +:  2] = 2'b00;
+    end
+end
 
 // ---------------------------------------------------------------------------
 // line buffers (2 x 512 x 16)
@@ -164,12 +181,8 @@ reg [ 8:0] lb_waddr;
 reg [15:0] lb_wdata;
 reg [15:0] lb_q0, lb_q1;
 
-// One simple dual-port RAM each: a single write port and a single registered
-// read port, in its own always block. Writing both arrays and muxing the two
-// reads inside one block kept these out of M10K -- the fitter built 16 Kbit of
-// flip-flops instead and sftm_vram cost 7,578 ALMs, which is most of why the
-// design stopped fitting. Latency is unchanged: still one clock, with the
-// buffer select applied after the RAM rather than inside it.
+// One simple dual-port RAM each -- see the M10K note in the git history of
+// this file: muxing the reads inside one block cost 7,578 ALMs in flip-flops.
 always @(posedge clk) begin
     if( lb_we && !line_sel ) lbuf0[lb_waddr] <= lb_wdata;
     lb_q0 <= lbuf0[scan_x];
@@ -184,54 +197,48 @@ end
 assign scan_pen = line_sel ? lb_q0 : lb_q1;
 
 // ---------------------------------------------------------------------------
-// Cache-lane sequencer
-// ---------------------------------------------------------------------------
-// One port, three clients, priority prefetch > blitter read > blitter write.
+// Cache-lane sequencer: one port, three clients.
 //
-// The plain-slot version had to run the prefetch and the writes as two
-// INDEPENDENT sequencers, because a single one let the prefetch -- tested
-// first, so absolute priority -- consume most of every active line and starve
-// the writes to ~2227 clk each. That is fixed here by economics rather than by
-// arbitration: through a 256-byte block cache the prefetch fills a block per
-// 128 pixels instead of touching SDRAM every 2, so it barely uses the port.
-//
+// Priority is prefetch > blitter read > blitter write, EXCEPT that an
+// ahead-of-pace prefetch yields one slot between word fetches (pf_yield).
 // A blitter READ still waits for the write FIFO to drain (wf_empty), because
-// the shiftreg and cmd-3 paths read back pens this same blit just wrote. Reads
-// and writes are therefore mutually exclusive by construction.
+// the shiftreg and cmd-3 paths read back pens this same blit just wrote --
+// reads and writes stay mutually exclusive by construction.
 //
-// vr_busy makes exactly one ack per vr_req assertion: the blitter holds vr_req
-// until the cycle AFTER vr_ack, so a busy flag that lagged would let the same
-// read reissue and hand it a second ack it would consume as the next word.
-// (tb_vramthru catches this.)
-//
-// The write FIFO is popped at ISSUE, once the head is latched into
-// vram_addr/vram_din and no longer has to stay stable. Popping at completion
-// needed an extra idle state to let the registered pop land before the next
-// issue could read the head.
+// The write FIFO is popped at ISSUE, once the head run is latched into
+// vram_addr/vram_din. rd and wr are SEPARATE request strobes on a cache lane
+// (req = rd|wr); asserting rd alongside we makes the lane service a READ and
+// silently drop the write -- build 60's black screen.
 // ---------------------------------------------------------------------------
 
 reg        pf_active;
-reg [18:0] pf_base;
-reg [18:1] pf_j;        // 32-bit word index being fetched (pen index >> 1)
-reg [ 9:0] pf_w;        // next line-buffer slot to fill (0..383)
-reg        pf_skip;     // odd line_base: discard the low half of the first pair
-reg [31:0] pf_data;
-reg        pf_half;     // which half of pf_data is being written
+reg [18:2] pf_j;        // 64-bit word index being fetched (pen index >> 2)
+reg [ 9:0] pf_w;        // pens delivered to the line buffer (0..384)
+reg [ 1:0] pf_slot;     // next slot of pf_data to unpack
+reg [63:0] pf_data;
+
+// pace-based yield: lct counts clocks since line_go; the prefetch is "ahead"
+// while lct < 6*pf_w, i.e. it has delivered pens faster than 6 clk each
+// against the 3048-clk line budget for 384 pens (7.9 clk each).
+reg  [11:0] lct;
+wire [11:0] pf_w6    = {pf_w, 2'b00} + {1'b0, pf_w, 1'b0};
+wire        pf_ahead = lct < pf_w6;
+reg         pf_yield;
 
 localparam [1:0] A_IDLE=2'd0, A_WAIT=2'd1, A_PFWR=2'd2;
 localparam [1:0] OWN_PF=2'd0, OWN_RD=2'd1, OWN_WR=2'd2;
 reg [1:0] astate, owner;
 reg       settle, vr_busy;
 
-// pen index -> lane address. {plane,addr} counts 16-bit pens; the lane is
-// 32 bits, so drop the low bit and remember it to pick the half.
 wire [19:0] rd_pen  = { vr_plane, vr_addr };
-wire [19:0] wr_pen  = { wf_head[35], wf_head[34:16] };
 
-wire b_do_rd = astate==A_IDLE && !pf_active && vr_req && !vr_busy && wf_empty;
-wire b_do_wr = astate==A_IDLE && !pf_active && !wf_empty;
+wire want_rd = vr_req && !vr_busy && wf_empty;
+wire want_wr = !wf_empty;
+wire pf_take = pf_active && !(pf_yield && (want_rd || want_wr));
+
+wire b_do_rd = astate==A_IDLE && !pf_take && want_rd;
+wire b_do_wr = astate==A_IDLE && !pf_take && want_wr;
 assign wf_pop = b_do_wr;          // pop at issue
-assign wf_pop_pair = b_do_wr && wf_pair;
 assign st_wpop = wf_pop;
 
 always @(posedge clk) begin
@@ -239,64 +246,62 @@ always @(posedge clk) begin
         astate    <= A_IDLE;
         vram_rd   <= 0;
         vram_we   <= 0;
-        vram_dsn  <= 4'hF;
+        vram_dsn  <= 8'hFF;
         vr_ack    <= 0;
         vr_busy   <= 0;
         lb_we     <= 0;
         pf_active <= 0;
         pf_j      <= 0;
         pf_w      <= 0;
-        pf_skip   <= 0;
-        pf_half   <= 0;
+        pf_slot   <= 0;
         settle    <= 0;
         owner     <= OWN_PF;
+        lct       <= 0;
+        pf_yield  <= 0;
     end else begin
         vr_ack <= 0;
         lb_we  <= 0;
         if( !vr_req ) vr_busy <= 1'b0;
+        if( pf_active && ~&lct ) lct <= lct + 12'd1;
 
         if( line_go ) begin
             pf_active <= 1;
-            pf_base   <= line_base;
-            pf_j      <= line_base[18:1];   // pair containing the first pen
+            pf_j      <= line_base[18:2];   // word containing the first pen
             pf_w      <= 0;
-            pf_skip   <= line_base[0];      // odd start: low half precedes it
-            pf_half   <= 0;
+            pf_slot   <= line_base[1:0];    // first pen's slot; earlier ones discard
+            lct       <= 0;
+            pf_yield  <= 0;
         end
 
         case( astate )
         A_IDLE: begin
             vram_rd <= 0;
             vram_we <= 0;
-            if( pf_active ) begin
-                vram_addr <= { 1'b0, pf_j };   // pen>>1 already
+            if( pf_take ) begin
+                vram_addr <= { 1'b0, pf_j };   // plane 0
                 vram_rd   <= 1;
                 owner     <= OWN_PF;
                 settle    <= 0;
                 astate    <= A_WAIT;
             end else if( b_do_rd ) begin
-                vram_addr <= rd_pen[19:1];
+                vram_addr <= rd_pen[19:2];
                 vram_rd   <= 1;
                 owner     <= OWN_RD;
                 settle    <= 0;
                 astate    <= A_WAIT;
+                pf_yield  <= 0;
             end else if( b_do_wr ) begin
-                vram_addr <= wr_pen[19:1];
-                // place the pen in its half and enable only those two bytes
-                vram_din  <= wf_pair       ? { wf_next[15:0], wf_head[15:0] }
-                           : wr_pen[0]     ? { wf_head[15:0], 16'd0 }
-                                           : { 16'd0, wf_head[15:0] };
-                vram_dsn  <= wf_pair ? 4'b0000
-                           : wr_pen[0] ? 4'b0011 : 4'b1100;
-                // rd and wr are SEPARATE request strobes on a cache lane
-                // (jtframe_cache_mux: wire req0 = rd0 | wr0). Asserting rd
-                // alongside we makes the lane service a READ, so the write is
-                // silently dropped -- build 60 rendered a black screen because
-                // nothing ever reached VRAM.
+                vram_addr <= p0[19:2];
+                vram_din  <= wdin;
+                vram_dsn  <= wdsn;
                 vram_we   <= 1;
                 owner     <= OWN_WR;
                 settle    <= 0;
                 astate    <= A_WAIT;
+                pf_yield  <= 0;
+            end else if( pf_active ) begin
+                // yield slot offered but nobody wanted it: reclaim it
+                pf_yield  <= 0;
             end
         end
         A_WAIT: begin
@@ -308,38 +313,34 @@ always @(posedge clk) begin
                 case( owner )
                     OWN_PF: begin
                         pf_data <= vram_data;
-                        pf_half <= 1'b0;
-                        pf_j    <= pf_j + 18'd1;
+                        pf_j    <= pf_j + 17'd1;
                         astate  <= A_PFWR;
                     end
                     OWN_RD: begin
                         vr_ack  <= 1;
                         vr_busy <= 1;
-                        vr_data <= rd_pen[0] ? vram_data[31:16] : vram_data[15:0];
+                        vr_data <= vram_data[16*rd_pen[1:0] +: 16];
                         astate  <= A_IDLE;
                     end
                     default: astate <= A_IDLE;
                 endcase
             end
         end
-        // unpack the fetched pair into the line buffer, low half first
+        // unpack the fetched word into the line buffer, pf_slot upward
         A_PFWR: begin
-            if( pf_skip && !pf_half ) begin
-                pf_skip <= 1'b0;
-                pf_half <= 1'b1;
-            end else begin
-                if( pf_w < 10'd384 ) begin
-                    lb_we    <= 1;
-                    lb_waddr <= pf_w[8:0];
-                    lb_wdata <= pf_half ? pf_data[31:16] : pf_data[15:0];
-                    pf_w     <= pf_w + 10'd1;
-                end
-                if( pf_half ) begin
-                    if( pf_w + 10'd1 >= 10'd384 ) pf_active <= 0;
-                    astate <= A_IDLE;
-                end else
-                    pf_half <= 1'b1;
+            if( pf_w < 10'd384 ) begin
+                lb_we    <= 1;
+                lb_waddr <= pf_w[8:0];
+                lb_wdata <= pf_data[16*pf_slot +: 16];
+                pf_w     <= pf_w + 10'd1;
             end
+            if( pf_slot == 2'd3 || pf_w + 10'd1 >= 10'd384 ) begin
+                pf_slot <= 2'd0;
+                if( pf_w + 10'd1 >= 10'd384 ) pf_active <= 0;
+                pf_yield <= pf_ahead;      // offer the blitter one slot
+                astate   <= A_IDLE;
+            end else
+                pf_slot <= pf_slot + 2'd1;
         end
         default: astate <= A_IDLE;
         endcase

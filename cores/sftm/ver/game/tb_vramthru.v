@@ -52,24 +52,24 @@ localparam FILLLAT = 24;           // burst fill
 
 reg [15:0] mem[0:2097151];
 
-wire [20:2] vram_addr;
-wire [31:0] vram_din;
-wire [ 3:0] vram_dsn;
+wire [20:3] vram_addr;
+wire [63:0] vram_din;
+wire [ 7:0] vram_dsn;
 wire        vram_we, vram_rd;
 // the lane services a request when EITHER strobe is up; modelling only rd
 // would re-encode the bug that made build 60 render a black screen
 wire        vram_req = vram_rd | vram_we;
-reg  [31:0] vram_data;
+reg  [63:0] vram_data;
 reg         vram_ok;
 reg  [ 7:0] vcnt;
 
-// block index of the 32-bit word address: BLKSIZE bytes = BLKSIZE/4 words
-localparam WPB = BLKSIZE/4;                     // 32-bit words per block
-wire [20:2] blk_of  = vram_addr / WPB;
+// block index of the 64-bit word address: BLKSIZE bytes = BLKSIZE/8 words
+localparam WPB = BLKSIZE/8;                     // 64-bit words per block
+wire [20:3] blk_of  = vram_addr / WPB;
 wire [ 5:0] blk_idx = blk_of[5:0];
-reg  [20:2] tag[0:BLOCKS-1];
+reg  [20:3] tag[0:BLOCKS-1];
 reg         valid[0:BLOCKS-1];
-integer bi;
+integer bi, s;
 initial for( bi=0; bi<BLOCKS; bi=bi+1 ) begin tag[bi]=0; valid[bi]=0; end
 
 wire hit = valid[blk_idx] && tag[blk_idx]==blk_of;
@@ -85,12 +85,13 @@ always @(posedge clk) begin
         valid[blk_idx] <= 1'b1;
         tag[blk_idx]   <= blk_of;
         if( vram_we ) begin
-            if( !vram_dsn[0] ) mem[{vram_addr,1'b0}][ 7:0] <= vram_din[ 7:0];
-            if( !vram_dsn[1] ) mem[{vram_addr,1'b0}][15:8] <= vram_din[15:8];
-            if( !vram_dsn[2] ) mem[{vram_addr,1'b1}][ 7:0] <= vram_din[23:16];
-            if( !vram_dsn[3] ) mem[{vram_addr,1'b1}][15:8] <= vram_din[31:24];
+            for( s=0; s<4; s=s+1 ) begin
+                if( !vram_dsn[2*s  ] ) mem[{vram_addr,s[1:0]}][ 7:0] <= vram_din[16*s   +: 8];
+                if( !vram_dsn[2*s+1] ) mem[{vram_addr,s[1:0]}][15:8] <= vram_din[16*s+8 +: 8];
+            end
         end else
-            vram_data <= { mem[{vram_addr,1'b1}], mem[{vram_addr,1'b0}] };
+            vram_data <= { mem[{vram_addr,2'd3}], mem[{vram_addr,2'd2}],
+                           mem[{vram_addr,2'd1}], mem[{vram_addr,2'd0}] };
     end
 end
 

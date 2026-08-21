@@ -100,7 +100,13 @@ sdram:
   # also removes the read/write coherency question.
   cache-lanes:
     - name: vram          # byte 0x80000 in bank 3, past grm3's 512 kB
-      data_width: 32
+      # 64-bit: 4 pens per transaction. Hardware (b106) measured the lane
+      # saturated for a whole frame with ~80k hit transactions at ~5 clk each;
+      # doubling the word halves that. ENDIAN does not apply (the generator
+      # forces little-endian for non-32-bit lanes) and does not matter: vram
+      # is pure RAM, never downloaded, so sftm_vram defines the slot layout
+      # on both the write and the read side.
+      data_width: 64
       rw: true
       blocks: { count: 64, size: 256 }
       at: { bank: 3, offset: "0x40000", length: 2MB }
