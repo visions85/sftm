@@ -57,7 +57,9 @@ jtframe_cache_mux #(
     .wdsn0(4'd0), .ok0(), .flush0(1'b0), .flushing0(), .flush_done0(),
     .addr1( 18'd0 ), .dout1(), .rd1(1'b0), .wr1(1'b0), .din1(16'd0),
     .wdsn1(2'd0), .ok1(), .flush1(1'b0), .flushing1(), .flush_done1(),
-    .addr2( addr2 ), .dout2(dout2), .rd2(rd2), .wr2(wr2), .din2(din2),
+    .addr2( lda_act ? ld_addr : addr2 ), .dout2(dout2),
+    .rd2( lda_act ? ldr : rd2 ), .wr2( lda_act ? ldw : wr2 ),
+    .din2( lda_act ? ld_data : din2 ),
     .wdsn2(4'd0), .ok2(ok2), .flush2(1'b0), .flushing2(), .flush_done2(),
     .addr3( 23'd0 ), .dout3(), .rd3(1'b0), .wr3(1'b0), .din3(8'd0),
     .wdsn3(1'd0), .ok3(), .flush3(1'b0), .flushing3(), .flush_done3(),
@@ -159,6 +161,53 @@ begin
     if( g >= 20000 ) begin $display("FAIL: prog_ack timeout"); errors = errors + 1; end
     prog_wr <= 1'b0;
     @(posedge clk);
+end endtask
+
+// ---------------------------------------------------------------------------
+// VERBATIM replica of jtsftm_game's b91 JTAG-loader FSM, driven by a src reg
+// the way quartus_stp drives the ISSP source. Phase E replays the exact
+// hardware sequence that returned all-zero readbacks.
+// ---------------------------------------------------------------------------
+reg  [63:0] ld_srcr = 64'd0;
+wire        lda_act   = ld_srcr[51];
+wire        ld_togl   = ld_srcr[50];
+wire        ld_rdm    = ld_srcr[52];
+wire [19:2] ld_addr   = ld_srcr[49:32];
+wire [31:0] ld_data   = ld_srcr[31:0];
+reg         ld_tog_d = 1'b0;
+reg  [1:0]  ld_st    = 2'd0;
+reg         ld_we    = 1'b0;
+reg  [15:0] ld_done  = 16'd0;
+reg  [15:0] ld_seen  = 16'd0;
+reg  [31:0] ld_rdata = 32'd0;
+wire        ldr = ld_we &  ld_rdm;
+wire        ldw = ld_we & ~ld_rdm;
+always @(posedge clk) begin
+    ld_tog_d <= ld_togl;
+    case( ld_st )
+        2'd0: if( ld_togl != ld_tog_d ) begin
+                  ld_we <= 1'b1; ld_st <= 2'd1;
+                  if( ~&ld_seen ) ld_seen <= ld_seen + 16'd1;
+              end
+        2'd1: ld_st <= 2'd2;
+        2'd2: if( ok2 ) begin
+                  ld_we <= 1'b0; ld_st <= 2'd0;
+                  if( ld_rdm ) ld_rdata <= dout2;
+                  if( ~&ld_done ) ld_done <= ld_done + 16'd1;
+              end
+    endcase
+end
+
+integer lg;
+task ld_xact(input rw, input [17:0] a, input [31:0] d);
+begin
+    // one ISSP source write: all fields change on the same "edge"
+    @(posedge clk);
+    ld_srcr <= { 11'd0, rw, 1'b1, ~ld_srcr[50], a, d };
+    // quartus_stp gap between writes is huge; model 200 clk
+    lg = 0;
+    repeat(200) @(posedge clk);
+    if( ld_st != 2'd0 ) $display("  (loader FSM stuck in state %0d after xact)", ld_st);
 end endtask
 
 // real program-ROM head, one hex byte per line (first 64 bytes of the stream)
@@ -327,6 +376,27 @@ initial begin
         end
     end
     $display("  burst of 8 sequential writes checked");
+
+    // -----------------------------------------------------------------------
+    // Phase E: the b91 loader FSM replica, replaying the hardware sequence
+    // that read back all zeros: a burst of writes, a clear, then reads.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase E: b91 JTAG-loader FSM replica (write burst, then reads)");
+    for( i = 0; i < 8; i = i + 1 ) ld_xact(1'b0, 18'd8+i[15:0], 32'hD0D00000 + i[15:0]);
+    @(posedge clk); ld_srcr <= 64'd0;   // the script's clear
+    repeat(50) @(posedge clk);
+    for( i = 0; i < 4; i = i + 1 ) begin
+        ld_xact(1'b1, 18'd8+i[15:0], 32'd0);
+        if( ld_rdata === 32'hD0D00000 + i[15:0] )
+            $display("  E rd lw%0d: rdata=%08X CORRECT", 8+i, ld_rdata);
+        else begin
+            $display("  E rd lw%0d: rdata=%08X WRONG (want %08X)", 8+i, ld_rdata, 32'hD0D00000+i[15:0]);
+            errors = errors + 1;
+        end
+    end
+    @(posedge clk); ld_srcr <= 64'd0;
+    repeat(20) @(posedge clk);
 
     $display("");
     if( errors == 0 ) $display("PASS: download + lane + rom_word all agree with the image");

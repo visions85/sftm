@@ -181,47 +181,61 @@ wire        ld_rdmode = ld_src[52];   // 1: toggle performs a READ, data in prob
 wire [19:2] ld_addr   = ld_src[49:32];
 wire [31:0] ld_data   = ld_src[31:0];
 
-// The lane needs a SETTLE cycle before ok is meaningful: main_ok can still be
-// high from the previous transaction, and sampling it immediately clears the
-// request on a stale ok so the write is silently dropped. sftm_vram's arbiter
-// does the same thing (A_WAIT sets `settle` before testing vram_ok) -- getting
-// this wrong is what made the first loader attempt write nothing while
-// appearing to run at full speed.
-// NOT reset by `rst`. rst is the GAME reset and is asserted the whole time
-// force_run is low -- which is exactly when the loader runs. Holding the FSM in
-// reset during loading meant it never saw a single toggle edge: probe3 read
-// seen=0 after pushing 64 words, and every write was silently discarded.
-// FPGA registers come up at their declared value after configuration, so the
-// loader simply does not take a reset.
+// ISSP source bits update from the JTAG TCK domain and are NOT mutually
+// synchronised: the toggle edge can be observed a core clock before the
+// address/data/mode bits have settled. The b91 FSM used those fields
+// combinationally in the same cycle it saw the edge, so on hardware reads ran
+// as writes (rdmode arrived late; every readback returned ld_rdata's reset
+// value of zero) and bulk writes scattered with half-settled addresses --
+// while the identical FSM was perfect in simulation, where all bits change on
+// one edge. Fix: on the edge, WAIT 15 clocks (the inter-bit skew is bounded by
+// one TCK, ~2 core clocks), then LATCH every field, then run the transaction
+// from the latches.
+//
+// The lane still needs its own settle before ok is meaningful: main_ok can be
+// high from the previous transaction (sftm_vram's arbiter guards the same
+// hazard).
 reg        ld_tog_d = 1'b0;
 reg [1:0]  ld_st    = 2'd0;
+reg [3:0]  ld_wait  = 4'd0;
 reg        ld_we    = 1'b0;
+reg        ld_rdm_l = 1'b0;
+reg [19:2] ld_addr_l= 18'd0;
+reg [31:0] ld_data_l= 32'd0;
 reg [15:0] ld_done  = 16'd0;   // transactions the lane ACCEPTED
-reg [31:0] ld_rdata = 32'd0;   // last readback (ld_rdmode)
 reg [15:0] ld_seen  = 16'd0;   // toggle edges seen
+reg [31:0] ld_rdata = 32'd0;   // last readback (ld_rdmode)
 
 always @(posedge clk) begin
     ld_tog_d <= ld_toggle;
     case( ld_st )
         2'd0: if( ld_toggle != ld_tog_d ) begin
-                  ld_we <= 1'b1; ld_st <= 2'd1;
+                  ld_wait <= 4'd0; ld_st <= 2'd1;
                   if( ~&ld_seen ) ld_seen <= ld_seen + 16'd1;
               end
-        // settle: main_ok can still be high from the previous transaction, so
-        // sampling it immediately clears the request on a stale ok and the
-        // write is dropped (sftm_vram's arbiter does the same settle).
-        2'd1: ld_st <= 2'd2;
-        2'd2: if( main_ok ) begin
+        2'd1: begin // source-bit settle, then latch all fields
+                  ld_wait <= ld_wait + 4'd1;
+                  if( &ld_wait ) begin
+                      ld_addr_l <= ld_addr;
+                      ld_data_l <= ld_data;
+                      ld_rdm_l  <= ld_rdmode;
+                      ld_we     <= 1'b1;
+                      ld_st     <= 2'd2;
+                  end
+              end
+        2'd2: ld_st <= 2'd3;    // lane settle (stale-ok guard)
+        2'd3: if( main_ok ) begin
                   ld_we <= 1'b0; ld_st <= 2'd0;
+                  if( ld_rdm_l ) ld_rdata <= main_data;
                   if( ~&ld_done ) ld_done <= ld_done + 16'd1;
               end
     endcase
 end
 
-assign main_addr = ld_active ? ld_addr : cpu_rom_addr;
-assign main_rd   = ld_active ? (ld_we &  ld_rdmode) : cpu_rom_rd;
-assign main_we   = ld_active & ld_we & ~ld_rdmode;
-assign main_din  = ld_data;
+assign main_addr = ld_active ? ld_addr_l : cpu_rom_addr;
+assign main_rd   = ld_active ? (ld_we &  ld_rdm_l) : cpu_rom_rd;
+assign main_we   = ld_active & ld_we & ~ld_rdm_l;
+assign main_din  = ld_data_l;
 assign main_dsn  = 4'd0;          // all four bytes
 
 altsource_probe u_issp_ld (
