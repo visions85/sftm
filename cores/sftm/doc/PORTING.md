@@ -1934,3 +1934,35 @@ SDRAM only to overwrite them -- allocate-without-fetch needs per-word valid
 bits in jtframe_cache, the one big lever left on the write side). One
 open eye: the first b107 boot caught the title logo half-garbled once, not
 reproduced across a full attract cycle since -- watch for it.
+
+## Builds 109-111: the frame budget closes (2026-08-21, evening)
+
+The full contention campaign, one number per build (busiest attract frame,
+.74 meters, same methodology throughout):
+
+    build  change                        clk/wr-txn  busiest-frame busy
+    b106   pair coalescing (baseline)      24.4        100.0% (saturated)
+    b107   64-bit lane + quad runs +
+           hit-skip + prefetch yield       23.2        100.0%
+    b108   64-bit grom lanes (8 px/fetch)  24.7        100.0%
+    b109   vscan lane split + vblank
+           flush/invalidate                14.9        100.0%
+    b110   write-no-fetch (claim+merge)    12.9         98.8%  <-- first
+                                                       sub-100% busiest frame
+
+b110 moves ~2.5x the pixels of b106 per busiest frame (66.6k quad-run
+transactions vs 35.8k pair transactions). Visually: jungle-stage fights
+render clean, the city stage renders fully with scattered residual speckle
+(stale pens from the previous scene in the last unfinished bands).
+
+b110 first failed to FIT: the write-no-fetch valid array elaborated on
+every 64-bit lane including the three read-only ones, 4196/4191 LABs.
+Gated on BLOCKS==64 (the rw vram lane is the only such lane in this map;
+upstream form should be a real parameter). Fit note: the fuller device
+pushed the HDMI scaler clock to -0.22 ns setup slack (game clock +1.4);
+watch for whole-screen HDMI artifacts and re-seed if they appear.
+
+b111 (in flight): pipelined GROM fetcher -- two ping-pong entries with
+speculative successor prefetch, hiding the lane round trip behind pixel
+consumption on sequential runs. Targets the 200k-clk GROM stall that is
+the largest remaining item.
