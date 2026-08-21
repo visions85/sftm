@@ -641,7 +641,14 @@ always @(posedge clk) begin
 end
 
 // OSD debug view: main CPU status ({boot_done, vint, blit, scan, state, wdog})
-assign debug_view = st_main;
+// The on-screen overlay row draws only while its message is nonzero
+// (jtframe_debug_ctrl: view_sel gated on msg_nonz|dbg_nonz), so zero hides
+// it. st_main served the bring-up era; every measurement now runs over the
+// ISSP probes, and the binary+hex footer confused more than it informed --
+// it was mistaken for a game status display for most of a day (PORTING.md
+// 2026-08-21). Re-point at st_main if screen-visible state is ever needed
+// without a JTAG cable.
+assign debug_view = 8'd0;
 
 // ---------------------------------------------------------------------------
 // In-System Sources and Probes -- read the fabric directly over JTAG.
