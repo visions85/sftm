@@ -158,6 +158,8 @@ module sftm_main #(
     // JTAG hang-hunt: live PC and interrupt state (see jtsftm_game u_issp4)
     output     [23:0] st_pc,
     output     [23:0] st_lastrom,
+    output     [31:0] st_vec_sp,
+    output     [31:0] st_vec_pc,
     output     [23:0] st_firstbad,
     output            st_derail,
     output     [15:0] st_op,
@@ -689,6 +691,24 @@ reg        derail_got   = 1'b0;
 assign st_lastrom  = pc_last_rom;
 assign st_firstbad = pc_first_bad;
 assign st_derail   = derail_got;
+// Vector-read recorder: the two longwords the CPU loads at its reset
+// exception (SSP from 0x0, PC from 0x4), assembled from the 16-bit data reads.
+// Recorder shows the CPU adopting 0x008000 -- the SP VALUE -- as its PC, so
+// capture what it actually receives rather than re-deriving the write side.
+reg [31:0] vec_sp_r = 32'd0, vec_pc_r = 32'd0;
+assign st_vec_sp = vec_sp_r;
+assign st_vec_pc = vec_pc_r;
+wire data_rd = grant && busstate == 2'b10;   // TG68K data read
+always @(posedge clk) begin
+    if( data_rd && A[23:3] == 21'd0 ) begin
+        case( A[2:1] )
+            2'd0: vec_sp_r[31:16] <= cpu_din;
+            2'd1: vec_sp_r[15: 0] <= cpu_din;
+            2'd2: vec_pc_r[31:16] <= cpu_din;
+            2'd3: vec_pc_r[15: 0] <= cpu_din;
+        endcase
+    end
+end
 wire fr_rom = A[23:20] == 4'h8;
 wire fr_bad = (A[23:15] != 9'd0) && (A[23:19] == 5'd0);   // 0x008000-0x07FFFF
 always @(posedge clk) begin
