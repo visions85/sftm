@@ -1900,3 +1900,37 @@ a frame's worth of words. Next levers, in order of expected value:
      invalidation (INVAL_MASK exists in the generated mux) or a proper
      line-buffer scanout that reads each word once;
   3. only then, FIFO depth.
+
+## Build 107: the vram lane contention package, measured (2026-08-21)
+
+Three structural changes landed together -- 64-bit vram lane with quad-run
+write coalescing, hit-skip replacement in jtframe_cache_ctrl (whole-file
+overlay in docker/jtframe-patches), and a pace-based prefetch yield. Full
+verification stack: tb_vramthru (64-bit model), tb_vramlane (NEW: sftm_vram
+against the real mux + burst controller + SDRAM model; caught a bench NBA
+race that masqueraded as RTL corruption -- wait loops must let nonblocking
+updates land before sampling uut state), tb_cachelane Phases A-J.
+
+Hardware, same attract-cycle metering window as b106:
+
+                          b106            b107
+    write txns/frame      35,796 (x2 pens) 37,396 (x4 pens)  ~1.5x pixels
+    clk/txn               24.4            23.2
+    wrFIFO stall          92% of busy     81% of busy
+    GROM fetch stall      19% of busy     35% of busy   <-- new bottleneck
+    VRAM read strobes     412k            306k
+    busiest frame busy    100%            99.7% (moving ~1.5x the pixels)
+
+Visually: FMV attract scenes render PERFECT, the museum stage is clean on
+the left half with a corrupted band on the right (the left-to-right redraw
+still runs out of frame on the busiest scenes, but much later), fight
+scenes show scattered speckle instead of full-screen shredding.
+
+Remaining work, in order: the GROM fetch path is now the bigger stall
+(sftm_blit single-word fetches through the grom lanes -- same
+transaction-tax structure the vram side just shed); and the fill-on-write-
+miss waste (a full-coverage background block still reads 256 bytes from
+SDRAM only to overwrite them -- allocate-without-fetch needs per-word valid
+bits in jtframe_cache, the one big lever left on the write side). One
+open eye: the first b107 boot caught the title logo half-garbled once, not
+reproduced across a full attract cycle since -- watch for it.
