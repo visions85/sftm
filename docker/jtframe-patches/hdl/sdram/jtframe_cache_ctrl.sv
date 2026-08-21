@@ -161,8 +161,15 @@ localparam [4:0] S_INIT_CLEAR    = 5'd0,
 // dirty blocks). A partially valid victim merges before it writes back, on
 // both the eviction and the flush paths, so memory never receives garbage.
 // ---------------------------------------------------------------------------
-localparam integer WNF    = DW == 64 ? 1 : 0;
-localparam integer NFWRDS = DW == 64 ? WORDS/4 : 1;   // 64-bit words per block
+// Gated on BLOCKS==64 as well: the ctrl does not know whether a lane can
+// ever see writes, and on read-only lanes the valid array plus merge logic
+// is dead weight the fitter cannot prove away -- with it on every 64-bit
+// lane the sftm build missed the device by 5 LABs. In the sftm map the rw
+// vram lane is the only 64-bit lane with 64 blocks, so this selects exactly
+// the lane that writes. (The clean form is a parameter plumbed through
+// jtframe_cache and the mux; do that when upstreaming.)
+localparam integer WNF    = DW == 64 && BLOCKS == 64 ? 1 : 0;
+localparam integer NFWRDS = WNF != 0 ? WORDS/4 : 1;   // 64-bit words per block
 reg  [NFWRDS-1:0] wvalid [0:BLOCKS-1];
 reg  [NFWRDS-1:0] merge_wvalid_l;
 reg               claim_pend, merge_same, merge_victim;
