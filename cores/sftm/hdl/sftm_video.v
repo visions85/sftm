@@ -138,7 +138,8 @@ module sftm_video(
     // asked and does not start".
     output reg [19:0] stw_vreg,   // CPU video-register writes this frame
     output reg [19:0] stw_cmd,    // ...of which COMMAND (blit starts)
-    output reg [19:0] stw_xfer,   // ...of which TRANSFER (cmd-3 pixel pushes)
+    output reg [19:0] stw_xfer,   // REPURPOSED b113: pens accepted by the write
+                                  // FIFO this frame (TRANSFER was always zero)
     output reg [19:0] stw_rd,     // VRAM read strobes (scanout/prefetch)
     output reg [ 3:0] st_bnum,    // blits started in that frame (saturating)
     // background-streak probe, see below
@@ -330,7 +331,7 @@ always @(posedge clk) begin
     end else begin
         if( vreg_wr  && ~&bc_vreg ) bc_vreg <= bc_vreg + 20'd1;
         if( cmd_stb  && ~&bc_cmd  ) bc_cmd  <= bc_cmd  + 20'd1;
-        if( xfer_stb && ~&bc_xfer ) bc_xfer <= bc_xfer + 20'd1;
+        if( vw_req && vw_rdy && ~&bc_xfer ) bc_xfer <= bc_xfer + 20'd1;
         if( vram_rd  && ~&bc_rd   ) bc_rd   <= bc_rd   + 20'd1;
     end
 end

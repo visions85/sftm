@@ -91,7 +91,7 @@ module sftm_vram(
 );
 
 localparam [18:0] VRAM_MASK = 19'h7FFFF;
-localparam [ 2:0] CLOSE_LINGER = 3'd6;   // clk an idle open entry waits
+localparam [ 3:0] CLOSE_LINGER = 4'd12;  // clk an idle open entry waits
 
 // The lanes are placed by `at: offset` in cfg/mem.yaml (word 0x40000 of
 // bank 3, byte 0x80000, clear of grm3's 512 kB). No bias here.
@@ -107,7 +107,7 @@ reg         open_vld;
 reg [16:0]  open_word;               // {plane, pen[18:3]}
 reg [127:0] open_data;
 reg [15:0]  open_dsn;
-reg [ 2:0]  open_age;                // counts down to the idle self-close
+reg [ 3:0]  open_age;                // counts down to the idle self-close
 
 wire wf_full  = wf_cnt == 5'd16;
 wire wf_empty = wf_cnt == 5'd0 && !open_vld;
@@ -123,7 +123,7 @@ wire push_new   = push && !push_merge;
 // close the open entry: displaced by a new word, or idle long enough --
 // never into a full FIFO (the displaced case is already gated by vw_rdy)
 wire close_out  = open_vld && !wf_full && ( push_new ||
-                                (open_age == 3'd0 && !push_merge) );
+                                (open_age == 4'd0 && !push_merge) );
 
 always @(posedge clk) begin
     if( rst ) begin
@@ -148,8 +148,8 @@ always @(posedge clk) begin
             open_data[16*pen_slot +: 16] <= vw_data;
             open_dsn [ 2*pen_slot +:  2] <= 2'b00;
             open_age  <= CLOSE_LINGER;
-        end else if( open_vld && open_age != 3'd0 )
-            open_age <= open_age - 3'd1;
+        end else if( open_vld && open_age != 4'd0 )
+            open_age <= open_age - 4'd1;
 
         if( wf_pop )
             wf_rd <= wf_rd + 4'd1;
