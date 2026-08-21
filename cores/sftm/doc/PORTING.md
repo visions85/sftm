@@ -1984,3 +1984,44 @@ during fast scrolls, then catch up. No confetti, no persistent regions.
 If the pan-band matters, the next levers are: flush more often than once
 per frame (e.g. also at mid-screen, cost ~10k clk each), or trim write
 drain further (wb-burst chaining in jtframe_burst_ctrl). Neither started.
+
+## Build 114: the flush race fixed, data integrity restored (2026-08-21, late)
+
+The user ran the service menu's own checksum tests and caught what the
+meters could not: the FULL GROM CHECKSUM TEST failed on every chip. Bench
+bisect over JTAG: passes b105-b108, fails from b109 -- the first build to
+use jtframe's flush machinery, which no core had exercised before.
+tb_vramlane phase 7 (traffic racing repeated flushes) reproduced whole
+write words vanishing -- issued correctly, ok'd 12.5us later across a
+flush, present in neither cache nor SDRAM. The reproduction was
+EVENT-ORDERING SENSITIVE (a passive monitor made it pass): a true hazard,
+intermittent on silicon, and a hidden component of the "corruption"
+attributed to throughput since b109.
+
+Fix: sftm_vram serialises flush against traffic by construction (flush
+fires only from a quiet sequencer; no issue until vram_flushing rose and
+fell), plus a defensive jtframe_cache_req clear (a stranded flush-read
+fired a ghost lookup during the next flush). Phase 7 passes under both
+event orderings and four flush cadences. Hardware: FULL GROM CHECKSUM TEST
+PASSED on b114, checksums identical to the b105 baseline.
+
+Two lessons for the notebook: the game's own service tests are a
+first-class verification tool (they found what meters and screenshots
+could not name), and "passes in sim" must be qualified by event-order
+robustness when a bug is timing-flavoured.
+
+## End state and the remaining gap
+
+b114 with the pen meter (b113): the cage stage demands 280,255 pens on its
+busiest frame -- THREE backgrounds -- and the combiner batches 7.65
+pens/txn (max 8). We deliver ~290k pens/frame; the original IT42 blitter
+envelope was ~470k. Steady-state fights run 0-2.5% residual (mostly clean
+frames); scene transitions briefly show stale regions while ~2 frames of
+repaint catch up. Data path fully verified: boot, gameplay, and both GROM
+checksum self-tests pass.
+
+The definitive close for the last few percent is the 96 MHz SDRAM project
+(jtframe_burst_sdram is 48-only today): 2x bus bandwidth puts the worst
+scene at ~50% of budget. Scoped in the session log; the instrument stack
+(ISSP meters, JTAG inputs, unattended service-menu automation, tb_vramlane
+phase 7) is the de-risking asset.
