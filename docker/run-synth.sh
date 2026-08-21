@@ -93,11 +93,13 @@ echo "[sftm] debug overlay pinned to the game debug_view"
 # watchdog loop that kept every cache-lanes build from booting. Simulation
 # never sees it because there is no clock phase to compensate. The banks build
 # (b59) works on the same board because its path passes SHIFTED properly.
+grep -q "parameter SHIFTED" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || \
 sed -i "s/module jtframe_burst_sdram #(/module jtframe_burst_sdram #(\n    parameter SHIFTED = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
 sed -i "s/    .SHIFTED       ( 0        ),/    .SHIFTED       ( SHIFTED  ),/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
-sed -i "s/    jtframe_burst_sdram #(/    jtframe_burst_sdram #(\n`ifdef JTFRAME_SDRAM96\n        .SHIFTED    ( 0             ),\n`else\n        .SHIFTED    ( SDRAM_SHIFT   ),\n`endif/" \
+grep -q "SHIFTED    ( SDRAM_SHIFT   )" "$JTFRAME_DIR/hdl/jtframe_board_sdram.v" || \
+sed -i "s/    jtframe_burst_sdram #(/    jtframe_burst_sdram #(\n\`ifdef JTFRAME_SDRAM96\n        .SHIFTED    ( 0             ),\n\`else\n        .SHIFTED    ( SDRAM_SHIFT   ),\n\`endif/" \
     "$JTFRAME_DIR/hdl/jtframe_board_sdram.v" || true
 if grep -q "SHIFTED       ( 0        )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v"; then
     echo "[sftm] ERROR: SHIFTED plumb did NOT apply" >&2; exit 1
