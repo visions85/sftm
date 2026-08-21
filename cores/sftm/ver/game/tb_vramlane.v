@@ -145,11 +145,15 @@ integer t0, cyc;
 
 task wpush(input [18:0] a, input [15:0] d);
 begin
-    @(posedge clk);
-    while( !vw_rdy ) @(posedge clk);
-    vw_addr <= a; vw_data <= d; vw_plane <= 1'b0; vw_req <= 1'b1;
-    @(posedge clk);
-    vw_req <= 1'b0;
+    // the REAL blitter holds vw_req until the cycle it is accepted; a
+    // single-cycle pulse races vw_rdy dropping at the same edge and loses
+    // the pen silently (that false loss burned a debugging session).
+    // Negedge sampling makes the accepting posedge unambiguous.
+    @(negedge clk);
+    vw_addr = a; vw_data = d; vw_plane = 1'b0; vw_req = 1'b1;
+    while( !vw_rdy ) @(negedge clk);
+    @(negedge clk);          // past the posedge that pushed
+    vw_req = 1'b0;
 end endtask
 
 task wdrain;
@@ -347,6 +351,55 @@ initial begin
     end
     $display("  claim + read-merge + eviction writeback verified");
 
+    // ---- 7. flushes CONCURRENT with write/read traffic --------------------
+    // The full GROM checksum test on hardware fails from b109 on: it blits
+    // and reads back continuously while the vblank flush fires every frame.
+    // Every earlier phase drained before flushing; this one does not.
+    $display("7: writes and reads racing repeated flushes");
+    fork
+        begin : flusher
+            integer k;
+            for( k = 0; k < 12; k = k + 1 ) begin
+                repeat(400) @(posedge clk);
+                frame_flush <= 1'b1;
+                @(posedge clk);
+                frame_flush <= 1'b0;
+            end
+        end
+        begin : traffic
+            for( i = 0; i < 1200; i = i + 1 )
+                wpush( 19'd90112 + i[18:0], 16'h7000 + i[15:0] );
+            wdrain;
+        end
+    join
+    guard = 0;
+    while( vram_flushing && guard < 200000 ) begin @(posedge clk); guard = guard + 1; end
+    for( i = 0; i < 1200; i = i + 1 ) begin
+        bread( 19'd90112 + i[18:0] );
+        if( rgot !== 16'h7000 + i[15:0] ) begin
+            if( errors < 8 )
+                $display("FAIL: pen %0d = %04X, want %04X (lost/corrupt under flush)",
+                         90112+i, rgot, 16'h7000+i[15:0]);
+            errors = errors + 1;
+        end
+    end
+    $display("  1200 pens written under 12 mid-stream flushes, all read back");
+
+    // interleaved reads racing the flush as well
+    for( i = 0; i < 64; i = i + 1 ) begin
+        if( i[1:0] == 2'd0 ) begin
+            frame_flush <= 1'b1; @(posedge clk); frame_flush <= 1'b0;
+        end
+        bread( 19'd90112 + {i[15:0], 4'd0} );
+        if( rgot !== 16'h7000 + {i[11:0], 4'd0} ) begin
+            if( errors < 16 )
+                $display("FAIL: flush-race read pen %0d = %04X, want %04X",
+                         90112+i*16, rgot, 16'h7000+i*16);
+            errors = errors + 1;
+        end
+    end
+    $display("  64 reads interleaved with flush pulses checked");
+
     $display("");
     if( errors == 0 ) $display("PASS: sftm_vram on the real 64-bit lane");
     else              $display("FAIL: %0d problem(s)", errors);
@@ -354,6 +407,25 @@ initial begin
 end
 
 initial begin #60_000_000; $display("FAIL: timeout"); $finish; end
+
+`ifdef FLUSHDBG
+integer n_werise = 0, n_wrok = 0, n_rdrise = 0, n_rdok = 0, n_okorphan = 0;
+reg rd_d2 = 0;
+always @(posedge clk) if( !rst ) begin
+    rd_d2 <= vram_rd;
+    if( vram_we && !we_d )  n_werise = n_werise + 1;
+    if( vram_rd && !rd_d2 ) n_rdrise = n_rdrise + 1;
+    if( vram_ok && (vram_we||we_d) )  n_wrok = n_wrok + 1;
+    if( vram_ok && (vram_rd||rd_d2) ) n_rdok = n_rdok + 1;
+    if( vram_ok && !vram_we && !we_d && !vram_rd && !rd_d2 ) begin
+        n_okorphan = n_okorphan + 1;
+        $display("[%0t] ORPHAN-OK (no request held)", $time);
+    end
+end
+final $display("TALLY we-rise=%0d wr-ok=%0d rd-rise=%0d rd-ok=%0d orphan-ok=%0d",
+               n_werise, n_wrok, n_rdrise, n_rdok, n_okorphan);
+
+`endif
 
 `ifdef PFDBG
 integer dbgn = 0;

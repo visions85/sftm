@@ -81,6 +81,9 @@ PATCHES=/workspace/docker/jtframe-patches
 if ! grep -q "hit-skip replacement" "$JTFRAME_DIR/hdl/sdram/jtframe_cache_ctrl.sv"; then
     echo "[sftm] ERROR: cache hit-skip overlay did NOT apply" >&2; exit 1
 fi
+if ! grep -q "ghost lookup" "$JTFRAME_DIR/hdl/sdram/jtframe_cache_req.sv"; then
+    echo "[sftm] ERROR: cache_req flush overlay did NOT apply" >&2; exit 1
+fi
 echo "[sftm] cache replacement hit-skip applied (jtframe_cache_ctrl overlay)"
 # Pin the debug overlay to the game debug_view -- see entrypoint.sh for why.
 sed -i "s/SYS_INFO:    mux <= sys_info;/SYS_INFO:    mux <= debug_view;/" \

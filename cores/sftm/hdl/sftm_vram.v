@@ -278,8 +278,20 @@ reg       settle, vr_busy;
 
 wire [19:0] rd_pen  = { vr_plane, vr_addr };
 
-wire b_do_rd = astate==A_IDLE && vr_req && !vr_busy && wf_empty;
-wire b_do_wr = astate==A_IDLE && wf_cnt != 5'd0;
+// Flush serialisation. Pulsing the lane flush while a request edge lands in
+// the same cycle is a genuine race in the lane's front-end -- in simulation
+// it loses whole write words only under some event orderings, which is the
+// signature of a hazard that is intermittent on silicon (the full GROM
+// checksum test failed from b109, the first flush user, onward). So the two
+// never overlap by construction: frame_flush latches into flush_req, the
+// flush fires only from a quiet sequencer, and no request issues from
+// flush_req until vram_flushing has risen and fallen again.
+reg  flush_req, flush_busy, flushing_d;
+wire flush_quiet = astate==A_IDLE && !vram_we && !vram_rd;
+wire flush_gate  = flush_req || flush_busy;
+
+wire b_do_rd = astate==A_IDLE && !flush_gate && vr_req && !vr_busy && wf_empty;
+wire b_do_wr = astate==A_IDLE && !flush_gate && wf_cnt != 5'd0;
 assign wf_pop = b_do_wr;          // pop at issue
 assign st_wpop = wf_pop;
 
@@ -290,13 +302,26 @@ always @(posedge clk) begin
         vram_we   <= 0;
         vram_dsn  <= 16'hFFFF;
         vram_flush<= 0;
+        flush_req <= 0;
+        flush_busy<= 0;
+        flushing_d<= 0;
         vr_ack    <= 0;
         vr_busy   <= 0;
         settle    <= 0;
         owner     <= OWN_WR;
     end else begin
         vr_ack     <= 0;
-        vram_flush <= frame_flush;   // 1-clk pulse; the lane edge-detects it
+        vram_flush <= 0;
+        flushing_d <= vram_flushing;
+        if( frame_flush ) flush_req <= 1'b1;
+        if( flush_req && flush_quiet ) begin
+            vram_flush <= 1'b1;      // 1-clk pulse; the lane edge-detects it
+            flush_req  <= 1'b0;
+            flush_busy <= 1'b1;
+        end
+        // released only after the lane has visibly started AND finished
+        if( flush_busy && flushing_d && !vram_flushing )
+            flush_busy <= 1'b0;
         if( !vr_req ) vr_busy <= 1'b0;
 
         case( astate )
