@@ -326,6 +326,16 @@ wire       force_run = issp_src[0];
 // and every other reset path destroys SDRAM or re-shifts the download.
 wire       force_rst = issp_src[1];
 wire       rst_g     = (rst & ~force_run) | force_rst;
+// src[2..5]: JTAG-pressable cabinet inputs, so an unattended run can leave
+// the battery-failure and service-menu screens without a person at the
+// machine: src[2]=P1 start, src[3]=coin 1, src[4]=P1 up, src[5]=P1 down.
+// Inputs are active low at this level, so a press pulls the bit low; the
+// released state leaves the real controls untouched. The TCK-domain crossing
+// is unsynchronised but harmless here: the game samples these continuously
+// and a scripted press holds them for hundreds of milliseconds.
+wire [15:0] joystick1_g = joystick1 & ~{12'd0, issp_src[4], issp_src[5], 2'b00};
+wire [ 3:0] cab_1p_g    = cab_1p    & ~{ 3'd0, issp_src[2]};
+wire [ 3:0] coin_g      = coin      & ~{ 3'd0, issp_src[3]};
 
 reg [31:0] m_first;
 reg        m_got;
@@ -356,10 +366,10 @@ sftm_main u_main(
     .rom_cs       ( cpu_rom_rd    ),
     .rom_ok       ( main_ok       ),
 
-    .joystick1    ( joystick1     ),
+    .joystick1    ( joystick1_g   ),
     .joystick2    ( joystick2     ),
-    .cab_1p       ( cab_1p        ),
-    .coin         ( coin          ),
+    .cab_1p       ( cab_1p_g      ),
+    .coin         ( coin_g        ),
     .service      ( service       ),
     .dip_test     ( dip_test      ),
     .dipsw_a      ( dipsw_a       ),
