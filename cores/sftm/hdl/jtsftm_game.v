@@ -464,15 +464,15 @@ sftm_video u_video(
     .color_latch1 ( color_latch1  ),
 
     .grom0_addr   ( vid_grom0_addr),
-    .grom0_data   ( {grom0_data[7:0], grom0_data[15:8]} ),
+    .grom0_data   ( grom0_data    ),
     .grom0_rd     ( vid_grom0_rd  ),
     .grom0_ok     ( grom0_ok      ),
     .grom1_addr   ( grom1_addr    ),
-    .grom1_data   ( {grom1_data[7:0], grom1_data[15:8]} ),
+    .grom1_data   ( grom1_data    ),
     .grom1_rd     ( grom1_rd      ),
     .grom1_ok     ( grom1_ok      ),
     .grm3_addr    ( grm3_addr     ),
-    .grm3_data    ( {grm3_data[7:0], grm3_data[15:8]} ),
+    .grm3_data    ( grm3_data     ),
     .grm3_rd      ( grm3_rd       ),
     .grm3_ok      ( grm3_ok       ),
 
@@ -526,30 +526,19 @@ sftm_video u_video(
 
 );
 
-// The cache lanes deliver each 16-bit SDRAM halfword with its bytes in the
-// opposite order to the banks-path slots the consumers were written against.
-// Measured over JTAG on grom0: every halfword at the correct address,
-// BYTESWAP vs the ROM stream -- which is exactly the ragged glyphs (adjacent
-// pixel pairs exchanged) and the shimmering background corruption. The three
-// 16-bit consumers get their bytes swapped at the connection; the 8-bit snd
-// lane picks its byte by addr[0], so its selection is corrected by inverting
-// that bit here.
-wire [20:0] snd_addr_v;
-assign snd_addr = { snd_addr_v[18:1], ~snd_addr_v[0] };
-
 sftm_snd u_snd(
     .rst          ( rst_g         ),
     .clk          ( clk           ),
     .cen          ( snd_cen       ),
     .es_cen       ( es_cen        ),
 
-    .rom_addr     ( snd_addr_v    ),
+    .rom_addr     ( snd_addr      ),
     .rom_data     ( snd_data      ),
     .rom_cs       ( snd_rd        ),
     .rom_ok       ( snd_ok        ),
 
     .srom_addr    ( srom_addr     ),
-    .srom_data    ( {srom_data[7:0], srom_data[15:8]} ),
+    .srom_data    ( srom_data     ),
     .srom_rd      ( srom_rd       ),
     .srom_ok      ( srom_ok       ),
 
