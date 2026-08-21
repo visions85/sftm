@@ -1792,3 +1792,57 @@ Two findings:
      cache-lanes design misbehaving or a build-88-specific regression (main
      lane rw + loader mux) is THE next question, now answerable with working
      instruments: screenshot + overlay + ISSP all agree on one machine.
+
+## The service-menu wall, NVRAM restore, and JTAG inputs (2026-08-21)
+
+**MAME ground truth (headless, `-str` + Lua input injection):** with fresh
+NVRAM and no input, sftm shows the battery-backup-failure screen and then
+times out INTO ATTRACT somewhere between 45 s and 120 s. Pressing START at
+the battery screen also goes straight to attract. The service menu is never
+visited on the ordinary boot path.
+
+**Our cache core diverges:** on .74, both the timeout AND a verified START
+press at the visible battery screen land in the MAIN SERVICE MENU (proven on
+b100 and b105 -- not a coalescing/JTAG-build regression). Menu navigation
+over JTAG works (cursor moves, submenus open), but two actions silently
+no-op: EXIT on the main menu (screen unchanged even 180 s later) and TEST
+ALL SOUND ROMS. Both plausibly wait on the sound CPU; sftm_snd's 6809 booted
+and initialised the ES5506 in banks-era measurements but the cache-era sound
+path is unverified on hardware. The snd lane's BYTE ORDER is verified
+correct in simulation (tb_cachelane Phase H: real dwnld SWAB=1 stream read
+back in order through the real DW=8 lane), so a crashed-by-swapped-opcodes
+6809 is ruled out; b102's snd addr-bit0 inversion would have BROKEN it.
+jtframe hard-errors on ENDIAN=1 for DW!=32 (jtframe_cache_ctrl), so the 8-
+and 16-bit lanes are little-endian selects and the MRA/SWAB packing already
+agrees with them.
+
+**Why .98 never showed any of this:** MiSTer restores arcade NVRAM from
+`/media/fat/config/nvram/<MRA name>.nvm`. .98 has a valid 32 KB save (from
+2026-08-16, banks-era session) and therefore boots STRAIGHT TO ATTRACT --
+battery screen and menu never appear, credits even persist across reloads.
+The `_Arcade/<name>.nvm` file quarantined earlier is NOT the restore path.
+Installing .98's save at the same path on .74 changed nothing: .74 runs a
+different/older MiSTer main binary (1,059,560 bytes, Aug 9, vs .98's
+1,209,380, Jul 5) which apparently does not restore arcade NVRAM. Aligning
+.74's MiSTer binary with .98's is the pending unblock for unattended attract
+(and metering) on the bench -- needs the user's sign-off (system software).
+
+**JTAG cabinet inputs (build 105):** SFRN (ISSP instance 2) src[2..5] now
+press P1 START / COIN1 / P1 UP / P1 DOWN by pulling the active-low inputs
+down. `/tmp/press.sh start|coin|up|down [hold_ms]` on gamingpc. Proven
+against the service menu. Note the PLAYER CONTROL TEST screen exits only
+with START1+START2 -- src[6] for START2 is the obvious next wire.
+
+**The mystery footer decoded:** the binary+hex byte at the bottom of every
+capture is OUR debug overlay's debug_view row (st_main), not a game status
+display. It appears on both machines and changes constantly; stop reading
+game meaning into it.
+
+**Build 104 pixel-pair coalescing, hardware status:** sim-clean at three
+levels (tb_vramthru drain/integrity; tb_cachelane Phase I: dsn=0000
+full-word writes on the real ENDIAN=1 lane land identically to the proven
+partial-write convention, cache-resident, in the SDRAM chip after eviction,
+and on refill; STA all-positive slack). On .98 the b105 attract fight showed
+heavy corruption, but so did b100 the same morning on a different scene --
+"catastrophically broken" vs "same insufficiency, busier scene" is being
+decided by a like-for-like A/B screenshot campaign on .98.

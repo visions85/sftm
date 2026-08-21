@@ -29,6 +29,21 @@ reg  [31:0] din2 = 0;
 wire [31:0] dout2;
 wire        ok2;
 
+// lane 3 = snd: DW=8, AW=19, ENDIAN=0 (jtframe forbids ENDIAN on DW!=32),
+// BA=0, OFFSET=0x80000 halfwords = byte 0x100000 (generated values)
+reg  [18:0] addr3 = 0;
+reg         rd3 = 0;
+wire [ 7:0] dout3;
+wire        ok3;
+
+// lane 0 direct drive (Phase I): the vram lane's write path, DW=32 ENDIAN=1.
+// l0_mode=0 leaves the lane to the Phase G hammer.
+reg         l0_mode = 0, l0_rd = 0, l0_wr = 0;
+reg  [20:2] l0_addr = 0;
+reg  [31:0] l0_din = 0;
+reg  [ 3:0] l0_dsn = 4'hF;
+wire [31:0] l0_dout;
+
 // SDRAM side
 wire [23:1] mux_addr;
 wire [ 1:0] mux_ba;
@@ -50,19 +65,24 @@ jtframe_cache_mux #(
     // lane 2 = main -- THE LANE UNDER TEST
     .ENDIAN2 ( 1 ), .FULL2 ( 0 ), .AW2 ( 20 ), .BLOCKS2 ( 16 ),
     .BLKSIZE2 ( 256 ), .DW2 ( 32 ), .BA2 ( 0 ), .CHIP2 ( 0 ),
-    .OFFSET2 ( 'h0 ), .INVAL_MASK2 ( 8'b0 )
+    .OFFSET2 ( 'h0 ), .INVAL_MASK2 ( 8'b0 ),
+    // lane 3 = snd -- the 6809 byte lane (Phase H)
+    .ENDIAN3 ( 0 ), .FULL3 ( 0 ), .AW3 ( 19 ), .BLOCKS3 ( 8 ),
+    .BLKSIZE3 ( 256 ), .DW3 ( 8 ), .BA3 ( 0 ), .CHIP3 ( 0 ),
+    .OFFSET3 ( 'h80000 ), .INVAL_MASK3 ( 8'b0 )
 ) u_mux (
     .rst(rst), .clk(clk),
-    .addr0( vh_addr ), .dout0(), .rd0(vh_rd), .wr0(1'b0), .din0(32'd0),
-    .wdsn0(4'd0), .ok0(), .flush0(1'b0), .flushing0(), .flush_done0(),
+    .addr0( l0_mode ? l0_addr : vh_addr ), .dout0( l0_dout ),
+    .rd0( l0_mode ? l0_rd : vh_rd ), .wr0( l0_mode & l0_wr ), .din0( l0_din ),
+    .wdsn0( l0_dsn ), .ok0(), .flush0(1'b0), .flushing0(), .flush_done0(),
     .addr1( 18'd0 ), .dout1(), .rd1(1'b0), .wr1(1'b0), .din1(16'd0),
     .wdsn1(2'd0), .ok1(), .flush1(1'b0), .flushing1(), .flush_done1(),
     .addr2( lda_act ? ld_addr : addr2 ), .dout2(dout2),
     .rd2( lda_act ? ldr : rd2 ), .wr2( lda_act ? ldw : wr2 ),
     .din2( lda_act ? ld_data : din2 ),
     .wdsn2(4'd0), .ok2(ok2), .flush2(1'b0), .flushing2(), .flush_done2(),
-    .addr3( 23'd0 ), .dout3(), .rd3(1'b0), .wr3(1'b0), .din3(8'd0),
-    .wdsn3(1'd0), .ok3(), .flush3(1'b0), .flushing3(), .flush_done3(),
+    .addr3( addr3 ), .dout3( dout3 ), .rd3( rd3 ), .wr3(1'b0), .din3(8'd0),
+    .wdsn3(1'd0), .ok3( ok3 ), .flush3(1'b0), .flushing3(), .flush_done3(),
     .addr4( 23'd0 ), .dout4(), .rd4(1'b0), .ok4(), .flush4(1'b0),
     .flushing4(), .flush_done4(),
     .addr5( 23'd0 ), .dout5(), .rd5(1'b0), .ok5(), .flush5(1'b0),
@@ -305,6 +325,40 @@ begin
     repeat(6) @(posedge clk);
 end endtask
 
+reg [7:0] got8;
+task snd_fetch(input [18:0] a);
+integer g;
+begin
+    @(posedge clk);
+    addr3 <= a; rd3 <= 1'b1;
+    g = 0;
+    @(posedge clk); @(posedge clk);
+    while( !ok3 && g < 20000 ) begin @(posedge clk); g = g + 1; end
+    got8 = dout3;
+    rd3 <= 1'b0;
+    if( g >= 20000 ) begin
+        $display("FAIL: no ok3 for snd byte %0d", a);
+        errors = errors + 1;
+    end
+    repeat(6) @(posedge clk);
+end endtask
+
+reg [31:0] l0_got;
+task l0_xact(input rd, input [20:2] a, input [31:0] d, input [3:0] m);
+integer g;
+begin
+    @(posedge clk);
+    l0_addr <= a; l0_din <= d; l0_dsn <= m;
+    l0_rd <= rd; l0_wr <= !rd;
+    g = 0;
+    @(posedge clk); @(posedge clk);
+    while( !u_mux.ok0 && g < 20000 ) begin @(posedge clk); g = g + 1; end
+    l0_got = l0_dout;
+    l0_rd <= 0; l0_wr <= 0;
+    if( g >= 20000 ) begin $display("FAIL: no ok0 (a=%0d rd=%0d)", a, rd); errors = errors + 1; end
+    repeat(6) @(posedge clk);
+end endtask
+
 task cpu_view(input [19:2] lw);
 begin
     fetch(lw);
@@ -489,12 +543,93 @@ initial begin
     vh_on = 1'b0;
     repeat(20) @(posedge clk);
 
+    // -----------------------------------------------------------------------
+    // Phase H: the snd lane's byte order. The 6809 is dead on hardware
+    // (service menu: sound-dependent actions no-op; boot diverges from MAME
+    // at the point the game first needs the sound board). The MRA streams
+    // the snd ROM as a PLAIN part, jtframe_dwnld SWAB=1 puts the first
+    // stream byte in the SDRAM word's HIGH half, and the DW=8 lane cannot
+    // take ENDIAN=1 -- so the question is which byte position addr bit 0
+    // actually selects. Stream distinct bytes through the REAL download at
+    // the snd window (ioctl byte 0x100000+i) and read them back on lane 3.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase H: snd lane (DW=8) byte order vs the download stream");
+    use_dwnld = 1'b1; prog_en = 1'b1; ioctl_rom = 1'b1;
+    repeat(8) @(posedge clk);
+    for( i = 0; i < 32; i = i + 1 ) begin
+        ioctl_addr <= 27'h100000 + i[26:0];
+        ioctl_dout <= 8'hB0 + i[7:0];
+        ioctl_wr   <= 1'b1;
+        @(posedge clk);
+        ioctl_wr   <= 1'b0;
+        repeat(47) @(posedge clk);
+    end
+    repeat(40) @(posedge clk);
+    ioctl_rom = 1'b0; prog_en = 1'b0; use_dwnld = 1'b0;
+    for( i = 0; i < 8; i = i + 1 ) begin
+        snd_fetch( i[18:0] );
+        if( got8 === 8'hB0 + i[7:0] )
+            $display("  H snd[%0d] = %02X CORRECT (stream byte %0d)", i, got8, i);
+        else if( got8 === 8'hB0 + (i[7:0]^8'd1) )
+            begin $display("  H snd[%0d] = %02X PAIR-SWAPPED (stream byte %0d)", i, got8, i^1); errors=errors+1; end
+        else
+            begin $display("  H snd[%0d] = %02X OTHER (want %02X)", i, got8, 8'hB0+i[7:0]); errors=errors+1; end
+    end
+
+    // -----------------------------------------------------------------------
+    // Phase I: full-word (wdsn=0000) writes on the ENDIAN=1 vram lane vs the
+    // proven two-partial-write convention. Build 104's pixel-pair coalescing
+    // issues dsn=0000 writes -- a path no working build ever used -- and on
+    // hardware the screen shredded into 2-pixel-wide garbage. If the lane
+    // handles ENDIAN differently for masked and unmasked writes, a pair lands
+    // halfword-swapped. Method A (partial, b100-proven) defines the correct
+    // SDRAM layout; method B (full) must match it, cache-resident, in the
+    // chip after eviction, and on refill readback.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase I: dsn=0000 full-word write vs two partial writes (ENDIAN=1 lane)");
+    l0_mode = 1;
+    // method A at word 100: even half 0x1234 (din[15:0], dsn 1100),
+    // odd half 0x5678 (din[31:16], dsn 0011) -- exactly sftm_vram's singles
+    l0_xact(0, 19'd100, {16'h0000, 16'h1234}, 4'b1100);
+    l0_xact(0, 19'd100, {16'h5678, 16'h0000}, 4'b0011);
+    // method B at word 101: same logical packing in ONE write, dsn 0000
+    l0_xact(0, 19'd101, {16'hDEF0, 16'h9ABC}, 4'b0000);
+    // cache-resident readback
+    l0_xact(1, 19'd100, 32'd0, 4'hF);
+    if( l0_got === 32'h5678_1234 ) $display("  I rd100 cached: %08X CORRECT", l0_got);
+    else begin $display("  I rd100 cached: %08X WRONG (want 56781234)", l0_got); errors=errors+1; end
+    l0_xact(1, 19'd101, 32'd0, 4'hF);
+    if( l0_got === 32'hDEF0_9ABC ) $display("  I rd101 cached: %08X CORRECT", l0_got);
+    else begin $display("  I rd101 cached: %08X WRONG (want DEF09ABC)", l0_got); errors=errors+1; end
+    // evict: lane 0 has 64 blocks of 256 bytes = 64 words apart; touch 70
+    for( i = 0; i < 70; i = i + 1 ) l0_xact(1, 19'd8192 + i[15:0]*64, 32'd0, 4'hF);
+    // the chip itself: method B's halfword order must match method A's
+    $display("  I chip @A: hw[%0d]=%04X hw[%0d]=%04X   (word 100)",
+        'h40000+200, u_chip.Bank3['h40000+200], 'h40000+201, u_chip.Bank3['h40000+201]);
+    $display("  I chip @B: hw[%0d]=%04X hw[%0d]=%04X   (word 101)",
+        'h40000+202, u_chip.Bank3['h40000+202], 'h40000+203, u_chip.Bank3['h40000+203]);
+    if( u_chip.Bank3['h40000+200] === 16'h1234 && u_chip.Bank3['h40000+202] !== 16'h9ABC ||
+        u_chip.Bank3['h40000+200] === 16'h5678 && u_chip.Bank3['h40000+202] !== 16'hDEF0 ) begin
+        $display("  I CHIP LAYOUT MISMATCH: full write ordered opposite to partials");
+        errors = errors + 1;
+    end
+    // refill readback
+    l0_xact(1, 19'd100, 32'd0, 4'hF);
+    if( l0_got === 32'h5678_1234 ) $display("  I rd100 refill: %08X CORRECT", l0_got);
+    else begin $display("  I rd100 refill: %08X WRONG (want 56781234)", l0_got); errors=errors+1; end
+    l0_xact(1, 19'd101, 32'd0, 4'hF);
+    if( l0_got === 32'hDEF0_9ABC ) $display("  I rd101 refill: %08X CORRECT", l0_got);
+    else begin $display("  I rd101 refill: %08X WRONG (want DEF09ABC)", l0_got); errors=errors+1; end
+    l0_mode = 0;
+
     $display("");
     if( errors == 0 ) $display("PASS: download + lane + rom_word all agree with the image");
     else              $display("FAIL: %0d problem(s)", errors);
     $finish;
 end
 
-initial begin #3_000_000; $display("FAIL: timeout"); $finish; end
+initial begin #5_000_000; $display("FAIL: timeout"); $finish; end
 
 endmodule
