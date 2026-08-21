@@ -98,12 +98,12 @@ module sftm_blit(
     // (grom 0x0000000-0x0FFFFFF) and grom1 the rm1 ones (0x1000000-0x1FFFFFF),
     // selected on address bit 24 exactly as grm3 is selected on bit 25.
     // See cfg/macros.def for the full account.
-    output reg [23:1] grom0_addr,
-    input      [15:0] grom0_data,
+    output reg [23:3] grom0_addr,
+    input      [63:0] grom0_data,
     output reg        grom0_rd,
     input             grom0_ok,
-    output reg [23:1] grom1_addr,
-    input      [15:0] grom1_data,
+    output reg [23:3] grom1_addr,
+    input      [63:0] grom1_data,
     output reg        grom1_rd,
     input             grom1_ok,
     output reg [18:1] grm3_addr,
@@ -279,24 +279,35 @@ wire       pix_transp = transp_en && pix == 8'hff;
 wire       rle_val_transp = transp_en && rle_val == 8'hff;
 
 // ---------------------------------------------------------------------------
-// GROM byte fetcher: one cached 16-bit word. The word address is latched at
-// issue time so bulk src_addr jumps during an in-flight fetch cannot
-// mislabel the cached data.
+// GROM byte fetcher. grom0/grom1 are 64-bit lanes from build 108: one fetch
+// caches EIGHT source bytes, so a plain 8bpp row costs a lane transaction
+// every 8 pixels instead of every 2 -- b107 metering showed the old one-word
+// cache stalling the blitter for 35% of its busy time. grm3 stays a 16-bit
+// lane. The group address is latched at issue time so bulk src_addr jumps
+// during an in-flight fetch cannot mislabel the cached data.
 // ---------------------------------------------------------------------------
-reg  [24:0] cache_waddr, issue_waddr;
+reg  [24:0] cache_waddr, issue_waddr;   // G0/G1: addr[25:3]; G3: addr[25:1]
 reg         cache_valid, fetch_busy;
 reg  [ 1:0] fetch_src;                  // which bus the in-flight read used
-reg  [15:0] cache_word;
+reg  [ 1:0] cache_src;                  // which bus filled the cache
+reg  [63:0] cache_word;
 
 localparam [1:0] SRC_G0 = 2'd0, SRC_G1 = 2'd1, SRC_G3 = 2'd2;
 
 // bit 25 selects grm3, bit 24 selects between the rm0 and rm1 halves
 wire [ 1:0] f_src = fetch_addr[25] ? SRC_G3 :
                     fetch_addr[24] ? SRC_G1 : SRC_G0;
-wire [24:0] fword = fetch_addr[25:1];
-wire        cache_hit = cache_valid && cache_waddr == fword;
-// SDRAM data[7:0] = even byte address (JTFRAME download order)
-assign pix      = fetch_addr[0] ? cache_word[15:8] : cache_word[7:0];
+// tag: 64-bit group address for the wide lanes, halfword address for grm3.
+// cache_src disambiguates, so the two tag formats cannot falsely collide.
+wire [24:0] fword = f_src == SRC_G3 ? fetch_addr[25:1]
+                                    : {2'd0, fetch_addr[25:3]};
+wire        cache_hit = cache_valid && cache_src == f_src && cache_waddr == fword;
+// byte i of a downloaded 8-byte group sits at word[8*i +: 8] on an ENDIAN=0
+// lane (little-endian packing, ascending halfwords, even byte in [7:0] --
+// same order the 16-bit lane delivered, verified in tb_cachelane Phase K)
+assign pix      = f_src == SRC_G3
+                ? ( fetch_addr[0] ? cache_word[15:8] : cache_word[7:0] )
+                : cache_word[8*fetch_addr[2:0] +: 8];
 assign fetch_ok = cache_hit;
 // bring-up: high while the FSM is stalled waiting on a GROM word
 assign st_waiting = fetch_req && !fetch_ok;
@@ -318,13 +329,14 @@ always @(posedge clk) begin
             fetch_src   <= f_src;
             case( f_src )
                 SRC_G3: begin grm3_addr  <= fetch_addr[18:1]; grm3_rd  <= 1; end
-                SRC_G1: begin grom1_addr <= fetch_addr[23:1]; grom1_rd <= 1; end
-                default:begin grom0_addr <= fetch_addr[23:1]; grom0_rd <= 1; end
+                SRC_G1: begin grom1_addr <= fetch_addr[23:3]; grom1_rd <= 1; end
+                default:begin grom0_addr <= fetch_addr[23:3]; grom0_rd <= 1; end
             endcase
         end else if( fetch_busy ) begin
             if( fetch_src == SRC_G0 && grom0_ok ) begin
                 cache_word  <= grom0_data;
                 cache_waddr <= issue_waddr;
+                cache_src   <= SRC_G0;
                 cache_valid <= 1;
                 grom0_rd    <= 0;
                 fetch_busy  <= 0;
@@ -332,13 +344,15 @@ always @(posedge clk) begin
             if( fetch_src == SRC_G1 && grom1_ok ) begin
                 cache_word  <= grom1_data;
                 cache_waddr <= issue_waddr;
+                cache_src   <= SRC_G1;
                 cache_valid <= 1;
                 grom1_rd    <= 0;
                 fetch_busy  <= 0;
             end
             if( fetch_src == SRC_G3 && grm3_ok ) begin
-                cache_word  <= grm3_data;
+                cache_word  <= {48'd0, grm3_data};
                 cache_waddr <= issue_waddr;
+                cache_src   <= SRC_G3;
                 cache_valid <= 1;
                 grm3_rd     <= 0;
                 fetch_busy  <= 0;

@@ -57,12 +57,12 @@ module sftm_video(
 
     // graphics ROM buses (blitter source)
     // grom is split across two banks; see sftm_blit.v
-    output     [23:1] grom0_addr,
-    input      [15:0] grom0_data,
+    output     [23:3] grom0_addr,
+    input      [63:0] grom0_data,
     output            grom0_rd,
     input             grom0_ok,
-    output     [23:1] grom1_addr,
-    input      [15:0] grom1_data,
+    output     [23:3] grom1_addr,
+    input      [63:0] grom1_data,
     output            grom1_rd,
     input             grom1_ok,
     output     [18:1] grm3_addr,

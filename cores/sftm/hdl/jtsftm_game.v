@@ -298,7 +298,9 @@ always @(posedge clk) begin
         2'd2: ld_st <= 2'd3;    // lane settle (stale-ok guard)
         2'd3: if( ld_gr_l ? grom0_ok : main_ok ) begin
                   ld_we <= 1'b0; ld_st <= 2'd0;
-                  if( ld_rdm_l ) ld_rdata <= ld_gr_l ? {16'd0, grom0_data} : main_data;
+                  // grom0 is a 64-bit lane from build 108; readback captures
+                  // the low longword of the 8-byte group
+                  if( ld_rdm_l ) ld_rdata <= ld_gr_l ? grom0_data[31:0] : main_data;
                   if( ~&ld_done ) ld_done <= ld_done + 16'd1;
               end
     endcase
@@ -336,10 +338,10 @@ defparam
 // src[53] selects grom0 for the SFLD transaction FSM (read-only); the
 // captured word lands in the same ld_rdata probe.
 // ---------------------------------------------------------------------------
-wire [23:1] vid_grom0_addr;
+wire [23:3] vid_grom0_addr;
 wire        vid_grom0_rd;
-// probe covers the first 512 KB of grom0: halfword address from src[49:32]
-assign grom0_addr = (ld_active & ld_gr_l) ? {5'd0, ld_addr_l} : vid_grom0_addr;
+// probe covers the first 2 MB of grom0: 64-bit GROUP address from src[49:32]
+assign grom0_addr = (ld_active & ld_gr_l) ? {3'd0, ld_addr_l} : vid_grom0_addr;
 assign grom0_rd   = (ld_active & ld_gr_l) ? (ld_we & ld_rdm_l) : vid_grom0_rd;
 
 // ---------------------------------------------------------------------------

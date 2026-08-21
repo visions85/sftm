@@ -141,13 +141,19 @@ sdram:
       rw: false
       blocks: { count: 16, size: 256 }
       at: { bank: 0, offset: "0xA8000", length: 4MB }
+    # 64-bit (build 108): 8 source pixels per fetch. b107 metering moved the
+    # bottleneck here -- the blitter's one-word fetch cache paid a ~5 clk
+    # lane transaction for every OTHER source pixel (GROM stall 35% of busy).
+    # ENDIAN=0 keeps the download byte order: byte i of an 8-byte group reads
+    # at word[8*i +: 8], verified against the real download in tb_cachelane
+    # Phase K before deploying (the b102 lesson).
     - name: grom0
-      data_width: 16
+      data_width: 64
       rw: false
       blocks: { count: 32, size: 256 }
       at: { bank: 1, offset: "0x0", length: 16MB }
     - name: grom1
-      data_width: 16
+      data_width: 64
       rw: false
       blocks: { count: 32, size: 256 }
       at: { bank: 2, offset: "0x0", length: 16MB }

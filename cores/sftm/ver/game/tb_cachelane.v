@@ -36,6 +36,12 @@ reg         rd3 = 0;
 wire [ 7:0] dout3;
 wire        ok3;
 
+// lane 5 = grom0 (Phase K): the widened 64-bit source-pixel lane
+reg  [23:3] addr5 = 0;
+reg         rd5 = 0;
+wire [63:0] dout5;
+wire        ok5;
+
 // lane 0 direct drive (Phase I): the vram lane's write path, DW=32 ENDIAN=1.
 // l0_mode=0 leaves the lane to the Phase G hammer.
 reg         l0_mode = 0, l0_rd = 0, l0_wr = 0;
@@ -69,7 +75,11 @@ jtframe_cache_mux #(
     // lane 3 = snd -- the 6809 byte lane (Phase H)
     .ENDIAN3 ( 0 ), .FULL3 ( 0 ), .AW3 ( 19 ), .BLOCKS3 ( 8 ),
     .BLKSIZE3 ( 256 ), .DW3 ( 8 ), .BA3 ( 0 ), .CHIP3 ( 0 ),
-    .OFFSET3 ( 'h80000 ), .INVAL_MASK3 ( 8'b0 )
+    .OFFSET3 ( 'h80000 ), .INVAL_MASK3 ( 8'b0 ),
+    // lane 5 = grom0, build-108 widening: DW=64 (Phase K byte-order check)
+    .ENDIAN5 ( 0 ), .FULL5 ( 0 ), .AW5 ( 24 ), .BLOCKS5 ( 32 ),
+    .BLKSIZE5 ( 256 ), .DW5 ( 64 ), .BA5 ( 1 ), .CHIP5 ( 0 ),
+    .OFFSET5 ( 'h0 ), .INVAL_MASK5 ( 8'b0 )
 ) u_mux (
     .rst(rst), .clk(clk),
     .addr0( l0_mode ? l0_addr : vh_addr ), .dout0( l0_dout ),
@@ -85,7 +95,7 @@ jtframe_cache_mux #(
     .wdsn3(1'd0), .ok3( ok3 ), .flush3(1'b0), .flushing3(), .flush_done3(),
     .addr4( 23'd0 ), .dout4(), .rd4(1'b0), .ok4(), .flush4(1'b0),
     .flushing4(), .flush_done4(),
-    .addr5( 23'd0 ), .dout5(), .rd5(1'b0), .ok5(), .flush5(1'b0),
+    .addr5( addr5 ), .dout5( dout5 ), .rd5( rd5 ), .ok5( ok5 ), .flush5(1'b0),
     .flushing5(), .flush_done5(),
     .addr6( 23'd0 ), .dout6(), .rd6(1'b0), .ok6(), .flush6(1'b0),
     .flushing6(), .flush_done6(),
@@ -277,7 +287,7 @@ reg [31:0] got;
 // free-running cycle counter for the Phase J throughput measurement
 reg [31:0] cycles = 0;
 always @(posedge clk) cycles <= cycles + 32'd1;
-integer phj_c0, phj_cyc;
+integer phj_c0, phj_cyc, ph;
 
 task fetch(input [19:2] lw);
 integer guard;
@@ -361,6 +371,24 @@ begin
     l0_got = l0_dout;
     l0_rd <= 0; l0_wr <= 0;
     if( g >= 20000 ) begin $display("FAIL: no ok0 (a=%0d rd=%0d)", a, rd); errors = errors + 1; end
+    repeat(6) @(posedge clk);
+end endtask
+
+reg [63:0] got64;
+task grom_fetch(input [23:3] a);
+integer g;
+begin
+    @(posedge clk);
+    addr5 <= a; rd5 <= 1'b1;
+    g = 0;
+    @(posedge clk); @(posedge clk);
+    while( !ok5 && g < 20000 ) begin @(posedge clk); g = g + 1; end
+    got64 = dout5;
+    rd5 <= 1'b0;
+    if( g >= 20000 ) begin
+        $display("FAIL: no ok5 for grom0 group %0d", a);
+        errors = errors + 1;
+    end
     repeat(6) @(posedge clk);
 end endtask
 
@@ -662,6 +690,41 @@ initial begin
     end
     $display("  J integrity: 8 spot readbacks checked");
     l0_mode = 0;
+
+    // -----------------------------------------------------------------------
+    // Phase K: the widened grom0 lane's byte order vs the real download.
+    // Build 102 once byte-swapped the grom data on an unvalidated assumption
+    // and turned readable text into soup; this phase makes the 16->64-bit
+    // widening safe by construction. Stream distinct bytes into the BA1
+    // window through the real SWAB=1 download and check byte i of group g
+    // reads at dout[8*i +: 8] -- the exact select sftm_blit now uses.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase K: grom0 64-bit lane byte order vs the download stream");
+    use_dwnld = 1'b1; prog_en = 1'b1; ioctl_rom = 1'b1;
+    repeat(8) @(posedge clk);
+    for( i = 0; i < 32; i = i + 1 ) begin
+        ioctl_addr <= 27'h3D0000 + i[26:0];
+        ioctl_dout <= 8'h40 + i[7:0];
+        ioctl_wr   <= 1'b1;
+        @(posedge clk);
+        ioctl_wr   <= 1'b0;
+        repeat(47) @(posedge clk);
+    end
+    repeat(40) @(posedge clk);
+    ioctl_rom = 1'b0; prog_en = 1'b0; use_dwnld = 1'b0;
+    for( i = 0; i < 4; i = i + 1 ) begin
+        grom_fetch( i[20:0] );
+        for( ph = 0; ph < 8; ph = ph + 1 ) begin
+            if( got64[8*ph +: 8] !== 8'h40 + i[7:0]*8 + ph[7:0] ) begin
+                $display("  K grp%0d byte%0d = %02X WRONG (want %02X)",
+                         i, ph, got64[8*ph +: 8], 8'h40 + i[7:0]*8 + ph[7:0]);
+                errors = errors + 1;
+            end
+        end
+        $display("  K group %0d: %016X  (bytes ascend %02X..%02X)",
+                 i, got64, 8'h40+i[7:0]*8, 8'h47+i[7:0]*8);
+    end
 
     $display("");
     if( errors == 0 ) $display("PASS: download + lane + rom_word all agree with the image");
