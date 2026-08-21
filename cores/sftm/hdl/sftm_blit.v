@@ -286,11 +286,20 @@ wire       rle_val_transp = transp_en && rle_val == 8'hff;
 // lane. The group address is latched at issue time so bulk src_addr jumps
 // during an in-flight fetch cannot mislabel the cached data.
 // ---------------------------------------------------------------------------
-reg  [24:0] cache_waddr, issue_waddr;   // G0/G1: addr[25:3]; G3: addr[25:1]
-reg         cache_valid, fetch_busy;
+// TWO entries, ping-pong (build 111): while pixels stream out of the group
+// that hit, the NEXT sequential group prefetches into the other entry -- the
+// lane round trip hides behind the >=8 clk it takes to consume 8 pixels, so
+// a sequential run never stalls on group boundaries. A wrong guess (xflip
+// walks backward) costs one wasted lane hit; correctness is untouched
+// because entries only ever serve exact tag matches.
+reg  [24:0] c_waddr [0:1];              // G0/G1: addr[25:3]; G3: addr[25:1]
+reg  [ 1:0] c_src   [0:1];
+reg  [63:0] c_word  [0:1];
+reg  [ 1:0] c_valid;
+reg         c_mru;                      // entry that served the last hit
+reg         fetch_busy, fetch_tgt;
 reg  [ 1:0] fetch_src;                  // which bus the in-flight read used
-reg  [ 1:0] cache_src;                  // which bus filled the cache
-reg  [63:0] cache_word;
+reg  [24:0] issue_waddr;
 
 localparam [1:0] SRC_G0 = 2'd0, SRC_G1 = 2'd1, SRC_G3 = 2'd2;
 
@@ -298,17 +307,26 @@ localparam [1:0] SRC_G0 = 2'd0, SRC_G1 = 2'd1, SRC_G3 = 2'd2;
 wire [ 1:0] f_src = fetch_addr[25] ? SRC_G3 :
                     fetch_addr[24] ? SRC_G1 : SRC_G0;
 // tag: 64-bit group address for the wide lanes, halfword address for grm3.
-// cache_src disambiguates, so the two tag formats cannot falsely collide.
+// c_src disambiguates, so the two tag formats cannot falsely collide.
 wire [24:0] fword = f_src == SRC_G3 ? fetch_addr[25:1]
                                     : {2'd0, fetch_addr[25:3]};
-wire        cache_hit = cache_valid && cache_src == f_src && cache_waddr == fword;
+wire hit0 = c_valid[0] && c_src[0] == f_src && c_waddr[0] == fword;
+wire hit1 = c_valid[1] && c_src[1] == f_src && c_waddr[1] == fword;
+wire [63:0] hword = hit0 ? c_word[0] : c_word[1];
 // byte i of a downloaded 8-byte group sits at word[8*i +: 8] on an ENDIAN=0
 // lane (little-endian packing, ascending halfwords, even byte in [7:0] --
 // same order the 16-bit lane delivered, verified in tb_cachelane Phase K)
 assign pix      = f_src == SRC_G3
-                ? ( fetch_addr[0] ? cache_word[15:8] : cache_word[7:0] )
-                : cache_word[8*fetch_addr[2:0] +: 8];
-assign fetch_ok = cache_hit;
+                ? ( fetch_addr[0] ? hword[15:8] : hword[7:0] )
+                : hword[8*fetch_addr[2:0] +: 8];
+assign fetch_ok = hit0 || hit1;
+// the entry serving this hit, and whether its successor group is on hand
+wire        hit_e   = hit1;
+wire [24:0] succ_w  = (hit0 ? c_waddr[0] : c_waddr[1]) + 25'd1;
+wire        succ_ok = hit0 ? (c_valid[1] && c_src[1]==f_src && c_waddr[1]==succ_w)
+                           : (c_valid[0] && c_src[0]==f_src && c_waddr[0]==succ_w);
+// speculate only on the wide lanes, only when idle, only when consuming
+wire spec_go = !fetch_busy && fetch_req && fetch_ok && f_src != SRC_G3 && !succ_ok;
 // bring-up: high while the FSM is stalled waiting on a GROM word
 assign st_waiting = fetch_req && !fetch_ok;
 assign st_gdone   = fetch_busy && ( (fetch_src==SRC_G0 && grom0_ok) ||
@@ -317,14 +335,19 @@ assign st_gdone   = fetch_busy && ( (fetch_src==SRC_G0 && grom0_ok) ||
 
 always @(posedge clk) begin
     if( rst ) begin
-        cache_valid <= 0;
+        c_valid     <= 2'b00;
+        c_mru       <= 0;
         fetch_busy  <= 0;
+        fetch_tgt   <= 0;
         grom0_rd    <= 0;
         grom1_rd    <= 0;
         grm3_rd     <= 0;
     end else begin
-        if( fetch_req && !cache_hit && !fetch_busy ) begin
+        if( fetch_req && fetch_ok ) c_mru <= hit_e;
+        if( fetch_req && !fetch_ok && !fetch_busy ) begin
+            // demand miss: fill the LRU entry
             fetch_busy  <= 1;
+            fetch_tgt   <= ~c_mru;
             issue_waddr <= fword;
             fetch_src   <= f_src;
             case( f_src )
@@ -332,28 +355,40 @@ always @(posedge clk) begin
                 SRC_G1: begin grom1_addr <= fetch_addr[23:3]; grom1_rd <= 1; end
                 default:begin grom0_addr <= fetch_addr[23:3]; grom0_rd <= 1; end
             endcase
+        end else if( spec_go ) begin
+            // prefetch the successor group into the LRU entry while the
+            // blitter drains the current one
+            fetch_busy  <= 1;
+            fetch_tgt   <= ~hit_e;
+            issue_waddr <= succ_w;
+            fetch_src   <= f_src;
+            if( f_src == SRC_G1 ) begin
+                grom1_addr <= succ_w[20:0]; grom1_rd <= 1;
+            end else begin
+                grom0_addr <= succ_w[20:0]; grom0_rd <= 1;
+            end
         end else if( fetch_busy ) begin
             if( fetch_src == SRC_G0 && grom0_ok ) begin
-                cache_word  <= grom0_data;
-                cache_waddr <= issue_waddr;
-                cache_src   <= SRC_G0;
-                cache_valid <= 1;
+                c_word [fetch_tgt] <= grom0_data;
+                c_waddr[fetch_tgt] <= issue_waddr;
+                c_src  [fetch_tgt] <= SRC_G0;
+                c_valid[fetch_tgt] <= 1;
                 grom0_rd    <= 0;
                 fetch_busy  <= 0;
             end
             if( fetch_src == SRC_G1 && grom1_ok ) begin
-                cache_word  <= grom1_data;
-                cache_waddr <= issue_waddr;
-                cache_src   <= SRC_G1;
-                cache_valid <= 1;
+                c_word [fetch_tgt] <= grom1_data;
+                c_waddr[fetch_tgt] <= issue_waddr;
+                c_src  [fetch_tgt] <= SRC_G1;
+                c_valid[fetch_tgt] <= 1;
                 grom1_rd    <= 0;
                 fetch_busy  <= 0;
             end
             if( fetch_src == SRC_G3 && grm3_ok ) begin
-                cache_word  <= {48'd0, grm3_data};
-                cache_waddr <= issue_waddr;
-                cache_src   <= SRC_G3;
-                cache_valid <= 1;
+                c_word [fetch_tgt] <= {48'd0, grm3_data};
+                c_waddr[fetch_tgt] <= issue_waddr;
+                c_src  [fetch_tgt] <= SRC_G3;
+                c_valid[fetch_tgt] <= 1;
                 grm3_rd     <= 0;
                 fetch_busy  <= 0;
             end
