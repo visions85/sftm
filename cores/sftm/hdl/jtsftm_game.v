@@ -541,6 +541,13 @@ sftm_video u_video(
     .vram_we      ( vram_we       ),
     .vram_rd      ( vram_rd       ),
     .vram_ok      ( vram_ok       ),
+    .vram_flush   ( vram_flush    ),
+    .vram_flushing( vram_flushing ),
+    .vram_flush_done( vram_flush_done ),
+    .vscan_addr   ( vscan_addr    ),
+    .vscan_data   ( vscan_data    ),
+    .vscan_rd     ( vscan_rd      ),
+    .vscan_ok     ( vscan_ok      ),
 
     .vblank_irq   ( vblank_irq    ),
     .blit_irq     ( blit_irq      ),

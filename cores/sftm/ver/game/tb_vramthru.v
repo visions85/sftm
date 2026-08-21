@@ -1,4 +1,7 @@
 `timescale 1ns/1ps
+// STALE from build 109: sftm_vram's ports changed (vscan lane + flush) and
+// the real-stack bench tb_vramlane.v supersedes this model-based one. Kept
+// for history; do not build.
 // sftm_vram throughput and integrity.
 //
 // The existing blit testbenches never fill the write FIFO (wrf=0), so they

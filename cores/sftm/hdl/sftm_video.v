@@ -70,7 +70,7 @@ module sftm_video(
     output            grm3_rd,
     input             grm3_ok,
 
-    // VRAM SDRAM bus (64-bit cache lane, 4 pens per word)
+    // VRAM SDRAM bus (64-bit rw cache lane, 4 pens per word, vblank flush)
     output     [20:3] vram_addr,
     input      [63:0] vram_data,
     output     [63:0] vram_din,
@@ -78,6 +78,15 @@ module sftm_video(
     output            vram_we,
     output            vram_rd,
     input             vram_ok,
+    output            vram_flush,
+    input             vram_flushing,
+    input             vram_flush_done,
+
+    // scanout's read-only vscan lane (build 109)
+    output     [20:3] vscan_addr,
+    input      [63:0] vscan_data,
+    output            vscan_rd,
+    input             vscan_ok,
 
     // interrupts to sftm_main
     output reg        vblank_irq,  // 1-clk pulse (generate_int1 hook)
@@ -495,6 +504,16 @@ sftm_vram u_vram(
     .vram_we    ( vram_we       ),
     .vram_rd    ( vram_rd       ),
     .vram_ok    ( vram_ok       ),
+    .vram_flush ( vram_flush    ),
+    .vram_flushing  ( vram_flushing   ),
+    .vram_flush_done( vram_flush_done ),
+    .vscan_addr ( vscan_addr    ),
+    .vscan_data ( vscan_data    ),
+    .vscan_rd   ( vscan_rd      ),
+    .vscan_ok   ( vscan_ok      ),
+    // flush the write lane at vblank start: the prefetch is idle until the
+    // first visible line, so the vscan invalidation never races a fill
+    .frame_flush( vblank_irq    ),
     .vw_req     ( vw_req        ),
     .vw_rdy     ( vw_rdy        ),
     .vw_plane   ( vw_plane      ),

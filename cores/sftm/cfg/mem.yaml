@@ -108,6 +108,9 @@ sdram:
       # on both the write and the read side.
       data_width: 64
       rw: true
+      # Flushed once per frame at vblank; the flush also invalidates the
+      # vscan lane (below), which is how the split stays coherent.
+      flush: { enable: true, invalidates: [ vscan ] }
       blocks: { count: 64, size: 256 }
       at: { bank: 3, offset: "0x40000", length: 2MB }
     - name: grm3
@@ -157,3 +160,15 @@ sdram:
       rw: false
       blocks: { count: 32, size: 256 }
       at: { bank: 2, offset: "0x0", length: 16MB }
+    # Scanout's own read-only view of the vram window (build 109). One lane
+    # serving prefetch, blitter reads AND writes serialised every one of the
+    # ~2.5k prefetch transactions per frame against the write drain; splitting
+    # them lets the write path own its port. Coherency is a once-per-frame
+    # contract: the vram lane flushes at vblank and invalidates this lane, so
+    # scanout shows content at most one frame old -- the banks-era `vramrd`
+    # alias pattern, now with the cache generation doing the invalidation.
+    - name: vscan
+      data_width: 64
+      rw: false
+      blocks: { count: 8, size: 256 }
+      at: { bank: 3, offset: "0x40000", length: 2MB }

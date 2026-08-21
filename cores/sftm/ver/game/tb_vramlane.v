@@ -4,8 +4,10 @@
 //   build-107 generated params) -> jtframe_burst_sdram -> Micron model.
 //
 // tb_vramthru drives a MODEL of the lane; build 104 taught that the model
-// passing is necessary but not sufficient. This bench checks, through the
-// real cache:
+// passing is necessary but not sufficient. Build 109 splits scanout onto its
+// own read-only vscan lane with a per-frame flush of the rw lane that also
+// INVALIDATES vscan (INVAL_MASK), so this bench drives both lanes and the
+// flush handshake. It checks, through the real cache:
 //   1. slot layout round trip: pens written through the FIFO come back
 //      through the blitter read port AND land in the line buffer at the
 //      right x -- for all four line_base[1:0] phases
@@ -27,6 +29,11 @@ wire [20:3] vram_addr;
 wire [63:0] vram_din, vram_data;
 wire [ 7:0] vram_dsn;
 wire        vram_we, vram_rd, vram_ok;
+wire        vram_flush, vram_flushing, vram_flush_done;
+wire [20:3] vscan_addr;
+wire [63:0] vscan_data;
+wire        vscan_rd, vscan_ok;
+reg         frame_flush = 0;
 
 wire [23:1] mux_addr;
 wire [ 1:0] mux_ba;
@@ -39,14 +46,20 @@ jtframe_cache_mux #(
     .ENDIAN   ( 0 ),
     .ENDIAN0 ( 0 ), .FULL0 ( 0 ), .AW0 ( 21 ), .BLOCKS0 ( 64 ),
     .BLKSIZE0 ( 256 ), .DW0 ( 64 ), .BA0 ( 3 ), .CHIP0 ( 0 ),
-    .OFFSET0 ( 'h40000 ), .INVAL_MASK0 ( 8'b0 )
+    .OFFSET0 ( 'h40000 ), .INVAL_MASK0 ( 8'b00000010 ),
+    // lane 1 = vscan: scanout's read-only view of the same window
+    .ENDIAN1 ( 0 ), .FULL1 ( 0 ), .AW1 ( 21 ), .BLOCKS1 ( 8 ),
+    .BLKSIZE1 ( 256 ), .DW1 ( 64 ), .BA1 ( 3 ), .CHIP1 ( 0 ),
+    .OFFSET1 ( 'h40000 ), .INVAL_MASK1 ( 8'b0 )
 ) u_mux (
     .rst(rst), .clk(clk),
     .addr0( vram_addr ), .dout0( vram_data ), .rd0( vram_rd ),
     .wr0( vram_we ), .din0( vram_din ), .wdsn0( vram_dsn ), .ok0( vram_ok ),
-    .flush0(1'b0), .flushing0(), .flush_done0(),
-    .addr1( 18'd0 ), .dout1(), .rd1(1'b0), .wr1(1'b0), .din1(16'd0),
-    .wdsn1(2'd0), .ok1(), .flush1(1'b0), .flushing1(), .flush_done1(),
+    .flush0( vram_flush ), .flushing0( vram_flushing ),
+    .flush_done0( vram_flush_done ),
+    .addr1( vscan_addr ), .dout1( vscan_data ), .rd1( vscan_rd ),
+    .wr1(1'b0), .din1(64'd0),
+    .wdsn1(8'd0), .ok1( vscan_ok ), .flush1(1'b0), .flushing1(), .flush_done1(),
     .addr2( 20'd0 ), .dout2(), .rd2(1'b0), .wr2(1'b0), .din2(32'd0),
     .wdsn2(4'd0), .ok2(), .flush2(1'b0), .flushing2(), .flush_done2(),
     .addr3( 23'd0 ), .dout3(), .rd3(1'b0), .wr3(1'b0), .din3(8'd0),
@@ -111,6 +124,11 @@ sftm_vram uut(
     .rst(rst), .clk(clk),
     .vram_addr(vram_addr), .vram_data(vram_data), .vram_din(vram_din),
     .vram_dsn(vram_dsn), .vram_we(vram_we), .vram_rd(vram_rd), .vram_ok(vram_ok),
+    .vram_flush(vram_flush), .vram_flushing(vram_flushing),
+    .vram_flush_done(vram_flush_done),
+    .vscan_addr(vscan_addr), .vscan_data(vscan_data),
+    .vscan_rd(vscan_rd), .vscan_ok(vscan_ok),
+    .frame_flush(frame_flush),
     .vw_req(vw_req), .vw_rdy(vw_rdy), .vw_plane(vw_plane),
     .vw_addr(vw_addr), .vw_data(vw_data),
     .vr_req(vr_req), .vr_plane(vr_plane), .vr_addr(vr_addr),
@@ -145,6 +163,20 @@ begin
         @(posedge clk); guard = guard + 1;
     end
     if( guard >= 100000 ) begin $display("FAIL: drain timeout"); errors = errors + 1; end
+    repeat(4) @(posedge clk);
+end endtask
+
+// pulse frame_flush and wait for the lane to finish writing back
+task fflush;
+begin
+    @(posedge clk);
+    frame_flush <= 1'b1;
+    @(posedge clk);
+    frame_flush <= 1'b0;
+    repeat(4) @(posedge clk);
+    guard = 0;
+    while( vram_flushing && guard < 200000 ) begin @(posedge clk); guard = guard + 1; end
+    if( guard >= 200000 ) begin $display("FAIL: flush timeout"); errors = errors + 1; end
     repeat(4) @(posedge clk);
 end endtask
 
@@ -217,6 +249,7 @@ initial begin
     // pens 2048..2447 hold their own index
     for( i = 0; i < 400; i = i + 1 ) wpush( 19'd2048 + i[18:0], 16'h1000 + i[15:0] );
     wdrain;
+    fflush;      // writes reach SDRAM and vscan drops any stale blocks
     for( ph = 0; ph < 4; ph = ph + 1 ) begin
         pfline( 19'd2048 + ph[18:0], ph[0] );
         scanchk( 9'd0,   16'h1000 + ph[15:0],          ph[0] );
@@ -264,6 +297,22 @@ initial begin
         end
     end
     $display("  8 spot pens survived eviction");
+
+    // ---- 5. the flush contract: stale before, fresh after ----------------
+    $display("5: vscan coherency across the frame flush");
+    // prefetch once so vscan caches the line, then overwrite the pens
+    fflush;
+    pfline( 19'd2048, 1'b0 );
+    for( i = 0; i < 8; i = i + 1 ) wpush( 19'd2048 + i[18:0], 16'h2000 + i[15:0] );
+    wdrain;
+    // no flush yet: vscan may serve its cached (old) line -- not asserted,
+    // the contract only promises freshness AFTER the flush
+    fflush;
+    pfline( 19'd2048, 1'b0 );
+    scanchk( 9'd0, 16'h2000, 1'b0 );
+    scanchk( 9'd7, 16'h2007, 1'b0 );
+    scanchk( 9'd8, 16'h1008, 1'b0 );   // unwritten pen keeps phase-2 data
+    $display("  post-flush prefetch sees the new pens");
 
     $display("");
     if( errors == 0 ) $display("PASS: sftm_vram on the real 64-bit lane");
