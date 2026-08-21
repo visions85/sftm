@@ -88,12 +88,15 @@ echo "[sftm] debug overlay pinned to the game debug_view"
 # mister.qsf template sets FAST_INPUT_REGISTER only on the BANKS controller
 # register by hierarchical path (jtframe_sdram_bank...dq_ff) -- a path that
 # does not exist in a JTFRAME_SDRAM_CACHE build, so the assignment silently
-# applies to nothing, the capture register is placed in fabric after long
-# routing, and every burst-read word arrives one position early ON SILICON
-# ONLY. Measured over JTAG as D = {m[2n+1], m[2n+2]} on every lane; invisible
-# in simulation (no placement); and the reason the banks build works on the
-# same board while every cache build failed to boot. the header of jtframe_burst_io.v describes the intended two-stage pad pipeline and names sys.tcl's
-# FAST_OUTPUT_REGISTER; the matching input-side assignment is what is missing.
+# applies to nothing, the capture register lands in fabric after long routing,
+# and every burst-read word arrives one position early ON SILICON ONLY.
+# Measured over JTAG as D = {m[2n+1], m[2n+2]} on every lane; invisible in
+# simulation (no placement); and the reason the banks build works on the same
+# board while every cache build failed to boot. The header of
+# jtframe_burst_io.v describes the intended two-stage pad pipeline and names
+# the sys.tcl FAST_OUTPUT_REGISTER assignment; the matching input-side pad
+# assignment is what is missing. NOTE: no apostrophes in this block -- it
+# lives inside a single-quoted docker -c string and one apostrophe ends it.
 grep -q "FAST_INPUT_REGISTER ON -to SDRAM_DQ" "$JTFRAME_DIR/target/mister/mister.qsf" || \
 sed -i "s|set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to SDRAM_DQ\[\*\]|set_instance_assignment -name FAST_OUTPUT_ENABLE_REGISTER ON -to SDRAM_DQ[*]\nset_instance_assignment -name FAST_INPUT_REGISTER ON -to SDRAM_DQ[*]\nset_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_*|" \
     "$JTFRAME_DIR/target/mister/mister.qsf" || true
