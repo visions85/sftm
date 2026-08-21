@@ -204,6 +204,8 @@ wire [63:0] ld_src;
 wire        ld_active = ld_src[51];
 wire        ld_toggle = ld_src[50];
 wire        ld_rdmode = ld_src[52];   // 1: toggle performs a READ, data in probe3
+wire        ld_gr     = ld_src[53];   // 1: the read targets grom0, not main
+reg         ld_gr_l   = 1'b0;
 wire [19:2] ld_addr   = ld_src[49:32];
 wire [31:0] ld_data   = ld_src[31:0];
 
@@ -245,21 +247,22 @@ always @(posedge clk) begin
                       ld_addr_l <= ld_addr;
                       ld_data_l <= ld_data;
                       ld_rdm_l  <= ld_rdmode;
+                      ld_gr_l   <= ld_gr;
                       ld_we     <= 1'b1;
                       ld_st     <= 2'd2;
                   end
               end
         2'd2: ld_st <= 2'd3;    // lane settle (stale-ok guard)
-        2'd3: if( main_ok ) begin
+        2'd3: if( ld_gr_l ? grom0_ok : main_ok ) begin
                   ld_we <= 1'b0; ld_st <= 2'd0;
-                  if( ld_rdm_l ) ld_rdata <= main_data;
+                  if( ld_rdm_l ) ld_rdata <= ld_gr_l ? {16'd0, grom0_data} : main_data;
                   if( ~&ld_done ) ld_done <= ld_done + 16'd1;
               end
     endcase
 end
 
 assign main_addr = ld_active ? ld_addr_l : cpu_rom_addr;
-assign main_rd   = ld_active ? (ld_we &  ld_rdm_l) : cpu_rom_rd;
+assign main_rd   = ld_active ? (ld_we & ld_rdm_l & ~ld_gr_l) : cpu_rom_rd;
 assign main_we   = ld_active & ld_we & ~ld_rdm_l;
 assign main_din  = ld_data_l;
 assign main_dsn  = 4'd0;          // all four bytes
@@ -280,6 +283,21 @@ defparam
     u_issp_ld.sld_instance_index      = 3,
     u_issp_ld.source_initial_value    = "0",
     u_issp_ld.source_width            = 64;
+
+// ---------------------------------------------------------------------------
+// grom0 lane readback. The service-menu glyphs render ragged on a static
+// screen -- deterministic wrong pixels with zero blit pressure -- so the
+// 16-bit lanes are suspected of returning wrong words: the slip compensation
+// was MEASURED only on the 32-bit main lane and assumed for the rest. This
+// reads grom0 directly over JTAG for comparison against the ROM bytes.
+// src[53] selects grom0 for the SFLD transaction FSM (read-only); the
+// captured word lands in the same ld_rdata probe.
+// ---------------------------------------------------------------------------
+wire [23:1] vid_grom0_addr;
+wire        vid_grom0_rd;
+// probe covers the first 512 KB of grom0: halfword address from src[49:32]
+assign grom0_addr = (ld_active & ld_gr_l) ? {5'd0, ld_addr_l} : vid_grom0_addr;
+assign grom0_rd   = (ld_active & ld_gr_l) ? (ld_we & ld_rdm_l) : vid_grom0_rd;
 
 // ---------------------------------------------------------------------------
 // JTAG-controlled reset release, and a ROM-survival check.
@@ -445,9 +463,9 @@ sftm_video u_video(
     .color_latch0 ( color_latch0  ),
     .color_latch1 ( color_latch1  ),
 
-    .grom0_addr   ( grom0_addr    ),
+    .grom0_addr   ( vid_grom0_addr),
     .grom0_data   ( grom0_data    ),
-    .grom0_rd     ( grom0_rd      ),
+    .grom0_rd     ( vid_grom0_rd  ),
     .grom0_ok     ( grom0_ok      ),
     .grom1_addr   ( grom1_addr    ),
     .grom1_data   ( grom1_data    ),
