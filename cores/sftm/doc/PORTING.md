@@ -1966,3 +1966,21 @@ b111 (in flight): pipelined GROM fetcher -- two ping-pong entries with
 speculative successor prefetch, hiding the lane round trip behind pixel
 consumption on sequential runs. Targets the 200k-clk GROM stall that is
 the largest remaining item.
+
+## Build 111 measured; residual characterised (2026-08-21, night)
+
+The pipelined fetcher halves the GROM stall (busiest frame 200k -> 108k,
+mean 78k -> 32k); the freed time flows into the write drain, which is now
+the entire budget on peak frames (98.6% busy, 12.9 clk/txn, 66.6k txns).
+
+Visual state on b111 (.74, 40 captures over 80 s of attract): 37 frames
+essentially clean -- including the city and factory stages that used to
+shred -- and 3 consecutive frames showing a transient stale band on the
+LEFT EDGE during a camera pan. That is the expected signature of the
+bounded-staleness architecture: newly exposed columns lag by up to ~2
+frames (1 frame of vscan staleness + up to 1 frame of redraw latency)
+during fast scrolls, then catch up. No confetti, no persistent regions.
+
+If the pan-band matters, the next levers are: flush more often than once
+per frame (e.g. also at mid-screen, cost ~10k clk each), or trim write
+drain further (wb-burst chaining in jtframe_burst_ctrl). Neither started.
