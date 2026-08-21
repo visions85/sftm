@@ -157,6 +157,9 @@ module sftm_main #(
     output     [ 7:0] st_dout,
     // JTAG hang-hunt: live PC and interrupt state (see jtsftm_game u_issp4)
     output     [23:0] st_pc,
+    output     [23:0] st_lastrom,
+    output     [23:0] st_firstbad,
+    output            st_derail,
     output     [15:0] st_op,
     output     [ 3:0] st_int
 );
@@ -672,6 +675,30 @@ TG68KdotC_Kernel #(
 // ---------------------------------------------------------------------------
 reg [23:0] pc_live, pc_vec, pc_stuck;
 assign st_pc  = pc_live;
+// ---------------------------------------------------------------------------
+// Derail flight recorder. With true lane content the CPU boots, runs ~7k
+// fetches and then marches linearly through unmapped zero-space starting just
+// above RAM top -- too fast for JTAG polling to catch (25 reset/sample rounds
+// landed zero samples in ROM). Latch the LAST ROM-region fetch address and the
+// FIRST fetch from unmapped space; w_rst re-arms it on every watchdog or
+// forced reset, so a JTAG read any time later shows the derail instruction.
+// ---------------------------------------------------------------------------
+reg [23:0] pc_last_rom  = 24'd0;
+reg [23:0] pc_first_bad = 24'd0;
+reg        derail_got   = 1'b0;
+assign st_lastrom  = pc_last_rom;
+assign st_firstbad = pc_first_bad;
+assign st_derail   = derail_got;
+wire fr_rom = A[23:20] == 4'h8;
+wire fr_bad = (A[23:15] != 9'd0) && (A[23:19] == 5'd0);   // 0x008000-0x07FFFF
+always @(posedge clk) begin
+    if( w_rst ) begin
+        derail_got <= 1'b0;
+    end else if( grant && busstate == 2'b00 && !derail_got ) begin
+        if( fr_rom ) pc_last_rom <= A;
+        if( fr_bad ) begin pc_first_bad <= A; derail_got <= 1'b1; end
+    end
+end
 assign st_op  = op_live;
 reg [15:0] op_live;
 assign st_int = { vint, cpu_ipl };

@@ -104,6 +104,8 @@ wire [3:0] dbg_lsnd, dbg_lsrom, dbg_lgrm3, dbg_lgrom0, dbg_lgrom1, dbg_lvram;
 // ---------------------------------------------------------------------------
 wire [23:0] main_pc;
 wire [15:0] main_op;
+wire [23:0] main_lastrom, main_firstbad;
+wire        main_derail;
 wire [ 3:0] main_int;
 
 reg  [11:0] pcs_div = 12'd0;
@@ -136,6 +138,27 @@ wire [127:0] issp_probe4 = {
     48'd0,          // [ 51:  4] pad
     4'h5            // [  3:  0] signature nibble
 };
+
+wire [63:0] issp_probe5 = {
+    8'hD7,              // [63:56] signature
+    3'd0,
+    main_derail,        // [52] recorder fired since last reset
+    main_lastrom,       // [51:28] last ROM-region fetch address
+    main_firstbad,      // [27:4]  first unmapped fetch address
+    4'h9                // [3:0] signature
+};
+altsource_probe u_issp5 (
+    .probe  ( issp_probe5 ),
+    .source (             )
+);
+defparam
+    u_issp5.enable_metastability    = "NO",
+    u_issp5.instance_id             = "SFDR",
+    u_issp5.probe_width             = 64,
+    u_issp5.sld_auto_instance_index = "YES",
+    u_issp5.sld_instance_index      = 5,
+    u_issp5.source_initial_value    = "0",
+    u_issp5.source_width            = 0;
 
 altsource_probe u_issp4 (
     .probe  ( issp_probe4 ),
@@ -390,6 +413,9 @@ sftm_main u_main(
     .st_dout      ( st_main       ),
     .st_pc        ( main_pc       ),
     .st_op        ( main_op       ),
+    .st_lastrom   ( main_lastrom  ),
+    .st_firstbad  ( main_firstbad ),
+    .st_derail    ( main_derail   ),
     .st_int       ( main_int      )
 );
 
