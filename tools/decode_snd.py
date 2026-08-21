@@ -23,7 +23,8 @@ def main():
     for line in sys.stdin if len(sys.argv) < 2 else open(sys.argv[1]):
         parts = line.split()
         if len(parts) == 2 and parts[0] == "RAW6":
-            v = int(parts[1], 16)
+            # quartus_stp returns the probe as a BINARY string
+            v = int(parts[1], 2 if set(parts[1]) <= {"0", "1"} and len(parts[1]) > 32 else 16)
             if (v >> 120) != 0x6E or (v & 0xFF) != 0xA5:
                 print(f"BAD SIGNATURE: {parts[1]}")
                 continue

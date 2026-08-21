@@ -1846,3 +1846,57 @@ and on refill; STA all-positive slack). On .98 the b105 attract fight showed
 heavy corruption, but so did b100 the same morning on a different scene --
 "catastrophically broken" vs "same insufficiency, busier scene" is being
 decided by a like-for-like A/B screenshot campaign on .98.
+
+## RESOLVED: the service-menu divergence was a DIP file (2026-08-21, later)
+
+**Retraction of the section above.** The cache core does NOT diverge from
+MAME on the boot path, and the sound handshake was never the EXIT blocker.
+The cause was one byte of per-machine state: MiSTer stores per-game DIP
+overrides in `/media/fat/config/dips/<MRA name>.dip`, and .74's had byte 2 =
+0x8F where .98's has 0x0F. Bit 0x80 is MAME's `PORT_SERVICE_DIPLOC(0x0080,
+IP_ACTIVE_HIGH, "SW1:4")` -- **.74 had the service DIP switched ON**, saved
+by someone in the OSD long ago. With service on, the game (correctly!) boots
+into the operator menu, and EXIT (correctly!) re-enters it while the switch
+is held on -- explaining every "EXIT does not work" observation. Installing
+.98's dip file fixed it: .74 now boots unattended straight into attract.
+Lesson: when two machines behave differently on identical rbf+MRA+NVRAM,
+diff EVERYTHING under /media/fat/config -- dips/, nvram/, <core>.CFG.
+
+Also done: .74's MiSTer main binary replaced with .98's (user-approved;
+backup at /media/fat/MiSTer_backup_aug9), after which the
+`config/nvram/<MRA name>.nvm` restore works on .74 -- credits persist
+across reloads. The rbf can't be scp'd over a running MiSTer binary
+("dest open failure"): upload to a temp name and `mv` over it.
+
+**Sound triage (SFSN, build 106, hardware):** cmd_wcnt increases during
+attract and cmd_rcnt is saturated at 255 -- the 68020 writes the latch and
+the 6809 reads it; the handshake WORKS. But sromn=0 and peak=0 always: the
+ES5506 never fetches samples and the output is silence, consistent with the
+banks-era "voices never leave STOP" finding. Real bug, pre-existing,
+separate from video. (decode_snd.py: quartus_stp returns probes as BINARY
+strings, not hex.)
+
+## First trustworthy coalescing measurement (build 106, .74 attract fight)
+
+900 samples over the attract cycle, busiest frame:
+
+    busy            871,727 clk = 100% of the frame (saturated)
+    wrFIFO stall    800,672 = 92% of busy (was 95% pre-coalescing)
+    GROM stall      169,664 = 19% of busy
+    write txns      35,796 (TRANSACTIONS, st_wpop counts pops not pixels
+                    from b104 on; up to ~71.6k pixels if fully paired)
+    clk/txn         24.4 (single-write b100 measured 19.2)
+    VRAM reads      412,559 strobes/frame vs ~46k words a frame needs
+
+Reading: pairing roughly ~1.6x'd pixel throughput (12-24 clk/pixel vs
+19.2), matching the visual A/B (mean corruption 2.03% -> 0.85%, jungle
+fight now clean, city stage still saturated). The dominant cost is now the
+LANE ROUND TRIP under contention: scanout reads and blit writes share the
+vram cache lane and evict each other's blocks (24 clk/txn is a miss+fill+
+writeback, not a cache hit), and the read side issues ~9x more strobes than
+a frame's worth of words. Next levers, in order of expected value:
+  1. account for the read-strobe overcount (probe semantics vs real reads);
+  2. stop the scanout/blit thrash -- separate lanes need cross-lane
+     invalidation (INVAL_MASK exists in the generated mux) or a proper
+     line-buffer scanout that reads each word once;
+  3. only then, FIFO depth.
