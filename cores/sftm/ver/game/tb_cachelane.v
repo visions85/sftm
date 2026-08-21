@@ -53,7 +53,7 @@ jtframe_cache_mux #(
     .OFFSET2 ( 'h0 ), .INVAL_MASK2 ( 8'b0 )
 ) u_mux (
     .rst(rst), .clk(clk),
-    .addr0( 19'd0 ), .dout0(), .rd0(1'b0), .wr0(1'b0), .din0(32'd0),
+    .addr0( vh_addr ), .dout0(), .rd0(vh_rd), .wr0(1'b0), .din0(32'd0),
     .wdsn0(4'd0), .ok0(), .flush0(1'b0), .flushing0(), .flush_done0(),
     .addr1( 18'd0 ), .dout1(), .rd1(1'b0), .wr1(1'b0), .din1(16'd0),
     .wdsn1(2'd0), .ok1(), .flush1(1'b0), .flushing1(), .flush_done1(),
@@ -210,6 +210,38 @@ begin
     if( ld_st != 2'd0 ) $display("  (loader FSM stuck in state %0d after xact)", ld_st);
 end endtask
 
+// ---------------------------------------------------------------------------
+// Lane-0 hammer: continuous fill traffic on the vram lane, as on real hardware
+// where scanout drives ~390k reads/frame through the same mux. Every
+// single-lane path is proven clean; concurrency is the one structural
+// difference the hardware always has.
+// ---------------------------------------------------------------------------
+reg          vh_on = 0;
+reg  [20:2]  vh_addr = 0;
+reg          vh_rd = 0;
+wire         ok0_w = u_mux.ok0;
+reg  [1:0]   vh_st = 0;
+reg  [7:0]   vh_blk = 0;
+always @(posedge clk) begin
+    if( !vh_on ) begin
+        vh_rd <= 0; vh_st <= 0;
+    end else case( vh_st )
+        2'd0: begin
+            // stride blocks so most accesses are FILLS, like scanout
+            vh_addr <= { 3'd0, vh_blk, 8'd0 };
+            vh_rd   <= 1'b1;
+            vh_st   <= 2'd1;
+        end
+        2'd1: vh_st <= 2'd2;
+        2'd2: if( ok0_w ) begin
+            vh_rd  <= 1'b0;
+            vh_blk <= vh_blk + 8'd1;
+            vh_st  <= 2'd3;
+        end
+        2'd3: vh_st <= 2'd0;
+    endcase
+end
+
 // real program-ROM head, one hex byte per line (first 64 bytes of the stream)
 reg [7:0] prog_head [0:63];
 initial $readmemh("cores/sftm/ver/game/prog_head.hex", prog_head);
@@ -276,8 +308,12 @@ end endtask
 task cpu_view(input [19:2] lw);
 begin
     fetch(lw);
-    fetch_even = { got[ 7:0], got[15: 8] };   // rom_word, !A[1]
-    fetch_odd  = { got[23:16], got[31:24] };  // rom_word,  A[1]
+    // PROPOSED FIX under test: the halves exchanged relative to the old mux.
+    // Old (written for the little-endian lane packing): even from D[15:0],
+    // odd from D[31:16]. With ENDIAN=1 packing the first word is the HIGH
+    // half, so even must come from D[31:16] and odd from D[15:0].
+    fetch_even = { got[23:16], got[31:24] };  // rom_word FIXED, !A[1]
+    fetch_odd  = { got[ 7:0], got[15: 8] };   // rom_word FIXED,  A[1]
     want_even  = { prog_head[{lw,2'b00}], prog_head[{lw,2'b01}] };
     want_odd   = { prog_head[{lw,2'b10}], prog_head[{lw,2'b11}] };
     $display("  lw %0d: lane=%08X  cpu even=%04X (want %04X %0s)  odd=%04X (want %04X %0s)",
@@ -378,6 +414,37 @@ initial begin
     $display("  burst of 8 sequential writes checked");
 
     // -----------------------------------------------------------------------
+    // Phase F: WRITEBACK path. Phase D's readbacks were cache hits -- the
+    // written blocks were never evicted, so SDRAM was never re-read. Hardware
+    // bulk-load readback showed observed[i] = intended[i+1] (one halfword
+    // early) while single write->read (pure cache) was exact: the suspect is
+    // eviction writeback + refill. Write one block, evict it by touching 20
+    // other blocks (the lane has 16), then read back through a refill.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase F: write block, force eviction, re-read through refill");
+    for( i = 0; i < 8; i = i + 1 ) lane_write( 18'd4000+i[15:0], 32'hE0E00000 + i[15:0] );
+    // evict: touch 20 distinct blocks (64 longwords apart)
+    for( i = 0; i < 20; i = i + 1 ) fetch( 18'd8000 + i[15:0]*64 );
+    // refill and check
+    for( i = 0; i < 8; i = i + 1 ) begin
+        fetch( 18'd4000+i[15:0] );
+        if( got === 32'hE0E00000 + i[15:0] )
+            $display("  F lw%0d after evict: %08X CORRECT", 4000+i, got);
+        else begin
+            $display("  F lw%0d after evict: %08X WRONG (want %08X)", 4000+i, got, 32'hE0E00000+i[15:0]);
+            errors = errors + 1;
+        end
+    end
+    // neighbours of the written block, refetched after eviction
+    fetch( 18'd3999 );
+    if( got === {16'h1000+16'd7998, 16'h1000+16'd7999} ) $display("  F neighbour lw3999 intact");
+    else begin $display("  F neighbour lw3999 = %08X CLOBBERED", got); errors=errors+1; end
+    fetch( 18'd4008 );
+    if( got === {16'h1000+16'd8016, 16'h1000+16'd8017} ) $display("  F neighbour lw4008 intact");
+    else begin $display("  F neighbour lw4008 = %08X CLOBBERED (want %04X%04X)", got, 16'h1000+16'd8016, 16'h1000+16'd8017); errors=errors+1; end
+
+    // -----------------------------------------------------------------------
     // Phase E: the b91 loader FSM replica, replaying the hardware sequence
     // that read back all zeros: a burst of writes, a clear, then reads.
     // -----------------------------------------------------------------------
@@ -396,6 +463,30 @@ initial begin
         end
     end
     @(posedge clk); ld_srcr <= 64'd0;
+    repeat(20) @(posedge clk);
+
+    // -----------------------------------------------------------------------
+    // Phase G: everything again, WITH the vram lane hammering concurrently.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase G: lane-2 traffic with continuous lane-0 fills (concurrency)");
+    vh_on = 1'b1;
+    repeat(60) @(posedge clk);
+    check(18'd2560, "G fill under hammer");
+    check(18'd2561, "G hit under hammer");
+    check(18'd2624, "G second fill under hammer");
+    for( i = 0; i < 8; i = i + 1 ) lane_write( 18'd4400+i[15:0], 32'hF0F00000 + i[15:0] );
+    for( i = 0; i < 20; i = i + 1 ) fetch( 18'd12000 + i[15:0]*64 );  // evict
+    for( i = 0; i < 8; i = i + 1 ) begin
+        fetch( 18'd4400+i[15:0] );
+        if( got === 32'hF0F00000 + i[15:0] )
+            $display("  G wb lw%0d: %08X CORRECT", 4400+i, got);
+        else begin
+            $display("  G wb lw%0d: %08X WRONG (want %08X)", 4400+i, got, 32'hF0F00000+i[15:0]);
+            errors = errors + 1;
+        end
+    end
+    vh_on = 1'b0;
     repeat(20) @(posedge clk);
 
     $display("");

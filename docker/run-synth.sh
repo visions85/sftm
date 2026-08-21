@@ -84,6 +84,25 @@ if grep -q "mux <= sys_info" "$JTFRAME_DIR/hdl/debug/jtframe_debug_viewmux.v"; t
     echo "[sftm] ERROR: debug viewmux pin did NOT apply" >&2; exit 1
 fi
 echo "[sftm] debug overlay pinned to the game debug_view"
+# Plumb SHIFTED through jtframe_burst_sdram. The banks controller path passes
+# .SHIFTED(SDRAM_SHIFT) to jtframe_sdram64 -- compensation for the MiSTer PLL
+# phase-shifted SDRAM clock -- but jtframe_burst_sdram.v:215 HARDCODES
+# .SHIFTED(0). On real hardware every cache-lane burst READ is then captured
+# one 16-bit word off, so all fills return shifted content: the instruction
+# stream corruption, the wrong initial SP, the interrupt storm and the
+# watchdog loop that kept every cache-lanes build from booting. Simulation
+# never sees it because there is no clock phase to compensate. The banks build
+# (b59) works on the same board because its path passes SHIFTED properly.
+sed -i "s/module jtframe_burst_sdram #(/module jtframe_burst_sdram #(\n    parameter SHIFTED = 0,/" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
+sed -i "s/    .SHIFTED       ( 0        ),/    .SHIFTED       ( SHIFTED  ),/" \
+    "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v" || true
+sed -i "s/    jtframe_burst_sdram #(/    jtframe_burst_sdram #(\n`ifdef JTFRAME_SDRAM96\n        .SHIFTED    ( 0             ),\n`else\n        .SHIFTED    ( SDRAM_SHIFT   ),\n`endif/" \
+    "$JTFRAME_DIR/hdl/jtframe_board_sdram.v" || true
+if grep -q "SHIFTED       ( 0        )" "$JTFRAME_DIR/hdl/sdram/jtframe_burst_sdram.v"; then
+    echo "[sftm] ERROR: SHIFTED plumb did NOT apply" >&2; exit 1
+fi
+echo "[sftm] SHIFTED plumbed through jtframe_burst_sdram"
 # SLOT0_ERASE=0 on the bank-3 rw slot -- see entrypoint.sh for why.
 sed -i "s/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_ram1_3slots.v" || true

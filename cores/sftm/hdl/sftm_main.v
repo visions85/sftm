@@ -257,8 +257,9 @@ wire [13:0] ram_addr = !boot_done ? {8'd0, boot_lw, boot_phase} :
                                     A[14:1];
 
 // boot data: BE word 0 of a longword = stream bytes {0,1}, word 1 = {2,3}
-wire [15:0] boot_wdata = !boot_phase ? {rom_data[ 7:0], rom_data[15: 8]}
-                                     : {rom_data[23:16], rom_data[31:24]};
+// same half assignment as rom_word: word 2n is rom_data[31:16]
+wire [15:0] boot_wdata = !boot_phase ? {rom_data[23:16], rom_data[31:24]}
+                                     : {rom_data[ 7:0], rom_data[15: 8]};
 wire        boot_we    = !boot_done && state==S_BOOT && boot_settle==2'd3 && rom_ok;
 
 wire ram_cpu_we_hi = grant && bus_write && ram_cs && !cpu_uds_n;
@@ -559,8 +560,15 @@ end
 // CPU read data mux. Unmapped regions and nop reads return 0 (MAME's default
 // unmapped value; 0x578000 nopr and the DUART stub rely on this).
 // ---------------------------------------------------------------------------
-wire [15:0] rom_word = !A[1] ? { rom_data[ 7:0], rom_data[15: 8] }
-                             : { rom_data[23:16], rom_data[31:24] };
+// The DW=32 cache lane with ENDIAN=1 packs the FIRST 16-bit SDRAM word into
+// rom_data[31:16] and the second into [15:0] (jtframe_cache_ctrl fill order,
+// proven end-to-end by ver/game/tb_cachelane Phase C against the real
+// download chain). The download stores each big-endian word byte-swapped
+// (jtframe_dwnld SWAB=1), so each half is byte-swapped here. The previous
+// arms were exchanged -- written for the old little-endian lane packing --
+// which handed the CPU the two halves of every longword swapped.
+wire [15:0] rom_word = !A[1] ? { rom_data[23:16], rom_data[31:24] }
+                             : { rom_data[ 7:0], rom_data[15: 8] };
 
 // video_cs decode outputs to sftm_video
 always @(*) begin
