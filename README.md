@@ -233,10 +233,27 @@ refuted, with the measurements that refuted them.
 
 ## License
 
-RTL authored here is GPLv3, to match JTFRAME. Third-party cores keep their
-own licenses (TG68K.C: LGPL; mc6809: see its header). MAME driver source is
-consulted as a reference only and is not redistributed here — run
-`doc/fetch-mame-src.sh` to fetch it locally.
+RTL authored here is **GPLv3**, to match JTFRAME. The full text is in
+[LICENSE](LICENSE).
+
+Third-party components keep their own licenses and their copyright notices
+must be preserved:
+
+| Component | License | Copyright |
+|---|---|---|
+| [JTFRAME](https://github.com/jotego/jtcores) | GPLv3 | Jose Tejada (jotego) |
+| [TG68K.C](https://github.com/TobiFlex/TG68K.C) | LGPLv3 | Tobias Gubener |
+| `mc6809` | see its header in JTFRAME | |
+
+A synthesised `.rbf` is a combined work of all of the above. Distributing one
+is permitted — GPLv3 covers object code — provided the corresponding source
+is offered under the same terms, which publishing it alongside this
+repository satisfies.
+
+MAME driver source is consulted as a reference only and is not redistributed
+here — run `doc/fetch-mame-src.sh` to fetch it locally.
 
 **No ROMs or NVRAM images are included or distributed.** You must supply your
-own legally obtained MAME-compatible set.
+own legally obtained MAME-compatible set. An `.mra` contains only ROM names,
+checksums and offsets — no ROM data — which is why it can be distributed
+freely while the ROMs themselves cannot.
