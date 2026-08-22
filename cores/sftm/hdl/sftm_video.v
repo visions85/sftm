@@ -484,6 +484,9 @@ sftm_blit u_blit(
 // Line 0 is fetched during line 285, line 1 during line 0.
 // base = csa(XORIGIN1, YORIGIN1 + line)  (screen_update, :1489)
 reg        line_go;
+reg        frame_snap;            // late-vblank coherent-snapshot pulse
+reg [9:0]  scan_yorig;
+reg [8:0]  scan_xorig;
 reg [18:0] line_base;
 reg        line_sel;
 wire [8:0] fetch_line = vcnt == 9'd284 ? 9'd0 :
@@ -514,7 +517,7 @@ sftm_vram u_vram(
     .vscan_ok   ( vscan_ok      ),
     // flush the write lane at vblank start: the prefetch is idle until the
     // first visible line, so the vscan invalidation never races a fill
-    .frame_flush( vblank_irq    ),
+    .frame_flush( frame_snap    ),
     .vw_req     ( vw_req        ),
     .vw_rdy     ( vw_rdy        ),
     .vw_plane   ( vw_plane      ),
@@ -676,10 +679,14 @@ always @(posedge clk) begin
         vblank_irq <= 0;
         line_go    <= 0;
         line_sel   <= 0;
+        frame_snap <= 0;
+        scan_xorig <= 0;
+        scan_yorig <= 0;
         {red, green, blue} <= 0;
     end else begin
         vblank_irq <= 0;
         line_go    <= 0;
+        frame_snap <= 0;
         if( pxl_cen ) begin
             // Horizontal phase follows the CRTC registers literally
             // (itech32_v.cpp:75-78, values at startup):
@@ -705,6 +712,22 @@ always @(posedge clk) begin
                     LVBL       <= 1'b0;
                     vblank_irq <= 1'b1;   // generate_int1 (itech32.cpp:453)
                 end
+                // Coherent display snapshot, LATE in vblank (b118): the
+                // game's vblank handler draws the HUD and updates the
+                // scroll registers after generate_int1; flushing at vblank
+                // START published content from before those updates while
+                // scanout applied the scroll registers LIVE -- mixed-age
+                // state that showed as a momentary glitched health bar and
+                // a rhythmically varying filmstrip scroll (offset and
+                // content beating a frame apart). Snapshotting both at
+                // line 282 -- after the handler, with 3+ lines for the
+                // flush before scanout resumes -- matches MAME, which
+                // reads XORIGIN once per screen update.
+                if( vcnt == 9'd282 ) begin
+                    frame_snap  <= 1'b1;
+                    scan_yorig  <= vregs[R_YORIGIN1][9:0];
+                    scan_xorig  <= vregs[R_XORIGIN1][8:0];
+                end
                 if( vcnt == 9'd285 ) LVBL <= 1'b1;
                 if( vcnt == 9'd262 ) VS <= 1'b1;
                 if( vcnt == 9'd265 ) VS <= 1'b0;
@@ -712,9 +735,9 @@ always @(posedge clk) begin
                 if( fetch_vis ) begin
                     line_go   <= 1'b1;
                     line_sel  <= fetch_line[0];
-                    line_base <= { vregs[R_YORIGIN1][9:0] + {1'b0, fetch_line},
+                    line_base <= { scan_yorig + {1'b0, fetch_line},
                                    9'd0 }                    // wraps mod 1024
-                                 + { 10'd0, vregs[R_XORIGIN1][8:0] };
+                                 + { 10'd0, scan_xorig };
                 end
             end
             // output the pixel (single plane, screen_update :1510)
