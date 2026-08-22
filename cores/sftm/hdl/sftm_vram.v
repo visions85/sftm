@@ -198,6 +198,8 @@ reg [ 2:0] pf_slot;     // next slot of pf_data to unpack
 reg [127:0] pf_data;
 reg        psettle;
 
+reg  flush_req, flush_busy;
+wire flush_gate = flush_req || flush_busy;
 localparam [1:0] P_IDLE=2'd0, P_WAIT=2'd1, P_UNPK=2'd2;
 reg [1:0] pstate;
 
@@ -224,7 +226,13 @@ always @(posedge clk) begin
         case( pstate )
         P_IDLE: begin
             vscan_rd <= 0;
-            if( pf_active ) begin
+            // b121: never read vscan while a flush is pending or running --
+            // a prefetch racing the flush caches STALE blocks into the line
+            // buffer (the transient top-of-screen HUD garbage on heavy
+            // frames, where the writeback stretched past the vblank slot).
+            // Holding here just delays the fill; the buffer still beats its
+            // scanout deadline once the flush completes.
+            if( pf_active && !flush_gate ) begin
                 vscan_addr <= { 1'b0, pf_j };   // plane 0
                 vscan_rd   <= 1;
                 psettle    <= 0;
@@ -286,9 +294,11 @@ wire [19:0] rd_pen  = { vr_plane, vr_addr };
 // never overlap by construction: frame_flush latches into flush_req, the
 // flush fires only from a quiet sequencer, and no request issues from
 // flush_req until vram_flushing has risen and fallen again.
-reg  flush_req, flush_busy, flushing_d;
+// (flush_req/flush_busy/flush_gate declared above the prefetch FSM,
+// which references flush_gate -- iverilog binds one pass)
+reg  flushing_d;
 wire flush_quiet = astate==A_IDLE && !vram_we && !vram_rd;
-wire flush_gate  = flush_req || flush_busy;
+
 
 wire b_do_rd = astate==A_IDLE && !flush_gate && vr_req && !vr_busy && wf_empty;
 wire b_do_wr = astate==A_IDLE && !flush_gate && wf_cnt != 5'd0;

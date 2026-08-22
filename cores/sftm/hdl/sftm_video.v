@@ -712,19 +712,25 @@ always @(posedge clk) begin
                     LVBL       <= 1'b0;
                     vblank_irq <= 1'b1;   // generate_int1 (itech32.cpp:453)
                 end
-                // Coherent display snapshot, LATE in vblank (b118): the
-                // game's vblank handler draws the HUD and updates the
-                // scroll registers after generate_int1; flushing at vblank
-                // START published content from before those updates while
-                // scanout applied the scroll registers LIVE -- mixed-age
-                // state that showed as a momentary glitched health bar and
-                // a rhythmically varying filmstrip scroll (offset and
-                // content beating a frame apart). Snapshotting both at
-                // line 282 -- after the handler, with 3+ lines for the
-                // flush before scanout resumes -- matches MAME, which
-                // reads XORIGIN once per screen update.
-                if( vcnt == 9'd282 ) begin
+                // Coherent display snapshot, late in vblank (b118, split
+                // b121). The game's vblank handler draws the HUD and
+                // updates the scroll registers after generate_int1, so the
+                // flush must run after that drawing -- but it also has to
+                // FINISH before scanout resumes: under heavy load a full
+                // frame dirties most of the 64-block vram cache and the
+                // writebacks arbitrate against every other lane, so the
+                // b118 line-282 flush (3 lines of margin) slipped into the
+                // visible frame and the first lines scanned STALE vscan
+                // content -- the transient HUD garbage on heavy stages.
+                // b121: flush at 272 (13 lines of margin), scroll-register
+                // latch at 284 so a handler whose scroll write lands late
+                // under load is still honoured this frame, as on real
+                // hardware. HUD blits that land after 272 on an overloaded
+                // tick publish one frame late -- benign, and matches how
+                // far behind the real machine's live scanout would be.
+                if( vcnt == 9'd272 )
                     frame_snap  <= 1'b1;
+                if( vcnt == 9'd284 ) begin
                     scan_yorig  <= vregs[R_YORIGIN1][9:0];
                     scan_xorig  <= vregs[R_XORIGIN1][8:0];
                 end
