@@ -153,13 +153,6 @@ jtframe_cache_tags #(
     .scan_blk      ( scan_blk_now      )
 );
 
-// sftm slip reg: DISABLED for the 96 MHz campaign. The 48 MHz slip was a
-// capture-phase artifact of the unshifted SDRAM_CLK; under JTFRAME_SDRAM96
-// the pin runs from the clk96sh phase-shifted tap that jtframe tuned for
-// stock capture. The guard strings below keep run-synth.sh's compensation
-// seds from applying ( ext_din_r <= ext_din is quoted here only so the
-// third guard matches ). If hardware readback shows a slip at 96, delete
-// this comment block to re-arm the patch.
 // ok crossing hardener (96 MHz campaign): the controller pulses ok for a
 // couple of its own cycles; when the cache domain runs at twice the
 // requester clock a pulse could straddle the slower edge. Held-until-drop
