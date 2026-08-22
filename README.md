@@ -8,10 +8,10 @@ from the MAME driver.
 ## Status
 
 **Playable, with bugs still being ironed out.** As of build 120
-(2026-08-22) the core runs the game on a real DE10-Nano: it boots, plays,
-and renders correctly. It does **not yet run at full speed** — the heaviest
-stages still dip below frame rate, and there is no sound. Treat it as a
-core you can play and help debug, not a finished one.
+(2026-08-22) the core runs the game on a real DE10-Nano: it boots, takes
+coins and plays through. It is **not yet accurate**: the heaviest stages dip
+below full speed and still show visible graphical glitches, and there is no
+sound. Treat it as a core you can play and help debug, not a finished one.
 
 Working:
 
@@ -19,12 +19,10 @@ Working:
   operator service menu work. NVRAM save/restore is verified from a cold
   boot: a valid save goes straight to the title screen with correct coinage
   and banked credits honoured.
-- **Graphics are clean.** Across twelve captures of the full attract cycle
-  the corruption metric reads 0.0000 in every frame. The factory and cage
-  stages — the worst offenders for most of this project — render
-  pixel-perfect, as does the high-score table. That is correctness, not
-  speed: the cage stage draws the right pixels but only just fits its frame
-  (see below).
+- **Graphics are close, and much improved.** Across twelve captures of the
+  full attract cycle the corruption metric reads 0.0000 in every frame, and
+  the high-score table is pixel-perfect. That measurement covers attract
+  mode only — see the known issues below for what gameplay still shows.
 - **Data integrity is verified by the game itself.** The service menu's FULL
   GROM CHECKSUM TEST passes with sums identical to the reference baseline.
   A JTAG dump of the loaded ROM matches the MAME set byte for byte. The
@@ -53,14 +51,21 @@ Known issues, roughly in the order they bite:
   be cited). One caveat worth keeping: the original itech32 hardware also
   slowed on heavy scenes, so some of this dip is authentic. How much needs
   an unthrottled MAME comparison, which has not been done.
-- **Transient one-frame artifacts on heavy stages.** Two classes remain.
-  Newly exposed columns during fast camera pans can lag about two frames
-  before catching up — the expected signature of the bounded-staleness
-  design rather than a defect, but visible. Separately, heavy frames could
-  show momentary HUD garbage (two generations of timer digits at once) when
-  a frame dirtied most of the cache and the flush slipped past vblank; the
-  fix — an earlier flush with a prefetch interlock — passes simulation and
-  is awaiting hardware confirmation.
+- **Visible graphical glitches during gameplay on heavy stages.** The cage
+  stage still glitches in play. Note the gap this sits in: the automated
+  corruption metric reads zero across attract-mode captures while a person
+  playing the game plainly sees artifacts, so the metric is not measuring
+  what matters yet — attract mode does not reproduce the load, and
+  transient one-frame faults do not survive into a screenshot.
+
+  Characterised so far: newly exposed columns during fast camera pans lag
+  about two frames before catching up (the expected signature of the
+  bounded-staleness design), and heavy frames could show momentary HUD
+  garbage — two generations of timer digits at once — when a frame dirtied
+  most of the cache and the flush slipped past vblank. A fix for the latter
+  (earlier flush plus a prefetch interlock) passes simulation and awaits
+  hardware confirmation. Whether that accounts for everything visible on the
+  cage stage is not yet established.
 - An open bench-only race in the 48 MHz flat testbench, which needs a
   non-perturbing instrument before the relevant fixes can be upstreamed.
 
