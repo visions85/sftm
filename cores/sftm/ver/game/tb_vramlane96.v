@@ -14,12 +14,19 @@
 //   2. run coalescing integrity under a real fill/writeback engine
 //   3. throughput: clk/write with the prefetch running at line cadence
 //   4. eviction: written pens survive a working-set sweep and refill
-module tb_vramlane;
+module tb_vramlane96;
 
 localparam SDRAM_AW = 24;
 
-reg clk = 0, rst = 1;
-always #10.4 clk = ~clk;    // 48 MHz
+// 96 MHz campaign clocking: clk96 is primary; clk (48) is divided from it
+// inside the bench, so every 48 edge coincides with a 96 rise -- the same
+// phase relationship a shared PLL gives on hardware. The cache mux, the
+// burst engine and the SDRAM chip run on clk96; sftm_vram and all stimulus
+// stay on clk, crossing at the lane ports exactly as the silicon will.
+reg clk96 = 0, rst = 1;
+always #5.2 clk96 = ~clk96;  // 96 MHz
+reg clk = 0;
+always @(posedge clk96) clk <= ~clk;   // 48 MHz, edge-aligned
 
 // ---------------------------------------------------------------------------
 // lane 0 = vram, build-107 params: DW=64, ENDIAN=0, AW=21, 64 x 256B blocks,
@@ -52,7 +59,7 @@ jtframe_cache_mux #(
     .BLKSIZE1 ( 256 ), .DW1 ( 128 ), .BA1 ( 3 ), .CHIP1 ( 0 ),
     .OFFSET1 ( 'h40000 ), .INVAL_MASK1 ( 8'b0 )
 ) u_mux (
-    .rst(rst), .clk(clk),
+    .rst(rst), .clk(clk96),
     .addr0( vram_addr ), .dout0( vram_data ), .rd0( vram_rd ),
     .wr0( vram_we ), .din0( vram_din ), .wdsn0( vram_dsn ), .ok0( vram_ok ),
     .flush0( vram_flush ), .flushing0( vram_flushing ),
@@ -83,9 +90,9 @@ wire [ 1:0] sdram_ba_pin;
 wire sdram_dqml, sdram_dqmh, sdram_nwe, sdram_ncas, sdram_nras, sdram_ncs, sdram_cke;
 
 jtframe_burst_sdram #(
-    .AW(SDRAM_AW), .HF(0), .MISTER(1)
+    .AW(SDRAM_AW), .HF(1), .MISTER(1)
 ) u_ctrl (
-    .rst(rst), .clk(clk), .init(sdr_init),
+    .rst(rst), .clk(clk96), .init(sdr_init),
     .addr( {1'b0, mux_addr} ), .ba(mux_ba), .rd(mux_rd), .wr(mux_wr),
     .din(mux_dout), .dout(sdr_dout),
     .ack(sdr_ack), .dst(sdr_dst), .dok(sdr_dok), .rdy(sdr_rdy),
@@ -100,7 +107,7 @@ jtframe_burst_sdram #(
 );
 
 mt48lc16m16a2 #(.col_bits(10), .mem_sizes((1<<23)-1)) u_chip (
-    .Dq(sdram_dq), .Addr(sdram_a), .Ba(sdram_ba_pin), .Clk(clk),
+    .Dq(sdram_dq), .Addr(sdram_a), .Ba(sdram_ba_pin), .Clk(clk96),
     .Cke(sdram_cke), .Cs_n(sdram_ncs), .Ras_n(sdram_nras),
     .Cas_n(sdram_ncas), .We_n(sdram_nwe), .Dqm({sdram_dqmh, sdram_dqml}),
     .downloading(1'b0), .VS(1'b0), .frame_cnt(32'd0)

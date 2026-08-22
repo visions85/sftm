@@ -29,6 +29,15 @@ module jtsftm_game(
 // Taking dipsw[7:0] instead yielded 0xFF and hung the boot task: 0x802384
 // spins on `btst.b #6,$280001` (SW1:3), yielding to the scheduler forever,
 // which is why the palette at 0x82A5F0 was never reached.
+// Pixel cens, game-generated (JTFRAME_PXLCLK removed): 16 MHz and 8 MHz
+// from the 48 MHz game clock. Under JTFRAME_SDRAM96 the wrapper feeds clk48
+// into this module's clk port, so these tick in the same domain as every
+// consumer, and the frame's video pipeline locks to the HS/VS outputs.
+reg [2:0] pxldiv = 3'd0;
+always @(posedge clk) pxldiv <= pxldiv == 3'd5 ? 3'd0 : pxldiv + 3'd1;
+assign pxl2_cen = pxldiv == 3'd0 || pxldiv == 3'd3;
+assign pxl_cen  = pxldiv == 3'd0;
+
 wire [7:0] dipsw_a;
 assign dipsw_a = dipsw[23:16];
 

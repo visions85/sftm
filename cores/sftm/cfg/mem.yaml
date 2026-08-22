@@ -29,7 +29,10 @@
 # program ROM). Corrected 2026-08-12; regenerate mem_ports.inc/_sdram.v.
 
 clocks:
-  clk:                # 48 MHz reference
+  # clk48, not clk: under JTFRAME_SDRAM96 the game wrapper's `clk` is the
+  # 96 MHz cache/SDRAM domain and the game logic runs on clk48 -- cens for
+  # the CPUs must tick in the domain that consumes them.
+  clk48:              # 48 MHz reference
     - freq: 25000000  # ~MC68EC020 @ 25 MHz (functional TG68K, tuned to vsync)
       outputs:
         - e020

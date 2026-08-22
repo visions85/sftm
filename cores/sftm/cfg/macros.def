@@ -46,8 +46,11 @@ JTFRAME_STEREO
 # board generates it at 48 MHz / 6 = 8 MHz (≈ itech32's 7.96 MHz pixel clock)
 # and delivers it as INPUT to the game.  This is required for arcade_video
 # to sample pixels (its CE gating fires on rising edges of pxl_cen).
-JTFRAME_PXLCLK=8
-
+# JTFRAME_PXLCLK removed for the 96 MHz campaign: the frame would generate
+# pxl_cen in the 96 MHz clk_sys domain where the 48 MHz game logic misses
+# half the pulses. The game now OUTPUTS its own cens from clk48 (the ports
+# flip direction without the macro), and the frame follows the game's
+# HS/VS/LVBL as it always has.
 # --- Memory ------------------------------------------------------------------
 # ~36 MB of ROM (see cfg/mem.yaml). Needs the 4 SDRAM banks AND the 128 MB
 # module, because 4 x 8 MB = 32 MB on the standard module is not enough.
@@ -144,3 +147,13 @@ JTFRAME_OSD_VOL
 #
 # Do not re-enable.
 # JTFRAME_NOHQ2X
+
+# 96 MHz SDRAM campaign: the frame runs clk_rom/clk_sys at 96 MHz (burst
+# engine, cache mux and lanes, download, SDRAM_CLK from the phase-shifted
+# clk96sh tap); the game logic stays at 48 via JTFRAME_CLK48 and a template
+# overlay that feeds clk48/rst48_h into the game instance's clk/rst ports.
+# The lane ports are the 48<->96 crossing -- hold-until-ok protocol with the
+# ok stretcher in jtframe_cache (see docker/run-synth.sh overlays), proven
+# in tb_vramlane96 / tb_cachelane96.
+JTFRAME_SDRAM96
+JTFRAME_CLK48
