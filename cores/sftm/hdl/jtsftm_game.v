@@ -653,11 +653,23 @@ wire [127:0] issp_probe = {
 };
 
 // probe1: the CPU's side of the video interface, plus the display base.
+// CPU fetch-stall meter (b117): cycles per frame the main CPU lane has a
+// request up without ok -- the direct measure of whether slow game ticks
+// are fetch-bound. Latched on vblank_irq like the video counters.
+reg [19:0] cpu_stall_acc = 20'd0, stw_cpustall = 20'd0;
+always @(posedge clk) begin
+    if( vblank_irq ) begin
+        stw_cpustall  <= cpu_stall_acc;
+        cpu_stall_acc <= 20'd0;
+    end else if( cpu_rom_rd && !main_ok && ~&cpu_stall_acc )
+        cpu_stall_acc <= cpu_stall_acc + 20'd1;
+end
+
 wire [127:0] issp_probe2 = {
     8'h5C,          // [127:120] signature
     8'd0,
     stw_wr,         // [111: 92] VRAM writes this frame, EXACT
-    stw_rd,         // [ 91: 72] VRAM read strobes
+    stw_cpustall,   // [ 91: 72] REPURPOSED b117: CPU fetch-stall clk/frame
     stw_xfer,       // [ 71: 52] TRANSFER writes (cmd-3 pixel pushes)
     stw_cmd,        // [ 51: 32] COMMAND writes (blit starts)
     stw_vreg,       // [ 31: 12] all CPU video-register writes

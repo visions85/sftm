@@ -58,7 +58,7 @@ print("  -- CPU side of the video interface --")
 stat("CPU vreg writes",  vreg)
 stat("  COMMAND (blits)", cmd)
 stat("  pens accepted  ", xfer)
-stat("VRAM read strobes", rds)
+stat("CPU fetch stall  ", rds)
 print()
 mb=max(r['busy'] for r in rows); mc=max(cmd) if cmd else 0
 if mc==0:

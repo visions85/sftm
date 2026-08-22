@@ -69,7 +69,7 @@ jtframe_cache_mux #(
     .BLKSIZE1 ( 256 ), .DW1 ( 16 ), .BA1 ( 3 ), .CHIP1 ( 0 ),
     .OFFSET1 ( 'h0 ), .INVAL_MASK1 ( 8'b0 ),
     // lane 2 = main -- THE LANE UNDER TEST
-    .ENDIAN2 ( 1 ), .FULL2 ( 0 ), .AW2 ( 20 ), .BLOCKS2 ( 16 ),
+    .ENDIAN2 ( 1 ), .FULL2 ( 0 ), .AW2 ( 20 ), .BLOCKS2 ( 64 ),
     .BLKSIZE2 ( 256 ), .DW2 ( 32 ), .BA2 ( 0 ), .CHIP2 ( 0 ),
     .OFFSET2 ( 'h0 ), .INVAL_MASK2 ( 8'b0 ),
     // lane 3 = snd -- the 6809 byte lane (Phase H)

@@ -137,7 +137,10 @@ sdram:
     - name: main
       data_width: 32
       rw: true
-      blocks: { count: 16, size: 256 }
+      # 64 blocks (b117): a 4 KB cache against a 1 MB program left the
+      # 68020 fetch-stalling once the memory side stopped being the wall;
+      # 16 KB covers the hot loops of the game tick.
+      blocks: { count: 64, size: 256 }
       at: { bank: 0, offset: "0x0", length: 1MB }
     - name: snd           # byte 0x100000
       data_width: 8
