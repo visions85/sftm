@@ -2025,3 +2025,45 @@ The definitive close for the last few percent is the 96 MHz SDRAM project
 scene at ~50% of budget. Scoped in the session log; the instrument stack
 (ISSP meters, JTAG inputs, unattended service-menu automation, tb_vramlane
 phase 7) is the de-risking asset.
+
+## Build 116: 96 MHz SDRAM -- the corruption is gone (2026-08-22)
+
+The 96 MHz campaign landed in one day, simulation-first throughout:
+
+- Architecture: JTFRAME_SDRAM96 supplies the frame side (clk_rom/clk_sys at
+  96, burst engine at 96 with HF timing, SDRAM_CLK from the clk96sh
+  phase-shifted tap); a game_sdram template overlay hands clk48/rst48_h
+  into the game instance, so all game RTL runs at 48 untouched while the
+  wrapper and cache stack ride 96. Lane ports are the crossing, hardened by
+  the held-until-request-drop ok stretcher. CPU/sound cens regenerate at 48
+  via the mem.yaml clock key; the game emits its own pixel cens
+  (JTFRAME_PXLCLK dropped -- the frame's cen lives in the 96 domain where
+  48 MHz consumers miss half the pulses).
+- Proof before silicon: tb_vramlane96 / tb_cachelane96 run the real stack
+  split across the two clocks; all phases pass; the miss path measures
+  158 -> 81 clk48 per fill.
+- Closure: first fit missed 10.4 ns by 1.31 ns on one chain (tag RAM ->
+  compare -> state); the pre-existing S_LOOKUP_DECIDE state now splits the
+  lookup across two 96 cycles. A fitter segfault mid-campaign was cured by
+  rerunning. The project had NO SDRAM pin constraints at any clock --
+  plausibly the origin of the 48 MHz slip saga -- fixed with a core SDC
+  (SDRAM_CLK modelled as 96 shifted 180, jtframe's own SDRAM96 declaration,
+  plus 2-cycle multicycles on the protocol-held 96->48 crossing). jtcore
+  wipes the generated mister dir, so the sdc lives in cores/sftm/syn/.
+  Every clock closed positive: 96 domain +0.59, game +1.24, HDMI +0.30.
+- The 48 MHz slip compensation is DISARMED at 96 (clk96sh is jtframe's
+  tuned capture tap) -- and first-boot silicon confirmed the call.
+
+Hardware, first boot: high-score table pixel-perfect. FULL GROM CHECKSUM
+TEST passed twice with baseline-identical sums. Meters: 340,340 pens on
+the busiest attract frame -- 3.7 backgrounds, +21% over b114 -- at 53%
+write stall (was 66%) and 11% GROM stall (was 17%): the game expands its
+draw demand to what the machine supplies, and the machine now supplies it.
+Twelve captures across the attract cycle: the corruption metric reads
+0.0000 in every frame; the factory and cage stages -- the day-one worst
+offenders -- render pixel-perfect.
+
+Open items: the 48-flat bench race (documented in the b116 commit; needs a
+non-perturbing instrument before upstreaming); ES5506 silence (pre-dates
+everything); upstreaming candidates for jtframe: hit-skip, write-no-fetch,
+the flush machinery fixes, the ok stretcher, the 96 MHz burst arrangement.
