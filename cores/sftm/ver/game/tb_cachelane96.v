@@ -17,6 +17,34 @@ module tb_cachelane96;
 
 localparam SDRAM_AW = 24;   // JTFRAME_SDRAM_LARGE
 
+// hoisted declarations (iverilog one-pass task/port binding)
+reg          vh_on = 0;
+reg  [20:2]  vh_addr = 0;
+reg          vh_rd = 0;
+integer errors = 0;
+reg  [63:0] ld_srcr = 64'd0;
+wire        lda_act   = ld_srcr[51];
+wire        ld_togl   = ld_srcr[50];
+wire        ld_rdm    = ld_srcr[52];
+wire [19:2] ld_addr   = ld_srcr[49:32];
+wire [31:0] ld_data   = ld_srcr[31:0];
+reg         ld_we    = 1'b0;
+wire        ldr = ld_we &  ld_rdm;
+wire        ldw = ld_we & ~ld_rdm;
+reg use_dwnld = 0;
+reg                 prog_en = 0, prog_wr = 0;
+reg  [SDRAM_AW-1:0] prog_addr = 0;
+reg  [15:0]         prog_din = 0;
+reg  [ 1:0]         prog_dsn = 2'b11;
+reg         ioctl_rom = 0, ioctl_wr = 0;
+reg  [26:0] ioctl_addr = 0;
+reg  [ 7:0] ioctl_dout = 0;
+wire [23:1] raw_addr;
+wire [15:0] raw_data;
+wire [ 1:0] raw_mask, raw_ba;
+wire        raw_we, raw_rd;
+wire                prog_ack;
+
 // 96 MHz campaign: clk96 primary, clk (48) divided and edge-aligned.
 // Mux, burst engine, SDRAM chip and the download path run at 96; every
 // consumer FSM in this bench (CPU-view tasks, loader FSM, hammer) stays at
@@ -152,13 +180,7 @@ mt48lc16m16a2 #(.col_bits(10), .mem_sizes((1<<23)-1)) u_chip (
 // Phase A writer: the REAL jtframe_dwnld, parameterised exactly as generated
 // (SDRAMW=24, SWAB=1, real BA starts), fed a byte stream like MiSTer ioctl.
 // ---------------------------------------------------------------------------
-reg         ioctl_rom = 0, ioctl_wr = 0;
-reg  [26:0] ioctl_addr = 0;
-reg  [ 7:0] ioctl_dout = 0;
-wire [23:1] raw_addr;
-wire [15:0] raw_data;
-wire [ 1:0] raw_mask, raw_ba;
-wire        raw_we, raw_rd;
+// (ioctl_*/raw_* hoisted for iverilog)
 
 jtframe_dwnld #(
     .SDRAMW(24), .SWAB(1),
@@ -173,12 +195,8 @@ jtframe_dwnld #(
     .prom_we(), .header(), .sdram_ack(prog_ack)
 );
 
-reg use_dwnld = 0;
-reg                 prog_en = 0, prog_wr = 0;
-reg  [SDRAM_AW-1:0] prog_addr = 0;
-reg  [15:0]         prog_din = 0;
-reg  [ 1:0]         prog_dsn = 2'b11;
-wire                prog_ack;
+// (use_dwnld/prog_* hoisted for iverilog)
+// (prog_ack hoisted for iverilog)
 
 // Write one BYTE exactly as jtframe_dwnld does: halfword address, data on both
 // lanes, dsn masking the untouched byte (even stream byte -> low lane, mask
@@ -204,20 +222,14 @@ end endtask
 // the way quartus_stp drives the ISSP source. Phase E replays the exact
 // hardware sequence that returned all-zero readbacks.
 // ---------------------------------------------------------------------------
-reg  [63:0] ld_srcr = 64'd0;
-wire        lda_act   = ld_srcr[51];
-wire        ld_togl   = ld_srcr[50];
-wire        ld_rdm    = ld_srcr[52];
-wire [19:2] ld_addr   = ld_srcr[49:32];
-wire [31:0] ld_data   = ld_srcr[31:0];
+// (ld_srcr/lda_act/ld_togl/ld_rdm/ld_addr/ld_data hoisted for iverilog)
 reg         ld_tog_d = 1'b0;
 reg  [1:0]  ld_st    = 2'd0;
-reg         ld_we    = 1'b0;
+// (ld_we hoisted for iverilog)
 reg  [15:0] ld_done  = 16'd0;
 reg  [15:0] ld_seen  = 16'd0;
 reg  [31:0] ld_rdata = 32'd0;
-wire        ldr = ld_we &  ld_rdm;
-wire        ldw = ld_we & ~ld_rdm;
+// (ldr/ldw hoisted for iverilog)
 always @(posedge clk) begin
     ld_tog_d <= ld_togl;
     case( ld_st )
@@ -252,9 +264,7 @@ end endtask
 // single-lane path is proven clean; concurrency is the one structural
 // difference the hardware always has.
 // ---------------------------------------------------------------------------
-reg          vh_on = 0;
-reg  [20:2]  vh_addr = 0;
-reg          vh_rd = 0;
+// (vh_on/vh_addr/vh_rd hoisted above the mux instance for iverilog)
 wire         ok0_w = u_mux.ok0;
 reg  [1:0]   vh_st = 0;
 reg  [7:0]   vh_blk = 0;
@@ -284,10 +294,10 @@ initial $readmemh("cores/sftm/ver/game/prog_head.hex", prog_head);
 
 // memory content: every 16-bit word names its own index
 integer i;
-initial for( i=0; i<16384; i=i+1 ) u_chip.Bank0[i] = 16'h1000 + i[15:0];
+initial for( i=0; i<65536; i=i+1 ) u_chip.Bank0[i] = 16'h1000 + i[15:0];
 
 // ---------------------------------------------------------------------------
-integer errors = 0;
+// (errors hoisted for iverilog)
 reg [31:0] got;
 
 // free-running cycle counter for the Phase J throughput measurement
@@ -328,6 +338,19 @@ begin
         begin $display("  lw %0d: %08X  OTHER (want %04X%04X)  [%0s]", lw, got, w0c, w1c, tag); errors=errors+1; end
 end endtask
 
+integer phl_errs;
+task qcheck(input [19:2] lw);
+reg [15:0] w0c, w1c;
+begin
+    fetch(lw);
+    w0c = 16'h1000 + {lw,1'b0};
+    w1c = 16'h1000 + {lw,1'b1};
+    if( got !== {w0c, w1c} ) begin
+        $display("  L lw %0d (byte %05X): %08X WRONG (want %04X%04X)",
+                 lw, {lw,2'b00}, got, w0c, w1c);
+        errors = errors + 1;
+    end
+end endtask
 integer guard2;
 reg [7:0] exp_b0, exp_b1, exp_b2, exp_b3;
 
@@ -732,12 +755,46 @@ initial begin
                  i, got64, 8'h40+i[7:0]*8, 8'h47+i[7:0]*8);
     end
 
+    // -----------------------------------------------------------------------
+    // Phase L: address-dependent main-lane corruption hunt (b117/b118).
+    // Hardware fails DETERMINISTICALLY (battery checksum, coinage defaults)
+    // once BLOCKS2 went 16->64, while every earlier phase passes -- but every
+    // earlier phase reads small addresses where the widened set-index bits
+    // [11:10] are zero. This phase sweeps the full 32 KB preloaded region
+    // (2x the 16 KB cache: full eviction cycling through all 16 sets), then
+    // re-sweeps, then hammers ONE set across 8 tags (stride 4 KB) to force
+    // back-to-back same-set evictions through the two-cycle lookup, then
+    // repeats that under lane-0 hammer contention.
+    // -----------------------------------------------------------------------
+    $display("");
+    $display("Phase L: 32KB sweep + set-alias hammer on the main lane (BLOCKS=64)");
+    phl_errs = errors;
+    for( i = 8192; i < 16384; i = i + 1 ) qcheck( i[17:0] );
+    $display("  L sweep 1 (fill+evict): %0d longwords, %0d errors",
+             8192, errors - phl_errs);
+    phl_errs = errors;
+    for( i = 8192; i < 16384; i = i + 1 ) qcheck( i[17:0] );
+    $display("  L sweep 2 (re-fill):    %0d longwords, %0d errors",
+             8192, errors - phl_errs);
+    phl_errs = errors;
+    for( ph = 0; ph < 20; ph = ph + 1 )
+        for( i = 0; i < 8; i = i + 1 )
+            qcheck( 18'd8192 + 18'd1024 * i[17:0] + ph[17:0] );   // same set, 8 tags
+    $display("  L set-alias hammer:     160 fetches, %0d errors", errors - phl_errs);
+    phl_errs = errors;
+    vh_on = 1;
+    for( ph = 0; ph < 20; ph = ph + 1 )
+        for( i = 0; i < 8; i = i + 1 )
+            qcheck( 18'd8192 + 18'd1024 * i[17:0] + 18'd512 + ph[17:0] );
+    vh_on = 0;
+    $display("  L hammer + contention:  160 fetches, %0d errors", errors - phl_errs);
+
     $display("");
     if( errors == 0 ) $display("PASS: download + lane + rom_word all agree with the image");
     else              $display("FAIL: %0d problem(s)", errors);
     $finish;
 end
 
-initial begin #5_000_000; $display("FAIL: timeout"); $finish; end
+initial begin #20_000_000; $display("FAIL: timeout"); $finish; end  // Phase L extended the run
 
 endmodule

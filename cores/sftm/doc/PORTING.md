@@ -2067,3 +2067,45 @@ Open items: the 48-flat bench race (documented in the b116 commit; needs a
 non-perturbing instrument before upstreaming); ES5506 silence (pre-dates
 everything); upstreaming candidates for jtframe: hit-skip, write-no-fetch,
 the flush machinery fixes, the ok stretcher, the 96 MHz burst arrangement.
+
+## Builds 117-118: the "corruption" that wasn't -- an NVRAM restore race (2026-08-22)
+
+b117 (16 KB CPU cache, main lane 16->64 blocks) hit the user with BATTERY
+BACKUP FAILURE, "insert 512 coins" coinage and doubled attack damage. The
+first diagnosis -- 96 MHz SDRAM capture-phase placement lottery -- was WRONG,
+and is retracted here in full:
+
+- b118 (same cache + the ext_din one-clock re-register) still failed the
+  battery checksum 3/3 boots with a byte-exact known-good .nvm restored.
+- FAST and FULL GROM checksum tests both PASSED on b118: 32 MB checksummed
+  through the same 96 MHz burst engine and pins. The capture path is healthy,
+  re-register included.
+- A JTAG dump of the first 16 program-ROM longwords through the SFLD loader
+  (the CPU's own main lane) matched the MAME set byte-for-byte, mod the
+  design's normal within-halfword swap (SWAB download + ENDIAN=1 cancel; see
+  mem.yaml). Repeatable across double reads.
+- tb_cachelane96 Phase L (new): 2x 32 KB sweeps through the 16 KB cache plus
+  a same-set 8-tag alias hammer, all clean at BLOCKS2=64.
+
+The real mechanism: jtframe releases the game reset when the ROM download
+ends (game_sdram.v:327, dwnld_busy = ioctl_rom | prom_we), and MiSTer sends
+the .nvm restore as its OWN hps download milliseconds LATER, against the
+RUNNING CPU. sftm_main's nvram comment assumed restore happens "during
+download" -- false. Every build through b116 won the race by accident: the
+4 KB CPU cache fetch-starved the boot code past the restore window. b117's
+16 KB cache reached the battery checksum first, deterministically: checksum
+FAILS on unrestored RAM, game writes defaults, restore lands ON TOP of them
+mid-flight -- the mixed state that read as corrupted settings. No lane ever
+returned a wrong byte.
+
+Fix (b119): jtsftm_game holds rst_g while ioctl_ram write pulses arrive and
+for ~5 ms after the last one (18-bit retriggerable counter at clk48). Boot
+then always runs against settled NVRAM; a save (hps_upload) raises ioctl_ram
+without ioctl_wr and takes no hold. The b118 ext_din re-register STAYS: it is
+GROM-verified harmless and buys capture margin, but it was never the fix for
+anything observed.
+
+Lesson recorded: "two consecutive placements failing the same way" was the
+clue that killed the lottery theory -- deterministic symptoms need
+deterministic causes. And a checksum failure names its VICTIM, not its
+CULPRIT: the NVRAM content was fine; the reader raced the writer.

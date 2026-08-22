@@ -320,7 +320,24 @@ wire       force_run = issp_src[0];
 // content placed by the JTAG loader, since the watchdog cannot be relied on
 // and every other reset path destroys SDRAM or re-shifts the download.
 wire       force_rst = issp_src[1];
-wire       rst_g     = (rst & ~force_run) | force_rst;
+// NVRAM-restore reset hold (b119). The .nvm restore arrives as its OWN hps
+// download after dwnld_busy has released the game (game_sdram.v:327 counts
+// only ioctl_rom), so it races the running CPU. Every build through b116 won
+// that race by accident -- the 4 KB CPU cache made boot crawl. b117's 16 KB
+// cache reached the battery-backup checksum before the restore landed:
+// deterministic BATTERY BACKUP FAILURE, then the restore overwrote the
+// freshly-written defaults mid-flight (the insert-512-coins / doubled-damage
+// state). Hold the game in reset while restore writes arrive and ~5 ms past
+// the last one, so boot always runs against settled NVRAM. A save
+// (hps_upload) raises ioctl_ram with no ioctl_wr pulses and takes no hold.
+reg [17:0] nv_hold_cnt = 18'd0;
+wire       nv_hold     = nv_hold_cnt != 18'd0;
+always @(posedge clk) begin
+    if( ioctl_ram && ioctl_wr ) nv_hold_cnt <= 18'h3FFFF;
+    else if( nv_hold )          nv_hold_cnt <= nv_hold_cnt - 18'd1;
+end
+
+wire       rst_g     = (rst & ~force_run) | force_rst | nv_hold;
 // src[2..5]: JTAG-pressable cabinet inputs, so an unattended run can leave
 // the battery-failure and service-menu screens without a person at the
 // machine: src[2]=P1 start, src[3]=coin 1, src[4]=P1 up, src[5]=P1 down.
