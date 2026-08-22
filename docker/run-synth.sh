@@ -144,6 +144,14 @@ if ! grep -q "ext_din_r <= ext_din" "$JTFRAME_DIR/hdl/sdram/jtframe_cache.sv"; t
     echo "[sftm] ERROR: ext_din re-register did NOT apply" >&2; exit 1
 fi
 echo "[sftm] ext_din one-clock re-register applied (slip compensation v2)"
+# 96 MHz campaign: attach the core SDC (SDRAM_CLK pin model + the 96->48
+# lane-port crossing multicycles) to the qsf template so every generated
+# project includes it. The file itself lives in cores/sftm/mister/.
+grep -q "sftm_96.sdc" "$JTFRAME_DIR/target/mister/mister.qsf" || printf "set_global_assignment -name SDC_FILE sftm_96.sdc\n" >> "$JTFRAME_DIR/target/mister/mister.qsf"
+if ! grep -q "sftm_96.sdc" "$JTFRAME_DIR/target/mister/mister.qsf"; then
+    echo "[sftm] ERROR: sftm_96.sdc qsf hook did NOT apply" >&2; exit 1
+fi
+echo "[sftm] core SDC hooked into the qsf template"
 # SLOT0_ERASE=0 on the bank-3 rw slot -- see entrypoint.sh for why.
 sed -i "s/SLOT0_ERASE  = 1,/SLOT0_ERASE  = 0,/" \
     "$JTFRAME_DIR/hdl/sdram/jtframe_ram1_3slots.v" || true
