@@ -359,6 +359,12 @@ initial begin
     // and reads back continuously while the vblank flush fires every frame.
     // Every earlier phase drained before flushing; this one does not.
     $display("7: writes and reads racing repeated flushes");
+`ifdef VCD7
+    $dumpfile("/v9/ph7.vcd");
+    $dumpvars(1, u_mux.u_cache0.u_ctrl);
+    $dumpvars(1, uut);
+    $dumpvars(1, u_mux.u_cache0.u_req);
+`endif
     fork
         begin : flusher
             integer k;
@@ -377,12 +383,26 @@ initial begin
     join
     guard = 0;
     while( vram_flushing && guard < 200000 ) begin @(posedge clk); guard = guard + 1; end
+    // inline autopsy (same initial block = same event graph): before any
+    // verify bread perturbs the cache, dump chip content and wvalid for
+    // pens whose SDRAM halfword mismatches
+    for( i = 0; i < 1200; i = i + 1 ) begin
+        if( u_chip.Bank3[('h40000<<1) + 19'd90112 + i[18:0]] !== 16'h7000 + i[15:0] ) begin
+            if( errors < 4 )
+                $display("AUTOPSY pen %0d: chip=%04X want=%04X  blk-wvalid=%b",
+                    90112+i, u_chip.Bank3[('h40000<<1) + 19'd90112 + i[18:0]],
+                    16'h7000+i[15:0],
+                    u_mux.u_cache0.u_ctrl.wvalid[ ((19'd90112+i[18:0])>>7) % 64 ]);
+        end
+    end
     for( i = 0; i < 1200; i = i + 1 ) begin
         bread( 19'd90112 + i[18:0] );
         if( rgot !== 16'h7000 + i[15:0] ) begin
             if( errors < 8 )
-                $display("FAIL: pen %0d = %04X, want %04X (lost/corrupt under flush)",
-                         90112+i, rgot, 16'h7000+i[15:0]);
+                $display("FAIL: pen %0d = %04X, want %04X | chip=%04X wvalid=%b",
+                         90112+i, rgot, 16'h7000+i[15:0],
+                         u_chip.Bank3[('h40000<<1) + 19'd90112 + i[18:0]],
+                         u_mux.u_cache0.u_ctrl.wvalid[ ((19'd90112+i[18:0])>>7) % 64 ]);
             errors = errors + 1;
         end
     end

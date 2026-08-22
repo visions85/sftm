@@ -173,6 +173,15 @@ localparam integer NFWRDS = WNF != 0 ? WORDS/HALF_PER_WORD : 1;  // DW-words per
 reg  [NFWRDS-1:0] wvalid [0:BLOCKS-1];
 reg  [NFWRDS-1:0] merge_wvalid_l;
 reg               claim_pend, merge_same, merge_victim;
+// two-cycle lookup (96 MHz closure): S_LOOKUP latches the tag-RAM compare
+// results, S_LOOKUP_DECIDE branches on the registered copies. The BRAM
+// read -> 4-way compare -> WNF muxes -> state encode chain missed 10.4 ns
+// by 1.3 ns in one level; split, each half closes comfortably.
+reg               hit_l_r;
+reg  [WAYW-1:0]   hit_way_r, victim_way_r;
+reg  [BW-1:0]     hit_blk_r, victim_blk_r;
+reg               victim_dirty_r;
+reg  [TAGW-1:0]   victim_tag_r;
 
 reg              fill_after_wb, fill_wb_prime_wait;
 reg              req_wr_l;
@@ -233,8 +242,8 @@ wire [127:0]    flush_rd_resp_word = pack_data(req_q, flush_rd_off_l);
 // within the block (AW0=3, OFFW=log2(BLKSIZE/8)), so it indexes wvalid
 // directly; a fill halfword h belongs to word h>>2.
 wire        nf_full_wr  = WNF != 0 && req_wdsn_l == {MW{1'b0}};
-wire        nf_hit_inv  = WNF != 0 && !wvalid[hit_blk_now][integer'(req_off_l) % NFWRDS];
-wire        nf_vic_part = WNF != 0 && !(&wvalid[victim_blk_now]);
+wire        nf_hit_inv_r  = WNF != 0 && !wvalid[hit_blk_r][integer'(req_off_l) % NFWRDS];
+wire        nf_vic_part_r = WNF != 0 && !(&wvalid[victim_blk_r]);
 wire        nf_scan_part= WNF != 0 && !(&wvalid[scan_blk_now]);
 wire        nf_merge    = merge_same || merge_victim;
 wire        nf_skip0    = nf_merge && merge_wvalid_l[0];
@@ -498,24 +507,22 @@ always @* begin
         S_INVAL_CLEAR: begin
             tag_clear_en = 1'b1;
         end
-        S_LOOKUP: begin
-            if( !hit_now ) begin
+        S_LOOKUP_DECIDE: begin
+            if( !hit_l_r ) begin
                 tag_advance_en    = 1'b1;
-                tag_advance_way_n = victim_way_now;
+                tag_advance_way_n = victim_way_r;
             end
-            if( hit_now ) begin
+            if( hit_l_r ) begin
                 req_load_addr = 1'b1;
-                req_addr_n    = req_baddr(hit_blk_now, req_off_l);
+                req_addr_n    = req_baddr(hit_blk_r, req_off_l);
                 // hit-skip replacement: when the lookup hits the way the
                 // round-robin pointer aims at, advance the pointer so a
-                // recently-hit block is not the next victim. Without this a
-                // streaming client evicts another client's hot block within
-                // WAYS fills into the set no matter how often it is hit --
-                // a writer sharing sets with a scanout stream measured 73
-                // clk per write in tb_cachelane Phase J; 10 with this.
-                if( hit_way_now == victim_way_now ) begin
+                // recently-hit block is not the next victim (a streaming
+                // client otherwise evicts another client's hot block within
+                // WAYS fills into the set -- tb_cachelane Phase J).
+                if( hit_way_r == victim_way_r ) begin
                     tag_advance_en    = 1'b1;
-                    tag_advance_way_n = hit_way_now;
+                    tag_advance_way_n = hit_way_r;
                 end
             end
         end
@@ -727,15 +734,25 @@ always @(posedge clk) begin
                 end
             end
             S_LOOKUP: begin
-                if( hit_now ) begin
-                    blk_l <= hit_blk_now;
-                    way_l <= hit_way_now;
-                    if( nf_hit_inv && !(req_wr_l && nf_full_wr) ) begin
+                hit_l_r        <= hit_now;
+                hit_way_r      <= hit_way_now;
+                hit_blk_r      <= hit_blk_now;
+                victim_way_r   <= victim_way_now;
+                victim_blk_r   <= victim_blk_now;
+                victim_dirty_r <= victim_dirty_now;
+                victim_tag_r   <= victim_tag_now;
+                st             <= S_LOOKUP_DECIDE;
+            end
+            S_LOOKUP_DECIDE: begin
+                if( hit_l_r ) begin
+                    blk_l <= hit_blk_r;
+                    way_l <= hit_way_r;
+                    if( nf_hit_inv_r && !(req_wr_l && nf_full_wr) ) begin
                         // the target word of a claimed block was never
                         // written: merge-fill it (masked on valid words,
                         // dirty preserved), then serve the request
                         merge_same     <= 1'b1;
-                        merge_wvalid_l <= wvalid[hit_blk_now];
+                        merge_wvalid_l <= wvalid[hit_blk_r];
                         stream_word    <= {WW{1'b0}};
                         fill_tail_seen <= 1'b0;
                         st             <= S_FILL_REQ;
@@ -744,18 +761,18 @@ always @(posedge clk) begin
                     else
                         st <= S_RD_RESP;
                 end else begin
-                    blk_l          <= victim_blk_now;
-                    way_l          <= victim_way_now;
-                    victim_tag_l   <= victim_tag_now;
+                    blk_l          <= victim_blk_r;
+                    way_l          <= victim_way_r;
+                    victim_tag_l   <= victim_tag_r;
                     stream_word    <= {WW{1'b0}};
                     fill_tail_seen <= 1'b0;
                     claim_pend     <= req_wr_l && nf_full_wr;
-                    if( victim_dirty_now ) begin
-                        if( nf_vic_part ) begin
+                    if( victim_dirty_r ) begin
+                        if( nf_vic_part_r ) begin
                             // partially valid dirty victim: read its gaps
                             // from SDRAM before writing it back
                             merge_victim   <= 1'b1;
-                            merge_wvalid_l <= wvalid[victim_blk_now];
+                            merge_wvalid_l <= wvalid[victim_blk_r];
                             st             <= S_FILL_REQ;
                         end else
                             st <= S_WB_LOAD;
