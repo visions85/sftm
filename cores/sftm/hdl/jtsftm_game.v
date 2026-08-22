@@ -320,21 +320,48 @@ wire       force_run = issp_src[0];
 // content placed by the JTAG loader, since the watchdog cannot be relied on
 // and every other reset path destroys SDRAM or re-shifts the download.
 wire       force_rst = issp_src[1];
+// NVRAM restore, 96->48 crossing (b120). Under JTFRAME_SDRAM96 the hps/ioctl
+// signals live in the 96 MHz wrapper domain and reach this module's ports
+// UNSYNCHRONISED while the game clk is 48 MHz; ioctl_wr is a single 96 MHz
+// pulse, so roughly half the restore bytes never landed -- the battery
+// checksum failed on EVERY 96 MHz cold boot (b116 included; it was never
+// cold-boot verified). Proven on b119 hardware: a warm force_rst reboot
+// against game-written BRAM passes, a cold boot against a byte-exact valid
+// .nvm fails. Capture each restore byte at clk96 and hand it over on a
+// toggle; addr/data are stable long before the synced toggle edge arrives
+// (hps bytes are microseconds apart). The save path (ioctl_din) needs no
+// shim: the address is quasi-static per byte at hps pace.
+reg        nv96_tog  = 1'b0;
+reg [14:0] nv96_addr = 15'd0;
+reg [ 7:0] nv96_data = 8'd0;
+always @(posedge clk96) begin
+    if( ioctl_ram && ioctl_wr ) begin
+        nv96_tog  <= ~nv96_tog;
+        nv96_addr <= ioctl_addr[14:0];
+        nv96_data <= ioctl_dout;
+    end
+end
+reg  [2:0] nv_tog_s = 3'b000;
+reg  [1:0] nv_ram_s = 2'b00;
+always @(posedge clk) begin
+    nv_tog_s <= { nv_tog_s[1:0], nv96_tog };
+    nv_ram_s <= { nv_ram_s[0],   ioctl_ram };
+end
+wire nv_wr48 = nv_tog_s[2] != nv_tog_s[1];   // one clk48 pulse per byte
+
 // NVRAM-restore reset hold (b119). The .nvm restore arrives as its OWN hps
 // download after dwnld_busy has released the game (game_sdram.v:327 counts
 // only ioctl_rom), so it races the running CPU. Every build through b116 won
-// that race by accident -- the 4 KB CPU cache made boot crawl. b117's 16 KB
-// cache reached the battery-backup checksum before the restore landed:
-// deterministic BATTERY BACKUP FAILURE, then the restore overwrote the
-// freshly-written defaults mid-flight (the insert-512-coins / doubled-damage
-// state). Hold the game in reset while restore writes arrive and ~5 ms past
-// the last one, so boot always runs against settled NVRAM. A save
-// (hps_upload) raises ioctl_ram with no ioctl_wr pulses and takes no hold.
+// that race by accident -- the 4 KB CPU cache made boot crawl; b117's 16 KB
+// cache reached the battery-backup checksum first. Hold the game in reset
+// while restore writes arrive and ~5 ms past the last one, so boot always
+// runs against settled NVRAM. A save (hps_upload) raises ioctl_ram with no
+// ioctl_wr pulses and takes no hold.
 reg [17:0] nv_hold_cnt = 18'd0;
 wire       nv_hold     = nv_hold_cnt != 18'd0;
 always @(posedge clk) begin
-    if( ioctl_ram && ioctl_wr ) nv_hold_cnt <= 18'h3FFFF;
-    else if( nv_hold )          nv_hold_cnt <= nv_hold_cnt - 18'd1;
+    if( nv_wr48 )      nv_hold_cnt <= 18'h3FFFF;
+    else if( nv_hold ) nv_hold_cnt <= nv_hold_cnt - 18'd1;
 end
 
 wire       rst_g     = (rst & ~force_run) | force_rst | nv_hold;
@@ -448,10 +475,12 @@ sftm_main u_main(
     .dbg_crn      ( dbg_crn       ),
     .dbg_crv      ( dbg_crv       ),
     .dbg_crp      ( dbg_crp       ),
-    .ioctl_addr   ( ioctl_addr    ),
-    .ioctl_ram    ( ioctl_ram     ),
-    .ioctl_wr     ( ioctl_wr      ),
-    .ioctl_dout   ( ioctl_dout    ),
+    // restore bytes come through the 96->48 shim above; the save path
+    // (ioctl_din vs raw ioctl_addr) is quasi-static per byte at hps pace
+    .ioctl_addr   ( nv_wr48 ? {12'd0, nv96_addr} : ioctl_addr ),
+    .ioctl_ram    ( nv_ram_s[1]   ),
+    .ioctl_wr     ( nv_wr48       ),
+    .ioctl_dout   ( nv96_data     ),
     .ioctl_din    ( ioctl_din     ),
 
     .st_dout      ( st_main       ),
