@@ -7,18 +7,24 @@ from the MAME driver.
 
 ## Status
 
-**Playable, with bugs still being ironed out.** As of build 119
+**Playable, with bugs still being ironed out.** As of build 120
 (2026-08-22) the core runs the game on a real DE10-Nano: it boots, plays,
-and renders correctly.
+and renders correctly. It does **not yet run at full speed** — the heaviest
+stages still dip below frame rate, and there is no sound. Treat it as a
+core you can play and help debug, not a finished one.
 
 Working:
 
-- **Gameplay.** Boots, takes coins and plays. Cabinet inputs, the operator
-  service menu and NVRAM save/restore all work.
+- **Gameplay.** Boots, takes coins and plays. Cabinet inputs and the
+  operator service menu work. NVRAM save/restore is verified from a cold
+  boot: a valid save goes straight to the title screen with correct coinage
+  and banked credits honoured.
 - **Graphics are clean.** Across twelve captures of the full attract cycle
   the corruption metric reads 0.0000 in every frame. The factory and cage
   stages — the worst offenders for most of this project — render
-  pixel-perfect, as does the high-score table.
+  pixel-perfect, as does the high-score table. That is correctness, not
+  speed: the cage stage draws the right pixels but only just fits its frame
+  (see below).
 - **Data integrity is verified by the game itself.** The service menu's FULL
   GROM CHECKSUM TEST passes with sums identical to the reference baseline.
   A JTAG dump of the loaded ROM matches the MAME set byte for byte. The
@@ -33,15 +39,28 @@ Known issues, roughly in the order they bite:
   path has never been confirmed on hardware since. The sound lane's byte
   order is verified correct in simulation, so a 6809 crashed by swapped
   opcodes is ruled out. This is the largest missing piece.
-- **Game speed varies.** Some scenes tick slower than they should. The
-  memory side is no longer the wall, so the current suspect is the 68020
-  fetching a 1 MB program through a small cache; the main lane was widened
-  to 16 KB and a per-frame fetch-stall meter added to tell fetch-bound from
-  compute-bound. Unresolved.
-- **Transient stale bands during fast camera pans.** Newly exposed columns
-  can lag by up to about two frames before catching up. This is the expected
-  signature of the bounded-staleness design rather than a defect, but it is
-  visible.
+- **Not full speed on heavy stages.** The video frame period itself is
+  locked (871,727 clk, every sample), but the blitter cannot always finish a
+  frame's drawing inside it. Measured on b120 across 900 samples: blitter
+  busy averages 49% of the frame but peaks at 96.1%, so light stages fit
+  comfortably and the heaviest ones barely do. The swamp stage fits; the
+  cage stage does not, and visibly dips.
+
+  The cause is now pinned: heavy stages are **blit-write-bound, not
+  CPU-bound** — the earlier suspicion that the 68020 was starved by its
+  cache did not survive measurement (the fetch-stall meter counts the fixed
+  per-access handshake, not just misses, and needs calibration before it can
+  be cited). One caveat worth keeping: the original itech32 hardware also
+  slowed on heavy scenes, so some of this dip is authentic. How much needs
+  an unthrottled MAME comparison, which has not been done.
+- **Transient one-frame artifacts on heavy stages.** Two classes remain.
+  Newly exposed columns during fast camera pans can lag about two frames
+  before catching up — the expected signature of the bounded-staleness
+  design rather than a defect, but visible. Separately, heavy frames could
+  show momentary HUD garbage (two generations of timer digits at once) when
+  a frame dirtied most of the cache and the flush slipped past vblank; the
+  fix — an earlier flush with a prefetch interlock — passes simulation and
+  is awaiting hardware confirmation.
 - An open bench-only race in the 48 MHz flat testbench, which needs a
   non-perturbing instrument before the relevant fixes can be upstreamed.
 
@@ -62,6 +81,7 @@ frame of the attract cycle*; one full-screen background is 92,160 pens.
 | b111 | pipelined GROM fetcher | GROM stall 200k → 108k clk |
 | b114 | flush race fixed | data integrity restored, checksums pass |
 | b116 | 96 MHz SDRAM domain | **340,340 pens — 3.7 backgrounds** |
+| b120 | NVRAM crossing fixed | 49% busy mean, 96.1% peak; GROM stall 13% |
 
 The original IT42 blitter's envelope was roughly 470k pens/frame, so the core
 now supplies about 72% of the real hardware's draw bandwidth — enough that
