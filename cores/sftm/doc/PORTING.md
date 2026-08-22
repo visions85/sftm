@@ -2109,3 +2109,33 @@ Lesson recorded: "two consecutive placements failing the same way" was the
 clue that killed the lottery theory -- deterministic symptoms need
 deterministic causes. And a checksum failure names its VICTIM, not its
 CULPRIT: the NVRAM content was fine; the reader raced the writer.
+
+## Build 120: NVRAM whole again -- cold boot passes with a restored save (2026-08-22)
+
+The b119 reset-hold alone did not cure the battery screen; a warm force_rst
+reboot against game-written BRAM PASSED while a cold boot against a
+byte-exact valid .nvm FAILED, which acquitted the BRAM/checksum logic and
+convicted the restore delivery. Root cause: under JTFRAME_SDRAM96 the
+hps/ioctl signals reach the game unsynchronised from the 96 MHz wrapper
+domain; ioctl_wr is a single 96 MHz pulse and the 48 MHz game missed about
+half the restore bytes. Broken on every 96 MHz build -- b116 included, whose
+"clean" reputation was never cold-boot tested. b120 captures each restore
+byte at clk96 and hands it across on a toggle (save path is quasi-static per
+byte and needs no shim).
+
+Verified on hardware: b120 cold boot on .74 with the valid .nvm goes
+straight to the title screen -- correct coinage (INSERT 1 COIN) and the
+save's banked 1/2 CREDIT honoured. .98 attract shows the cage stage (the
+user's worst-glitching stage) rendering clean.
+
+b120 meters (.74 attract, 900 samples): frame period locked at 871,727;
+blitter busy mean 425K (49%), max 837K (96.1% -- heavy frames still nearly
+saturate); wrFIFO stall 39% of busy on the busiest frame; GROM stall down to
+13%; pens max 338K (~3.7 backgrounds of overdraw). CPU fetch stall reads
+mean 186K / max 244K clk/frame BUT the meter counts the fixed per-access
+handshake (settle + ok crossing), not just misses -- calibrate before citing
+it as CPU starvation. Verdict on the speed variance: heavy stages are
+blit-write-bound, not CPU-bound; the swamp stage fits its frame, the cage
+stage barely does. Note the original itech32 hardware also slowed on heavy
+scenes; how much of the residual dip is authentic needs a MAME unthrottled
+comparison before more perf work is queued.
