@@ -147,7 +147,8 @@ echo "[sftm] ext_din one-clock re-register applied (slip compensation v2)"
 # 96 MHz campaign: attach the core SDC (SDRAM_CLK pin model + the 96->48
 # lane-port crossing multicycles) to the qsf template so every generated
 # project includes it. The file itself lives in cores/sftm/mister/.
-grep -q "sftm_96.sdc" "$JTFRAME_DIR/target/mister/mister.qsf" || printf "set_global_assignment -name SDC_FILE sftm_96.sdc\n" >> "$JTFRAME_DIR/target/mister/mister.qsf"
+sed -i "s|SDC_FILE sftm_96.sdc|SDC_FILE ../syn/sftm_96.sdc|" "$JTFRAME_DIR/target/mister/mister.qsf" || true
+grep -q "sftm_96.sdc" "$JTFRAME_DIR/target/mister/mister.qsf" || printf "set_global_assignment -name SDC_FILE ../syn/sftm_96.sdc\n" >> "$JTFRAME_DIR/target/mister/mister.qsf"
 if ! grep -q "sftm_96.sdc" "$JTFRAME_DIR/target/mister/mister.qsf"; then
     echo "[sftm] ERROR: sftm_96.sdc qsf hook did NOT apply" >&2; exit 1
 fi
